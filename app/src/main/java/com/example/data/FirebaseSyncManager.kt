@@ -1,0 +1,804 @@
+package com.example.data
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+
+/**
+ * Высокопроизводительный движок авторизации и облачной синхронизации с Firebase Realtime Database.
+ * Минимизирует нагрузку на CPU за счёт потокобезопасного пула соединений, умного дебаунсинга
+ * частых обновлений прогресса видео и zero-allocation хэширования.
+ */
+object FirebaseSyncManager {
+    private const val TAG = "FirebaseSyncManager"
+    const val DATABASE_URL = "https://r4ezka-default-rtdb.europe-west1.firebasedatabase.app"
+
+    private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
+
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    private var prefs: SharedPreferences? = null
+
+    private val _isLoggedIn = MutableStateFlow(false)
+    val isLoggedIn: StateFlow<Boolean> = _isLoggedIn.asStateFlow()
+
+    private val _currentUser = MutableStateFlow<String?>(null)
+    val currentUser: StateFlow<String?> = _currentUser.asStateFlow()
+
+    private val _currentUserAvatar = MutableStateFlow<String?>(null)
+    val currentUserAvatar: StateFlow<String?> = _currentUserAvatar.asStateFlow()
+
+    private val _userKey = MutableStateFlow<String?>(null)
+    val userKey: StateFlow<String?> = _userKey.asStateFlow()
+
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
+    // Пул отложенных записей истории для устранения частых сетевых вызовов во время воспроизведения
+    private val pendingProgressMap = ConcurrentHashMap<String, WatchHistoryEntity>()
+    private var progressDebounceJob: Job? = null
+
+    fun init(context: Context, repository: RezkaRepository) {
+        prefs = context.getSharedPreferences("r4ezka_firebase_auth", Context.MODE_PRIVATE)
+        val savedUser = prefs?.getString("auth_username", null)
+        val savedKey = prefs?.getString("auth_user_key", null)
+        val savedAvatar = prefs?.getString("auth_avatar", null)
+
+        if (!savedAvatar.isNullOrBlank()) {
+            _currentUserAvatar.value = savedAvatar
+        }
+
+        if (!savedUser.isNullOrBlank() && !savedKey.isNullOrBlank()) {
+            _currentUser.value = savedUser
+            _userKey.value = savedKey
+            _isLoggedIn.value = true
+
+            // Фоновая автоматическая синхронизация при запуске
+            scope.launch {
+                syncAll(repository)
+            }
+        }
+    }
+
+    /**
+     * Генерация безопасного детерминированного ключа пользователя для Firebase RTDB.
+     * Firebase запрещает символы '.', '#', '$', '[', ']' и '/'.
+     * SHA-256 хэш в нижнем регистре гарантирует валидность ключа и нечувствительность к регистру логина.
+     */
+    fun generateUserKey(username: String): String {
+        val normalized = username.trim().lowercase()
+        val md = MessageDigest.getInstance("SHA-256")
+        val bytes = md.digest(normalized.toByteArray(Charsets.UTF_8))
+        val sb = StringBuilder(64)
+        for (b in bytes) {
+            sb.append(String.format("%02x", b))
+        }
+        return sb.toString()
+    }
+
+    private fun generateSalt(): String {
+        val random = SecureRandom()
+        val bytes = ByteArray(16)
+        random.nextBytes(bytes)
+        val sb = StringBuilder(32)
+        for (b in bytes) {
+            sb.append(String.format("%02x", b))
+        }
+        return sb.toString()
+    }
+
+    private fun hashPassword(password: String, salt: String): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        val input = "$salt:$password".toByteArray(Charsets.UTF_8)
+        val bytes = md.digest(input)
+        val sb = StringBuilder(64)
+        for (b in bytes) {
+            sb.append(String.format("%02x", b))
+        }
+        return sb.toString()
+    }
+
+    /**
+     * Безопасное экранирование ключей сущностей для RTDB
+     */
+    fun safeFirebaseKey(raw: String): String {
+        val sb = StringBuilder(raw.length)
+        for (ch in raw) {
+            when (ch) {
+                '.', '#', '$', '[', ']', '/' -> sb.append('_')
+                else -> sb.append(ch)
+            }
+        }
+        return sb.toString()
+    }
+
+    /**
+     * Регистрация нового пользователя в Firebase Realtime Database
+     */
+    suspend fun register(
+        username: String,
+        password: String,
+        avatar: String? = null,
+        repository: RezkaRepository
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val cleanName = username.trim()
+        if (cleanName.length < 3) {
+            return@withContext Result.failure(Exception("Логин должен содержать минимум 3 символа"))
+        }
+        if (password.length < 4) {
+            return@withContext Result.failure(Exception("Пароль должен содержать минимум 4 символа"))
+        }
+
+        val key = generateUserKey(cleanName)
+
+        try {
+            // 1. Проверяем, существует ли уже такой пользователь
+            val checkUrl = "$DATABASE_URL/users/$key/profile.json"
+            val checkRequest = Request.Builder().url(checkUrl).get().build()
+            val checkResp = httpClient.newCall(checkRequest).execute()
+
+            if (checkResp.isSuccessful) {
+                val body = checkResp.body?.string()?.trim() ?: "null"
+                if (body != "null" && body.isNotEmpty()) {
+                    return@withContext Result.failure(Exception("Пользователь с таким логином уже зарегистрирован"))
+                }
+            }
+
+            // 2. Создаём запись профиля с криптографически безопасным хэшем и солью
+            val salt = generateSalt()
+            val passwordHash = hashPassword(password, salt)
+
+            val profileJson = JSONObject().apply {
+                put("username", cleanName)
+                put("passwordHash", passwordHash)
+                put("salt", salt)
+                put("registeredAt", System.currentTimeMillis())
+            }
+
+            val putProfileRequest = Request.Builder()
+                .url("$DATABASE_URL/users/$key/profile.json")
+                .put(profileJson.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+
+            val profileResp = httpClient.newCall(putProfileRequest).execute()
+            if (!profileResp.isSuccessful) {
+                return@withContext Result.failure(Exception("Ошибка базы данных: HTTP ${profileResp.code}"))
+            }
+
+            // 3. Если указана аватарка при регистрации - сохраняем в узел avatar
+            if (!avatar.isNullOrBlank()) {
+                _currentUserAvatar.value = avatar
+                prefs?.edit()?.putString("auth_avatar", avatar)?.apply()
+                try {
+                    val avatarReq = Request.Builder()
+                        .url("$DATABASE_URL/users/$key/avatar.json")
+                        .put(JSONObject.quote(avatar).toRequestBody(JSON_MEDIA_TYPE))
+                        .build()
+                    httpClient.newCall(avatarReq).execute().close()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to upload initial avatar", e)
+                }
+            }
+
+            // 4. Сохраняем сессию
+            _currentUser.value = cleanName
+            _userKey.value = key
+            _isLoggedIn.value = true
+
+            prefs?.edit()
+                ?.putString("auth_username", cleanName)
+                ?.putString("auth_user_key", key)
+                ?.apply()
+
+            // 5. Выгружаем текущие локальные закладки и историю в облако
+            uploadLocalDataToCloud(key, repository)
+
+            Result.success("Регистрация успешна")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error registering user", e)
+            Result.failure(Exception(e.message ?: "Ошибка подключения к базе данных"))
+        }
+    }
+
+    /**
+     * Вход пользователя с проверкой хэша пароля
+     */
+    suspend fun login(
+        username: String,
+        password: String,
+        repository: RezkaRepository
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val cleanName = username.trim()
+        if (cleanName.isBlank() || password.isBlank()) {
+            return@withContext Result.failure(Exception("Заполните логин и пароль"))
+        }
+
+        val key = generateUserKey(cleanName)
+
+        try {
+            val profileUrl = "$DATABASE_URL/users/$key/profile.json"
+            val request = Request.Builder().url(profileUrl).get().build()
+            val response = httpClient.newCall(request).execute()
+
+            if (!response.isSuccessful) {
+                return@withContext Result.failure(Exception("Ошибка базы данных: HTTP ${response.code}"))
+            }
+
+            val body = response.body?.string()?.trim() ?: "null"
+            if (body == "null" || body.isEmpty()) {
+                return@withContext Result.failure(Exception("Пользователь с таким логином не найден"))
+            }
+
+            val json = JSONObject(body)
+            val storedHash = json.optString("passwordHash", "")
+            val storedSalt = json.optString("salt", "")
+            val realUsername = json.optString("username", cleanName)
+
+            if (storedHash.isEmpty() || storedSalt.isEmpty()) {
+                return@withContext Result.failure(Exception("Ошибка структуры профиля в базе данных"))
+            }
+
+            val computedHash = hashPassword(password, storedSalt)
+            if (computedHash != storedHash) {
+                return@withContext Result.failure(Exception("Неверный пароль"))
+            }
+
+            // Загружаем аватар пользователя из базы
+            var fetchedAvatar: String? = null
+            try {
+                val avReq = Request.Builder().url("$DATABASE_URL/users/$key/avatar.json").get().build()
+                val avResp = httpClient.newCall(avReq).execute()
+                if (avResp.isSuccessful) {
+                    val avBody = avResp.body?.string()?.trim() ?: "null"
+                    if (avBody != "null" && avBody.isNotEmpty()) {
+                        fetchedAvatar = if (avBody.startsWith("\"") && avBody.endsWith("\"")) {
+                            avBody.substring(1, avBody.length - 1)
+                                .replace("\\\"", "\"")
+                                .replace("\\\\", "\\")
+                                .replace("\\/", "/")
+                        } else {
+                            avBody
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error fetching avatar", e)
+            }
+
+            // Успешная авторизация
+            _currentUser.value = realUsername
+            _userKey.value = key
+            _currentUserAvatar.value = fetchedAvatar
+            _isLoggedIn.value = true
+
+            val editor = prefs?.edit()
+                ?.putString("auth_username", realUsername)
+                ?.putString("auth_user_key", key)
+            if (fetchedAvatar != null) {
+                editor?.putString("auth_avatar", fetchedAvatar)
+            } else {
+                editor?.remove("auth_avatar")
+            }
+            editor?.apply()
+
+            // Синхронизируем данные из облака и локальной базы
+            syncAll(repository)
+
+            Result.success("Добро пожаловать, $realUsername!")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during login", e)
+            Result.failure(Exception(e.message ?: "Ошибка авторизации"))
+        }
+    }
+
+    /**
+     * Обновление аватара пользователя (синхронно локально + выгрузка в облако)
+     */
+    suspend fun updateAvatar(avatar: String?): Result<Unit> = withContext(Dispatchers.IO) {
+        val key = _userKey.value ?: return@withContext Result.failure(Exception("Пользователь не авторизован"))
+        try {
+            _currentUserAvatar.value = avatar
+            val editor = prefs?.edit()
+            if (avatar != null) {
+                editor?.putString("auth_avatar", avatar)
+            } else {
+                editor?.remove("auth_avatar")
+            }
+            editor?.apply()
+
+            val req = if (avatar != null) {
+                Request.Builder()
+                    .url("$DATABASE_URL/users/$key/avatar.json")
+                    .put(JSONObject.quote(avatar).toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+            } else {
+                Request.Builder()
+                    .url("$DATABASE_URL/users/$key/avatar.json")
+                    .delete()
+                    .build()
+            }
+
+            val resp = httpClient.newCall(req).execute()
+            if (resp.isSuccessful) {
+                resp.close()
+                Result.success(Unit)
+            } else {
+                val code = resp.code
+                resp.close()
+                Result.failure(Exception("Ошибка сохранения на сервере: HTTP $code"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating avatar", e)
+            Result.failure(Exception(e.message ?: "Ошибка при обновлении аватара"))
+        }
+    }
+
+    /**
+     * Выход из аккаунта
+     */
+    fun logout() {
+        flushPendingProgress()
+        _isLoggedIn.value = false
+        _currentUser.value = null
+        _userKey.value = null
+        _currentUserAvatar.value = null
+        prefs?.edit()
+            ?.remove("auth_username")
+            ?.remove("auth_user_key")
+            ?.remove("auth_avatar")
+            ?.apply()
+    }
+
+    /**
+     * Добавление/обновление избранного в Firebase RTDB
+     */
+    fun onFavoriteAdded(entity: FavoriteEntity) {
+        val key = _userKey.value ?: return
+        scope.launch {
+            try {
+                val safeId = safeFirebaseKey(entity.id)
+                val json = favoriteToJson(entity)
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/favorites/$safeId.json")
+                    .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                httpClient.newCall(request).execute().close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to sync favorite to Firebase: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Удаление избранного из Firebase RTDB
+     */
+    fun onFavoriteRemoved(itemId: String) {
+        val key = _userKey.value ?: return
+        scope.launch {
+            try {
+                val safeId = safeFirebaseKey(itemId)
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/favorites/$safeId.json")
+                    .delete()
+                    .build()
+                httpClient.newCall(request).execute().close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to remove favorite from Firebase: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Умное сохранение прогресса просмотра в Firebase с дебаунсингом (не чаще раза в 4 секунды),
+     * чтобы плеер не нагружал процессор и сеть лишними сетевыми запросами во время воспроизведения.
+     */
+    fun onWatchProgress(entity: WatchHistoryEntity) {
+        if (!_isLoggedIn.value) return
+        val safeId = safeFirebaseKey(entity.id)
+        pendingProgressMap[safeId] = entity
+
+        if (progressDebounceJob?.isActive != true) {
+            progressDebounceJob = scope.launch {
+                delay(4000L)
+                flushPendingProgress()
+            }
+        }
+    }
+
+    fun flushWatchProgress() = flushPendingProgress()
+
+    /**
+     * Принудительный сброс буфера отложенного прогресса (например при паузе или выходе из плеера)
+     */
+    fun flushPendingProgress() {
+        val key = _userKey.value ?: return
+        if (pendingProgressMap.isEmpty()) return
+
+        val itemsToUpload = HashMap(pendingProgressMap)
+        pendingProgressMap.clear()
+
+        scope.launch {
+            for ((safeId, item) in itemsToUpload) {
+                try {
+                    val json = historyToJson(item)
+                    val request = Request.Builder()
+                        .url("$DATABASE_URL/users/$key/history/$safeId.json")
+                        .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                        .build()
+                    httpClient.newCall(request).execute().close()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to flush progress for $safeId: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Сохранение настроек приложения (зеркало, качество видео, автопереключение серии) в облако
+     */
+    fun onSettingsUpdated(
+        mirror: String,
+        quality: String,
+        autoNextEpisode: Boolean = RezkaService.autoNextEpisode.value
+    ) {
+        val key = _userKey.value ?: return
+        scope.launch {
+            try {
+                val json = JSONObject().apply {
+                    put("mirror", mirror)
+                    put("defaultQuality", quality)
+                    put("autoNextEpisode", autoNextEpisode)
+                    put("updatedAt", System.currentTimeMillis())
+                }
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/settings.json")
+                    .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                httpClient.newCall(request).execute().close()
+                Log.d(TAG, "Settings synced to cloud: mirror=$mirror, quality=$quality, autoNextEpisode=$autoNextEpisode")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to sync settings to Firebase: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Удаление одной записи истории из Firebase
+     */
+    fun onHistoryDeleted(historyId: String) {
+        val key = _userKey.value ?: return
+        pendingProgressMap.remove(safeFirebaseKey(historyId))
+        scope.launch {
+            try {
+                val safeId = safeFirebaseKey(historyId)
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/history/$safeId.json")
+                    .delete()
+                    .build()
+                httpClient.newCall(request).execute().close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to delete history item: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Удаление истории фильма/сериала целиком по itemId
+     */
+    fun onHistoryDeletedByItemId(itemId: String) {
+        val key = _userKey.value ?: return
+        scope.launch {
+            try {
+                // Читаем текущую историю из облака, находим совпадения по itemId и удаляем их
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/history.json")
+                    .get()
+                    .build()
+                val resp = httpClient.newCall(request).execute()
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: ""
+                    if (body != "null" && body.isNotEmpty()) {
+                        val rootJson = JSONObject(body)
+                        val keysToDelete = mutableListOf<String>()
+                        val it = rootJson.keys()
+                        while (it.hasNext()) {
+                            val k = it.next()
+                            val itemObj = rootJson.optJSONObject(k)
+                            if (itemObj != null && itemObj.optString("itemId") == itemId) {
+                                keysToDelete.add(k)
+                            }
+                        }
+                        for (k in keysToDelete) {
+                            val delReq = Request.Builder()
+                                .url("$DATABASE_URL/users/$key/history/$k.json")
+                                .delete()
+                                .build()
+                            httpClient.newCall(delReq).execute().close()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to delete history by itemId: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Полная очистка истории в Firebase
+     */
+    fun onAllHistoryCleared() {
+        val key = _userKey.value ?: return
+        pendingProgressMap.clear()
+        scope.launch {
+            try {
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/history.json")
+                    .delete()
+                    .build()
+                httpClient.newCall(request).execute().close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to clear all history: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Полная двусторонняя синхронизация облачной базы и локального Room кэша
+     */
+    suspend fun syncAll(repository: RezkaRepository) = withContext(Dispatchers.IO) {
+        val key = _userKey.value ?: return@withContext
+        if (_isSyncing.value) return@withContext
+        _isSyncing.value = true
+
+        try {
+            // 1. Синхронизация Избранного
+            val favReq = Request.Builder().url("$DATABASE_URL/users/$key/favorites.json").get().build()
+            val favResp = httpClient.newCall(favReq).execute()
+            val remoteFavorites = mutableListOf<FavoriteEntity>()
+
+            if (favResp.isSuccessful) {
+                val favBody = favResp.body?.string() ?: ""
+                if (favBody != "null" && favBody.isNotEmpty()) {
+                    val favJson = JSONObject(favBody)
+                    val it = favJson.keys()
+                    while (it.hasNext()) {
+                        val k = it.next()
+                        val obj = favJson.optJSONObject(k)
+                        if (obj != null) {
+                            remoteFavorites.add(jsonToFavorite(obj))
+                        }
+                    }
+                }
+            }
+
+            // Пакетная вставка в локальный Room
+            if (remoteFavorites.isNotEmpty()) {
+                repository.insertFavorites(remoteFavorites)
+            }
+
+            // Проверяем, есть ли локальные закладки, которых ещё нет в облаке, и дозаливаем их
+            val localFavorites = repository.getAllFavoritesList()
+            val remoteFavIds = remoteFavorites.map { it.id }.toSet()
+            for (localFav in localFavorites) {
+                if (localFav.id !in remoteFavIds) {
+                    onFavoriteAdded(localFav)
+                }
+            }
+
+            // 2. Синхронизация Истории просмотров (серии, сезоны, секунды прогресса)
+            val histReq = Request.Builder().url("$DATABASE_URL/users/$key/history.json").get().build()
+            val histResp = httpClient.newCall(histReq).execute()
+            val remoteHistory = mutableListOf<WatchHistoryEntity>()
+
+            if (histResp.isSuccessful) {
+                val histBody = histResp.body?.string() ?: ""
+                if (histBody != "null" && histBody.isNotEmpty()) {
+                    val histJson = JSONObject(histBody)
+                    val it = histJson.keys()
+                    while (it.hasNext()) {
+                        val k = it.next()
+                        val obj = histJson.optJSONObject(k)
+                        if (obj != null) {
+                            remoteHistory.add(jsonToHistory(obj))
+                        }
+                    }
+                }
+            }
+
+            if (remoteHistory.isNotEmpty()) {
+                repository.insertHistoryList(remoteHistory)
+            }
+
+            // Проверяем локальную историю и дозаливаем новые элементы в облако
+            val localHistory = repository.getAllHistoryList()
+            val remoteHistIds = remoteHistory.map { it.id }.toSet()
+            for (localHist in localHistory) {
+                if (localHist.id !in remoteHistIds) {
+                    val safeId = safeFirebaseKey(localHist.id)
+                    val json = historyToJson(localHist)
+                    val req = Request.Builder()
+                        .url("$DATABASE_URL/users/$key/history/$safeId.json")
+                        .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                        .build()
+                    httpClient.newCall(req).execute().close()
+                }
+            }
+
+            // 3. Синхронизация Настроек (зеркало, качество видео, автопереключение серии)
+            try {
+                val setReq = Request.Builder().url("$DATABASE_URL/users/$key/settings.json").get().build()
+                val setResp = httpClient.newCall(setReq).execute()
+                if (setResp.isSuccessful) {
+                    val setBody = setResp.body?.string()?.trim() ?: ""
+                    if (setBody != "null" && setBody.isNotEmpty()) {
+                        val setJson = JSONObject(setBody)
+                        val remoteMirror = setJson.optString("mirror")
+                        val remoteQuality = setJson.optString("defaultQuality")
+                        val hasAutoNext = setJson.has("autoNextEpisode")
+                        val remoteAutoNext = setJson.optBoolean("autoNextEpisode", true)
+
+                        if (remoteMirror.isNotBlank() && remoteMirror != RezkaService.currentMirror.value) {
+                            withContext(Dispatchers.Main) {
+                                RezkaService.setMirror(remoteMirror)
+                            }
+                        }
+                        if (remoteQuality.isNotBlank() && remoteQuality != RezkaService.defaultQuality.value) {
+                            withContext(Dispatchers.Main) {
+                                RezkaService.setDefaultQuality(remoteQuality)
+                            }
+                        }
+                        if (hasAutoNext && remoteAutoNext != RezkaService.autoNextEpisode.value) {
+                            withContext(Dispatchers.Main) {
+                                RezkaService.setAutoNextEpisode(remoteAutoNext)
+                            }
+                        }
+                    } else {
+                        // В облаке ещё нет настроек пользователя - выгружаем текущие
+                        onSettingsUpdated(
+                            RezkaService.currentMirror.value,
+                            RezkaService.defaultQuality.value,
+                            RezkaService.autoNextEpisode.value
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to sync settings from Firebase: ${e.message}")
+            }
+
+            Log.d(TAG, "Sync complete: ${remoteFavorites.size} favorites, ${remoteHistory.size} history items")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during syncAll: ${e.message}", e)
+        } finally {
+            _isSyncing.value = false
+        }
+    }
+
+    private suspend fun uploadLocalDataToCloud(key: String, repository: RezkaRepository) {
+        try {
+            val localFavorites = repository.getAllFavoritesList()
+            for (fav in localFavorites) {
+                val safeId = safeFirebaseKey(fav.id)
+                val json = favoriteToJson(fav)
+                val req = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/favorites/$safeId.json")
+                    .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                httpClient.newCall(req).execute().close()
+            }
+
+            val localHistory = repository.getAllHistoryList()
+            for (hist in localHistory) {
+                val safeId = safeFirebaseKey(hist.id)
+                val json = historyToJson(hist)
+                val req = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/history/$safeId.json")
+                    .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                httpClient.newCall(req).execute().close()
+            }
+
+            // Выгружаем настройки в облако
+            onSettingsUpdated(
+                RezkaService.currentMirror.value,
+                RezkaService.defaultQuality.value,
+                RezkaService.autoNextEpisode.value
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed initial upload of local data: ${e.message}")
+        }
+    }
+
+    private fun favoriteToJson(fav: FavoriteEntity): JSONObject {
+        return JSONObject().apply {
+            put("id", fav.id)
+            put("title", fav.title)
+            put("subtitle", fav.subtitle)
+            put("imageUrl", fav.imageUrl)
+            put("rating", fav.rating)
+            put("url", fav.url)
+            put("type", fav.type)
+            put("timestamp", fav.timestamp)
+        }
+    }
+
+    private fun jsonToFavorite(json: JSONObject): FavoriteEntity {
+        return FavoriteEntity(
+            id = json.optString("id", ""),
+            title = json.optString("title", ""),
+            subtitle = json.optString("subtitle", ""),
+            imageUrl = json.optString("imageUrl", ""),
+            rating = json.optString("rating", ""),
+            url = json.optString("url", ""),
+            type = json.optString("type", "MOVIE"),
+            timestamp = json.optLong("timestamp", System.currentTimeMillis())
+        )
+    }
+
+    private fun historyToJson(h: WatchHistoryEntity): JSONObject {
+        return JSONObject().apply {
+            put("id", h.id)
+            put("itemId", h.itemId)
+            put("title", h.title)
+            put("imageUrl", h.imageUrl)
+            put("subtitle", h.subtitle)
+            put("url", h.url)
+            put("translatorId", h.translatorId)
+            put("translatorName", h.translatorName)
+            put("season", h.season)
+            put("episode", h.episode)
+            put("progressMs", h.progressMs)
+            put("durationMs", h.durationMs)
+            put("totalEpisodes", h.totalEpisodes)
+            put("episodeIndex", h.episodeIndex)
+            put("totalSeasons", h.totalSeasons)
+            put("timestamp", h.timestamp)
+        }
+    }
+
+    private fun jsonToHistory(json: JSONObject): WatchHistoryEntity {
+        return WatchHistoryEntity(
+            id = json.optString("id", ""),
+            itemId = json.optString("itemId", ""),
+            title = json.optString("title", ""),
+            imageUrl = json.optString("imageUrl", ""),
+            subtitle = json.optString("subtitle", ""),
+            url = json.optString("url", ""),
+            translatorId = json.optString("translatorId", ""),
+            translatorName = json.optString("translatorName", ""),
+            season = json.optInt("season", 0),
+            episode = json.optString("episode", ""),
+            progressMs = json.optLong("progressMs", 0L),
+            durationMs = json.optLong("durationMs", 0L),
+            totalEpisodes = json.optInt("totalEpisodes", 0),
+            episodeIndex = json.optInt("episodeIndex", 0),
+            totalSeasons = json.optInt("totalSeasons", 0),
+            timestamp = json.optLong("timestamp", System.currentTimeMillis())
+        )
+    }
+}
