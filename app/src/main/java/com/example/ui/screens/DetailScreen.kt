@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -60,6 +61,7 @@ fun DetailScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val lazyListState = rememberLazyListState()
     val detailState by viewModel.detailState.collectAsState()
     val favorites by viewModel.favorites.collectAsState()
     val defaultQuality by viewModel.defaultQuality.collectAsState()
@@ -93,6 +95,26 @@ fun DetailScreen(
     var selectedSeasonId by remember { mutableStateOf<Int?>(null) }
     var selectedEpisodeId by remember { mutableStateOf<String?>(null) }
     var dynamicSeasons by remember { mutableStateOf<List<Season>>(emptyList()) }
+
+    // Deterministic calculation of comments section item index in the LazyColumn
+    val commentsSectionIndex by remember(detailState, dynamicSeasons) {
+        derivedStateOf {
+            val detail = (detailState as? DetailState.Success)?.detail ?: return@derivedStateOf 0
+            var idx = 2 // Backdrop (0) + Poster/Meta (1)
+            if (detail.translators.isNotEmpty()) {
+                idx++
+            }
+            val effectiveSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else detail.seasons
+            if (detail.type == RezkaType.SERIES && effectiveSeasons.isNotEmpty()) {
+                idx += 2 // Seasons selector + Episodes selector
+            }
+            if (detail.type == RezkaType.MOVIE) {
+                idx++ // Play button
+            }
+            idx
+        }
+    }
+
     var showScheduleCalendarDialog by remember { mutableStateOf(false) }
     var isActorsExpanded by remember { mutableStateOf(false) }
 
@@ -295,6 +317,7 @@ fun DetailScreen(
 
                 // ---- SCROLLABLE DETAIL PAGE ----
                 LazyColumn(
+                    state = lazyListState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 96.dp)
                 ) {
@@ -1336,7 +1359,7 @@ fun DetailScreen(
                                                 // Кнопка "Назад"
                                                 IconButton(
                                                     onClick = {
-                                                        viewModel.loadCommentsPage(commentsState.currentPage - 1)
+                                                        viewModel.loadCommentsPage(commentsState.currentPage - 1); scope.launch { lazyListState.animateScrollToItem(commentsSectionIndex) }
                                                     },
                                                     enabled = commentsState.currentPage > 1 && !commentsState.isLoading && !commentsState.isLoadingMore
                                                 ) {
@@ -1368,7 +1391,7 @@ fun DetailScreen(
                                                                     RoundedCornerShape(8.dp)
                                                                 )
                                                                 .clickable(enabled = !isSelected && !commentsState.isLoading) {
-                                                                    viewModel.loadCommentsPage(pageNum)
+                                                                    viewModel.loadCommentsPage(pageNum); scope.launch { lazyListState.animateScrollToItem(commentsSectionIndex) }
                                                                 }
                                                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                                                             contentAlignment = Alignment.Center
@@ -1386,7 +1409,7 @@ fun DetailScreen(
                                                 // Кнопка "Вперёд"
                                                 IconButton(
                                                     onClick = {
-                                                        viewModel.loadCommentsPage(commentsState.currentPage + 1)
+                                                        viewModel.loadCommentsPage(commentsState.currentPage + 1); scope.launch { lazyListState.animateScrollToItem(commentsSectionIndex) }
                                                     },
                                                     enabled = (commentsState.hasMore || commentsState.currentPage < totalPages) && !commentsState.isLoading && !commentsState.isLoadingMore
                                                 ) {
@@ -1643,6 +1666,43 @@ fun DetailScreen(
                 },
                 modifier = Modifier.fillMaxSize()
             )
+        }
+
+        // Кнопка быстрой прокрутки вверх к началу комментариев
+        val showScrollToTop by remember {
+            derivedStateOf {
+                lazyListState.firstVisibleItemIndex >= commentsSectionIndex && activePlayerStreams == null
+            }
+        }
+
+        AnimatedVisibility(
+            visible = showScrollToTop,
+            enter = fadeIn() + scaleIn(),
+            exit = fadeOut() + scaleOut(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(bottom = 24.dp, end = 24.dp)
+        ) {
+            FloatingActionButton(
+                onClick = {
+                    scope.launch {
+                        lazyListState.animateScrollToItem(commentsSectionIndex)
+                    }
+                },
+                containerColor = CinemaPrimary,
+                contentColor = CinemaTextWhite,
+                shape = CircleShape,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("comments_scroll_to_top_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ArrowUpward,
+                    contentDescription = "Вверх к началу отзывов",
+                    modifier = Modifier.size(22.dp)
+                )
+            }
         }
     }
 }

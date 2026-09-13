@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.RezkaItem
+import com.example.data.RezkaService
 import com.example.data.RezkaType
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
@@ -102,14 +103,15 @@ fun FavoritesScreen(
                         items = favorites,
                         key = { it.id }
                     ) { fav ->
+                        val itemType = RezkaType.valueOf(fav.type)
                         val item = RezkaItem(
                             id = fav.id,
                             title = fav.title,
                             subtitle = fav.subtitle,
                             imageUrl = fav.imageUrl,
                             rating = fav.rating,
-                            url = fav.url,
-                            type = RezkaType.valueOf(fav.type)
+                            url = RezkaService.adjustUrlToCurrentMirror(fav.url, itemType, fav.id),
+                            type = itemType
                         )
                         RezkaItemCard(item = item, onClick = { onNavigateToDetail(item) })
                     }

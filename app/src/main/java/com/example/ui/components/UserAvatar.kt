@@ -111,7 +111,26 @@ fun UserAvatar(
             )
         }
     } else {
-        // Кастомное изображение (base64 Data URI или ссылка)
+        // Оптимизированное декодирование base64 или использование прямой ссылки в фоновом потоке через remember
+        val decodedModel = remember(avatar) {
+            if (avatar.startsWith("data:", ignoreCase = true)) {
+                val commaIndex = avatar.indexOf(',')
+                if (commaIndex != -1) {
+                    try {
+                        val base64Data = avatar.substring(commaIndex + 1)
+                        Base64.decode(base64Data, Base64.DEFAULT)
+                    } catch (e: Exception) {
+                        Log.e("UserAvatar", "Ошибка декодирования аватара Base64", e)
+                        avatar
+                    }
+                } else {
+                    avatar
+                }
+            } else {
+                avatar
+            }
+        }
+
         Box(
             modifier = baseModifier
                 .background(CinemaCard)
@@ -119,7 +138,7 @@ fun UserAvatar(
             contentAlignment = Alignment.Center
         ) {
             AsyncImage(
-                model = avatar,
+                model = decodedModel,
                 contentDescription = "Аватар",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
