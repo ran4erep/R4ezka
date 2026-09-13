@@ -1,0 +1,431 @@
+package com.example.ui.screens
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.example.data.*
+import com.example.ui.CatalogState
+import com.example.ui.RezkaViewModel
+import com.example.ui.theme.*
+
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.Dialog
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CatalogScreen(
+    viewModel: RezkaViewModel,
+    onNavigateToDetail: (RezkaItem) -> Unit,
+    onNavigateToSettings: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val catalogState by viewModel.catalogState.collectAsState()
+    val currentType by viewModel.currentType.collectAsState()
+    val currentSection by viewModel.currentSection.collectAsState()
+    val currentGenre by viewModel.currentGenre.collectAsState()
+    val genresList by viewModel.genresList.collectAsState()
+    val isLoadingMore by viewModel.isLoadingMore.collectAsState()
+    val isEndReached by viewModel.isEndReached.collectAsState()
+    var searchInput by remember { mutableStateOf(viewModel.searchQuery) }
+
+    val isSyncing by viewModel.isSyncing.collectAsState()
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(CinemaBlack)
+    ) {
+        // ---- SEARCH BAR ----
+        TextField(
+            value = searchInput,
+            onValueChange = {
+                searchInput = it
+                viewModel.onSearchQueryChanged(it)
+            },
+            placeholder = { Text("Поиск фильмов, сериалов, аниме...", color = CinemaMuted) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Поиск", tint = CinemaPrimary) },
+            trailingIcon = {
+                if (searchInput.isNotEmpty()) {
+                    IconButton(onClick = {
+                        searchInput = ""
+                        viewModel.onSearchQueryChanged("")
+                    }) {
+                        Icon(Icons.Default.Close, contentDescription = "Очистить", tint = CinemaTextGray)
+                    }
+                }
+            },
+            singleLine = true,
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = CinemaDark,
+                unfocusedContainerColor = CinemaDark,
+                focusedTextColor = CinemaTextWhite,
+                unfocusedTextColor = CinemaTextWhite,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+                disabledIndicatorColor = Color.Transparent
+            ),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .height(52.dp)
+                .testTag("catalog_search_bar")
+        )
+
+        // ---- FILTERS DROPDOWNS (Category, Section, Genre) ----
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Dropdown 1: Категории
+            val categories = listOf(
+                RezkaType.MOVIE to "Фильмы",
+                RezkaType.SERIES to "Сериалы",
+                RezkaType.ANIME to "Аниме",
+                RezkaType.CARTOON to "Мультики"
+            )
+            val currentCategoryPair = categories.find { it.first == currentType } ?: categories[0]
+
+            RezkaDropdown(
+                label = "Категория",
+                options = categories,
+                selectedOption = currentCategoryPair,
+                onOptionSelected = { pair ->
+                    searchInput = ""
+                    viewModel.loadCatalog(type = pair.first, genre = "", forceRefresh = true)
+                },
+                getLabel = { it.second },
+                modifier = Modifier.weight(1f)
+            )
+
+            // Dropdown 2: Разделы
+            val sections = listOf(
+                SectionType.LATEST,
+                SectionType.POPULAR,
+                SectionType.WATCHING,
+                SectionType.AWAITING
+            )
+
+            RezkaDropdown(
+                label = "Раздел",
+                options = sections,
+                selectedOption = currentSection,
+                onOptionSelected = { section ->
+                    searchInput = ""
+                    viewModel.loadCatalog(section = section, forceRefresh = true)
+                },
+                getLabel = { it.getDisplayName() },
+                modifier = Modifier.weight(1f)
+            )
+
+            // Dropdown 3: Жанры
+            val currentGenreItem = genresList.find { it.slug == currentGenre } ?: genresList.firstOrNull() ?: GenreItem("Без жанра", "")
+
+            RezkaDropdown(
+                label = "Жанр",
+                options = genresList,
+                selectedOption = currentGenreItem,
+                onOptionSelected = { genreItem ->
+                    searchInput = ""
+                    viewModel.loadCatalog(genre = genreItem.slug, forceRefresh = true)
+                },
+                getLabel = { it.name },
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        // ---- CATALOG GRID / CONTENT ----
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
+            when (val state = catalogState) {
+                is CatalogState.Loading -> {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
+                    }
+                }
+                is CatalogState.Error -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(32.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(Icons.Default.CloudOff, contentDescription = null, tint = CinemaPrimary, modifier = Modifier.size(64.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(state.message, color = CinemaTextWhite, textAlign = TextAlign.Center, fontSize = 16.sp)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = { viewModel.loadCatalog(forceRefresh = true) },
+                            colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
+                        ) {
+                            Text("Повторить")
+                        }
+                    }
+                }
+                is CatalogState.Success -> {
+                    if (state.items.isEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(24.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(Icons.Default.SearchOff, contentDescription = null, tint = CinemaMuted, modifier = Modifier.size(64.dp))
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = if (searchInput.isNotBlank()) "Нам не удалось ничего найти.\nМожет стоит изменить поисковый запрос?" else "Ничего не найдено",
+                                color = CinemaTextGray,
+                                fontSize = 15.sp,
+                                textAlign = TextAlign.Center,
+                                lineHeight = 22.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    } else {
+                        // High-performance vertical grid with optimized pagination
+                        val gridState = rememberLazyGridState()
+
+                        // Ultra-efficient scroll observer via derivedStateOf
+                        val shouldLoadMore by remember {
+                            derivedStateOf {
+                                val totalItems = gridState.layoutInfo.totalItemsCount
+                                val lastVisibleIndex = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                                totalItems > 0 && lastVisibleIndex >= totalItems - 4
+                            }
+                        }
+
+                        LaunchedEffect(shouldLoadMore, isLoadingMore, isEndReached) {
+                            if (shouldLoadMore && !isLoadingMore && !isEndReached && searchInput.isEmpty()) {
+                                viewModel.loadNextPage()
+                            }
+                        }
+
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(2),
+                            state = gridState,
+                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("catalog_items_grid")
+                        ) {
+                            items(
+                                items = state.items,
+                                key = { it.id }
+                            ) { item ->
+                                RezkaItemCard(item = item, onClick = { onNavigateToDetail(item) })
+                            }
+
+                            if (isLoadingMore) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 16.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator(
+                                            color = CinemaPrimary,
+                                            modifier = Modifier.size(32.dp),
+                                            strokeWidth = 3.dp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RezkaItemCard(
+    item: RezkaItem,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val bottomFadeBrush = remember {
+        Brush.verticalGradient(
+            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)),
+            startY = 100f
+        )
+    }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag("movie_card_${item.id}"),
+        colors = CardDefaults.cardColors(containerColor = CinemaDark),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(0.68f) // 2:3 Cinematic Poster ratio
+            ) {
+                AsyncImage(
+                    model = item.imageUrl,
+                    contentDescription = item.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Bottom fade overlay to blend poster with black text block
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(bottomFadeBrush)
+                )
+
+                // Rating / Episode Badge
+                if (item.rating.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp)
+                            .background(CinemaPrimary, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = item.rating,
+                            color = CinemaTextWhite,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // Info Block
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(10.dp)
+            ) {
+                Text(
+                    text = item.title,
+                    color = CinemaTextWhite,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = item.subtitle,
+                    color = CinemaTextGray,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun <T> RezkaDropdown(
+    label: String,
+    options: List<T>,
+    selectedOption: T,
+    onOptionSelected: (T) -> Unit,
+    getLabel: (T) -> String,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(modifier = modifier) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(CinemaDark)
+                .clickable { expanded = true }
+                .padding(horizontal = 8.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = getLabel(selectedOption),
+                color = CinemaTextWhite,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
+            )
+            Icon(
+                imageVector = if (expanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                contentDescription = null,
+                tint = CinemaPrimary,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier
+                .background(CinemaDark)
+                .widthIn(max = 240.dp)
+                .heightIn(max = 280.dp)
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = getLabel(option),
+                            color = if (option == selectedOption) CinemaPrimary else CinemaTextWhite,
+                            fontSize = 12.sp,
+                            fontWeight = if (option == selectedOption) FontWeight.Bold else FontWeight.Medium
+                        )
+                    },
+                    onClick = {
+                        onOptionSelected(option)
+                        expanded = false
+                    },
+                    colors = MenuDefaults.itemColors(
+                        textColor = CinemaTextWhite
+                    )
+                )
+            }
+        }
+    }
+}
