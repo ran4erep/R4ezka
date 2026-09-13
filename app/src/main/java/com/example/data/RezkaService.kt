@@ -362,6 +362,61 @@ object RezkaService {
         }
     }
 
+    /**
+     * Высокопроизводительный движок коррекции URL на актуальное зеркало.
+     * Заменяет домен в абсолютных URL на текущий активный зеркальный домен,
+     * а также собирает валидный URL по ID и категории в случае отсутствия ссылки.
+     */
+    fun adjustUrlToCurrentMirror(url: String, type: RezkaType? = null, id: String? = null): String {
+        val clean = url.trim()
+        val currentBase = currentBaseUrl.trimEnd('/')
+
+        if (clean.isEmpty()) {
+            if (id != null && type != null) {
+                val categoryPath = when (type) {
+                    RezkaType.MOVIE -> "films"
+                    RezkaType.SERIES -> "series"
+                    RezkaType.ANIME -> "animation"
+                    RezkaType.CARTOON -> "cartoons"
+                }
+                return "$currentBase/$categoryPath/$id.html"
+            }
+            return ""
+        }
+
+        // Если URL относительный (начинается с /)
+        if (clean.startsWith("/")) {
+            return "$currentBase$clean"
+        }
+
+        // Если URL абсолютный (начинается с http:// или https://)
+        if (clean.startsWith("http://") || clean.startsWith("https://")) {
+            // Заменяем протокол и хост на currentBase
+            val schemeEnd = clean.indexOf("://")
+            if (schemeEnd != -1) {
+                val pathStart = clean.indexOf('/', schemeEnd + 3)
+                return if (pathStart != -1) {
+                    currentBase + clean.substring(pathStart)
+                } else {
+                    currentBase
+                }
+            }
+        }
+
+        // Если это просто имя файла или относительный путь без слэша в начале
+        if (id != null && type != null) {
+            val categoryPath = when (type) {
+                RezkaType.MOVIE -> "films"
+                RezkaType.SERIES -> "series"
+                RezkaType.ANIME -> "animation"
+                RezkaType.CARTOON -> "cartoons"
+            }
+            return "$currentBase/$categoryPath/$id.html"
+        }
+
+        return "$currentBase/$clean"
+    }
+
     // LRU кэш для страниц каталога и фильмов (минимизация нагрузки на CPU и сеть)
     private val catalogCache = LruCache<String, List<RezkaItem>>(100)
     private val detailCache = LruCache<String, RezkaDetail>(100)
@@ -1122,11 +1177,12 @@ object RezkaService {
      * Получение страницы деталей фильма/сериала с rezka-tv.org
      */
     suspend fun getDetail(url: String): RezkaDetail = withContext(Dispatchers.IO) {
-        val cacheKey = url
+        val adjustedUrl = adjustUrlToCurrentMirror(url)
+        val cacheKey = adjustedUrl
         detailCache.get(cacheKey)?.let { return@withContext it }
 
-        val id = extractIdFromUrl(url)
-        val normalizedUrl = if (url.startsWith("/")) "$currentBaseUrl$url" else url
+        val id = extractIdFromUrl(adjustedUrl)
+        val normalizedUrl = adjustedUrl
 
         val maxAttempts = 3
         var lastException: Exception? = null

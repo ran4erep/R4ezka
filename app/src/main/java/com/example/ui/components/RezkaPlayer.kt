@@ -10,6 +10,9 @@ import android.util.Rational
 import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.WindowManager
+import androidx.activity.ComponentActivity
+import androidx.core.app.PictureInPictureModeChangedInfo
+import androidx.core.util.Consumer
 import androidx.annotation.OptIn
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Animatable
@@ -21,6 +24,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -141,6 +146,24 @@ fun RezkaPlayer(
 
     // Floating (PiP) Window state
     var isFloating by remember { mutableStateOf(false) }
+
+    val compActivity = context as? ComponentActivity
+    var isInPipMode by remember { mutableStateOf(compActivity?.isInPictureInPictureMode == true) }
+
+    DisposableEffect(compActivity) {
+        if (compActivity == null) return@DisposableEffect onDispose {}
+        val listener = Consumer<PictureInPictureModeChangedInfo> { info ->
+            isInPipMode = info.isInPictureInPictureMode
+            if (info.isInPictureInPictureMode) {
+                // If entering system PiP, disable internal floating UI to avoid overlap / bugs
+                isFloating = false
+            }
+        }
+        compActivity.addOnPictureInPictureModeChangedListener(listener)
+        onDispose {
+            compActivity.removeOnPictureInPictureModeChangedListener(listener)
+        }
+    }
 
     // Lock Screen state: touches are blocked until user holds lock icon for 2 seconds
     var isScreenLocked by remember { mutableStateOf(false) }
@@ -500,6 +523,28 @@ fun RezkaPlayer(
         val maxAvailableWidthDp = maxWidth.value
         val screenWidthPx = with(density) { maxWidth.toPx() }
         val screenHeightPx = with(density) { maxHeight.toPx() }
+
+        // --- SYSTEM PiP MODE VIEW (Ultra-optimized, 0% CPU overhead, fullscreen video only) ---
+        if (isInPipMode) {
+            AndroidView(
+                factory = { ctx ->
+                    (LayoutInflater.from(ctx).inflate(R.layout.item_player_view, null) as PlayerView).apply {
+                        player = exoPlayer
+                        useController = false
+                        resizeMode = currentResizeMode.mode
+                    }
+                },
+                update = { playerView ->
+                    playerView.player = exoPlayer
+                    playerView.resizeMode = currentResizeMode.mode
+                },
+                onRelease = { playerView ->
+                    playerView.player = null
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+            return@BoxWithConstraints
+        }
 
         // --- FLOATING MODE VIEW ---
         if (isFloating) {
@@ -1207,8 +1252,21 @@ fun RezkaPlayer(
                             // 1. Floating mini-player button (PiP with drag & resize)
                             IconButton(
                                 onClick = {
-                                    isFloating = true
-                                    showControls = false
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity != null) {
+                                        try {
+                                            val params = PictureInPictureParams.Builder()
+                                                .setAspectRatio(Rational(16, 9))
+                                                .build()
+                                            activity.enterPictureInPictureMode(params)
+                                        } catch (e: Exception) {
+                                            Log.e("RezkaPlayer", "Error entering PiP", e)
+                                            isFloating = true
+                                            showControls = false
+                                        }
+                                    } else {
+                                        isFloating = true
+                                        showControls = false
+                                    }
                                 },
                                 modifier = Modifier
                                     .background(Color.Black.copy(alpha = 0.4f), CircleShape)
@@ -1585,7 +1643,7 @@ fun RezkaPlayer(
             title = { Text("Качество видео", color = CinemaTextWhite) },
             containerColor = CinemaDark,
             text = {
-                Column {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     streams.forEachIndexed { index, stream ->
                         Row(
                             modifier = Modifier
@@ -1643,7 +1701,10 @@ fun RezkaPlayer(
             },
             containerColor = CinemaDark,
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
                     availableSpeeds.forEach { speed ->
                         val isSelected = speed == playbackSpeed
                         val label = when (speed) {
@@ -1678,18 +1739,18 @@ fun RezkaPlayer(
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                     fontSize = 14.sp
                                 )
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        tint = CinemaPrimary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = CinemaPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
                     }
                 }
+              }
             },
             confirmButton = {
                 TextButton(onClick = { showSpeedDialog = false }) {

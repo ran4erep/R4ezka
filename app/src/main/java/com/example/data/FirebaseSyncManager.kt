@@ -748,14 +748,19 @@ object FirebaseSyncManager {
     }
 
     private fun jsonToFavorite(json: JSONObject): FavoriteEntity {
+        val rawUrl = json.optString("url", "")
+        val typeStr = json.optString("type", "MOVIE")
+        val itemType = try { RezkaType.valueOf(typeStr) } catch (e: Exception) { RezkaType.MOVIE }
+        val id = json.optString("id", "")
+        val adjustedUrl = RezkaService.adjustUrlToCurrentMirror(rawUrl, itemType, id)
         return FavoriteEntity(
-            id = json.optString("id", ""),
+            id = id,
             title = json.optString("title", ""),
             subtitle = json.optString("subtitle", ""),
             imageUrl = json.optString("imageUrl", ""),
             rating = json.optString("rating", ""),
-            url = json.optString("url", ""),
-            type = json.optString("type", "MOVIE"),
+            url = adjustedUrl,
+            type = typeStr,
             timestamp = json.optLong("timestamp", System.currentTimeMillis())
         )
     }
@@ -782,16 +787,21 @@ object FirebaseSyncManager {
     }
 
     private fun jsonToHistory(json: JSONObject): WatchHistoryEntity {
+        val rawUrl = json.optString("url", "")
+        val season = json.optInt("season", 0)
+        val itemType = if (season > 0) RezkaType.SERIES else RezkaType.MOVIE
+        val itemId = json.optString("itemId", "")
+        val adjustedUrl = RezkaService.adjustUrlToCurrentMirror(rawUrl, itemType, itemId)
         return WatchHistoryEntity(
             id = json.optString("id", ""),
-            itemId = json.optString("itemId", ""),
+            itemId = itemId,
             title = json.optString("title", ""),
             imageUrl = json.optString("imageUrl", ""),
             subtitle = json.optString("subtitle", ""),
-            url = json.optString("url", ""),
+            url = adjustedUrl,
             translatorId = json.optString("translatorId", ""),
             translatorName = json.optString("translatorName", ""),
-            season = json.optInt("season", 0),
+            season = season,
             episode = json.optString("episode", ""),
             progressMs = json.optLong("progressMs", 0L),
             durationMs = json.optLong("durationMs", 0L),

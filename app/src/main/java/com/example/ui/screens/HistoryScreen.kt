@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.AggregatedHistoryItem
 import com.example.data.RezkaItem
+import com.example.data.RezkaService
 import com.example.data.RezkaType
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
@@ -125,9 +126,8 @@ fun HistoryScreen(
                         HistoryCardItem(
                             history = history,
                             onClick = {
-                                val targetUrl = history.url.ifEmpty {
-                                    "https://rezka-tv.org/${if (history.isSeries) "series" else "films"}/${history.itemId}.html"
-                                }
+                                val itemType = if (history.isSeries) RezkaType.SERIES else RezkaType.MOVIE
+                                val targetUrl = RezkaService.adjustUrlToCurrentMirror(history.url, itemType, history.itemId)
                                 val item = RezkaItem(
                                     id = history.itemId,
                                     title = history.title,
@@ -135,7 +135,7 @@ fun HistoryScreen(
                                     imageUrl = history.imageUrl,
                                     rating = "",
                                     url = targetUrl,
-                                    type = if (history.isSeries) RezkaType.SERIES else RezkaType.MOVIE
+                                    type = itemType
                                 )
                                 onNavigateToDetail(item)
                             },
