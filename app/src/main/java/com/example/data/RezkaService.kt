@@ -444,6 +444,18 @@ object RezkaService {
     private val _autoNextEpisode = MutableStateFlow(true)
     val autoNextEpisode: StateFlow<Boolean> = _autoNextEpisode.asStateFlow()
 
+    // Предпочтительный язык субтитров ("ru", "en", "uk", "off" и т.д.)
+    private val _preferredSubtitleLang = MutableStateFlow("ru")
+    val preferredSubtitleLang: StateFlow<String> = _preferredSubtitleLang.asStateFlow()
+
+    // Масштаб шрифта субтитров (по умолчанию 0.053f)
+    private val _subtitleTextScale = MutableStateFlow(0.053f)
+    val subtitleTextScale: StateFlow<Float> = _subtitleTextScale.asStateFlow()
+
+    // Режим масштабирования видео (FIT, ZOOM, FILL)
+    private val _defaultResizeMode = MutableStateFlow("FIT")
+    val defaultResizeMode: StateFlow<String> = _defaultResizeMode.asStateFlow()
+
     private var prefs: SharedPreferences? = null
 
     fun init(context: Context) {
@@ -462,6 +474,15 @@ object RezkaService {
 
         val savedAutoNext = prefs?.getBoolean("auto_next_episode", true) ?: true
         _autoNextEpisode.value = savedAutoNext
+
+        val savedSubLang = prefs?.getString("preferred_subtitle_lang", "ru") ?: "ru"
+        _preferredSubtitleLang.value = savedSubLang
+
+        val savedSubScale = prefs?.getFloat("subtitle_text_scale", 0.053f) ?: 0.053f
+        _subtitleTextScale.value = savedSubScale
+
+        val savedResize = prefs?.getString("default_resize_mode", "FIT") ?: "FIT"
+        _defaultResizeMode.value = savedResize
     }
 
     fun setDefaultQuality(quality: String) {
@@ -472,6 +493,21 @@ object RezkaService {
     fun setAutoNextEpisode(enabled: Boolean) {
         _autoNextEpisode.value = enabled
         prefs?.edit()?.putBoolean("auto_next_episode", enabled)?.apply()
+    }
+
+    fun setPreferredSubtitleLang(lang: String) {
+        _preferredSubtitleLang.value = lang
+        prefs?.edit()?.putString("preferred_subtitle_lang", lang)?.apply()
+    }
+
+    fun setSubtitleTextScale(scale: Float) {
+        _subtitleTextScale.value = scale
+        prefs?.edit()?.putFloat("subtitle_text_scale", scale)?.apply()
+    }
+
+    fun setDefaultResizeMode(mode: String) {
+        _defaultResizeMode.value = mode
+        prefs?.edit()?.putString("default_resize_mode", mode)?.apply()
     }
 
     /**
@@ -1988,13 +2024,37 @@ object RezkaService {
 
                     // Пытаемся распарсить JSON
                     var rawUrl = ""
+                    var rawSubtitle = ""
+                    var subtitleDef = ""
                     try {
                         val json = JSONObject(bodyStr)
                         rawUrl = json.optString("url", "")
+                        val subObj = json.opt("subtitle")
+                        if (subObj is String) {
+                            rawSubtitle = subObj
+                        } else if (subObj != null && subObj != false && subObj != JSONObject.NULL) {
+                            rawSubtitle = subObj.toString()
+                        }
+                        if (rawSubtitle.isEmpty()) {
+                            val altSub = json.opt("subtitles")
+                            if (altSub is String) rawSubtitle = altSub
+                        }
+                        val defObj = json.opt("subtitle_def")
+                        if (defObj is String) {
+                            subtitleDef = defObj
+                        }
                     } catch (e: Exception) {
                         val match = Regex(""""url"\s*:\s*"([^"]+)"""").find(bodyStr)
                         if (match != null) {
                             rawUrl = match.groupValues[1]
+                        }
+                        val subMatch = Regex(""""subtitle(?:s)?"\s*:\s*"([^"]+)"""").find(bodyStr)
+                        if (subMatch != null) {
+                            rawSubtitle = subMatch.groupValues[1]
+                        }
+                        val defMatch = Regex(""""subtitle_def"\s*:\s*"([^"]+)"""").find(bodyStr)
+                        if (defMatch != null) {
+                            subtitleDef = defMatch.groupValues[1]
                         }
                     }
 
@@ -2002,8 +2062,18 @@ object RezkaService {
                         val cleanEncrypted = rawUrl.replace("\\/", "/")
                         val decrypted = RezkaDecryptor.decrypt(cleanEncrypted)
                         val streams = RezkaDecryptor.parseStreams(decrypted)
+                        val subtitles = if (rawSubtitle.isNotEmpty() && rawSubtitle != "false" && rawSubtitle != "null") {
+                            RezkaDecryptor.parseSubtitles(rawSubtitle, subtitleDef)
+                        } else {
+                            emptyList()
+                        }
                         if (streams.isNotEmpty()) {
-                            return streams
+                            val finalStreams = if (subtitles.isNotEmpty()) {
+                                streams.map { it.copy(subtitles = subtitles) }
+                            } else {
+                                streams
+                            }
+                            return finalStreams
                         }
                     }
                 }

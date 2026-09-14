@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import com.example.data.RezkaService
 import com.example.ui.RezkaViewModel
@@ -44,6 +45,7 @@ fun SettingsScreen(
     val currentMirror by viewModel.currentMirror.collectAsState()
     val defaultQuality by viewModel.defaultQuality.collectAsState()
     val autoNextEpisode by viewModel.autoNextEpisode.collectAsState()
+    val defaultResizeMode by viewModel.defaultResizeMode.collectAsState()
     val presetMirrors = viewModel.presetMirrors
 
     var customMirrorInput by remember(currentMirror) { mutableStateOf(currentMirror) }
@@ -673,6 +675,58 @@ fun SettingsScreen(
                                 ),
                                 modifier = Modifier.testTag("auto_next_episode_switch")
                             )
+                        }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+                        HorizontalDivider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Настройка: Режим масштабирования видео (FIT, ZOOM, FILL)
+                        Text(
+                            text = "Масштабирование видео по умолчанию",
+                            color = CinemaTextWhite,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "FIT — оригинал с полосами, ZOOM — кадрирование без полос, FILL — растянуть",
+                            color = CinemaTextGray,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        val resizeOptions = listOf(
+                            "FIT" to "Оригинал (FIT)",
+                            "ZOOM" to "Заполнить (ZOOM)",
+                            "FILL" to "Растянуть (FILL)"
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            resizeOptions.forEach { (mode, label) ->
+                                val isSelected = defaultResizeMode == mode
+                                Surface(
+                                    color = if (isSelected) CinemaPrimary else CinemaCard,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable {
+                                            viewModel.setDefaultResizeMode(mode)
+                                            Toast.makeText(context, "Режим экрана: $label", Toast.LENGTH_SHORT).show()
+                                        }
+                                ) {
+                                    Text(
+                                        text = label,
+                                        color = if (isSelected) Color.Black else CinemaTextWhite,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.padding(vertical = 8.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }

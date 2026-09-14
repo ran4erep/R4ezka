@@ -59,10 +59,15 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import android.content.Context
+import android.net.Uri
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -70,10 +75,13 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import com.example.R
+import com.example.data.FirebaseSyncManager
 import com.example.data.RezkaService
 import com.example.data.StreamUrl
+import com.example.data.SubtitleTrack
 import com.example.ui.theme.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
@@ -102,6 +110,7 @@ fun RezkaPlayer(
     title: String,
     subtitle: String,
     streams: List<StreamUrl>,
+    subtitleTracks: List<SubtitleTrack> = streams.firstOrNull()?.subtitles ?: emptyList(),
     initialQualityIndex: Int = 0,
     startPositionMs: Long = 0L,
     isSeries: Boolean = false,
@@ -173,8 +182,13 @@ fun RezkaPlayer(
     var isHoldingUnlock by remember { mutableStateOf(false) }
     var screenNotificationMessage by remember { mutableStateOf<String?>(null) }
 
-    // Video Resize (Stretch) mode: FIT -> ZOOM -> FILL
-    var currentResizeMode by remember { mutableStateOf(VideoResizeMode.FIT) }
+    // Video Resize (Stretch) mode: FIT -> ZOOM -> FILL (синхронизируется с облаком)
+    val initialResizeModeName = remember { RezkaService.defaultResizeMode.value }
+    var currentResizeMode by remember {
+        mutableStateOf(
+            try { VideoResizeMode.valueOf(initialResizeModeName) } catch (e: Exception) { VideoResizeMode.FIT }
+        )
+    }
 
     // Playback speed state (supports 1.5x, 2.0x, etc.)
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
@@ -219,6 +233,57 @@ fun RezkaPlayer(
     var selectedStreamIndex by remember { mutableStateOf(initialQualityIndex.coerceIn(0, streams.lastIndex)) }
     val currentStream = streams.getOrElse(selectedStreamIndex) { streams.first() }
 
+    // Subtitles state & persistence (локальный кэш + облачная синхронизация)
+    val prefs = remember { context.getSharedPreferences("rezka_player_prefs", Context.MODE_PRIVATE) }
+    var savedSubtitlePref by remember {
+        mutableStateOf(
+            RezkaService.preferredSubtitleLang.value.ifBlank {
+                prefs.getString("preferred_subtitle_lang", null)
+            }
+        )
+    }
+    var subtitleTextScale by remember {
+        mutableFloatStateOf(
+            RezkaService.subtitleTextScale.value.takeIf { it > 0.01f }
+                ?: prefs.getFloat("subtitle_text_scale", 0.053f)
+        )
+    }
+
+    // Реактивная подтяжка облачных настроек при их изменении во время синхронизации
+    val cloudSubtitleLang by RezkaService.preferredSubtitleLang.collectAsState()
+    val cloudSubtitleScale by RezkaService.subtitleTextScale.collectAsState()
+    val cloudResizeMode by RezkaService.defaultResizeMode.collectAsState()
+
+    LaunchedEffect(cloudSubtitleLang) {
+        if (cloudSubtitleLang.isNotBlank() && cloudSubtitleLang != savedSubtitlePref) {
+            savedSubtitlePref = cloudSubtitleLang
+        }
+    }
+    LaunchedEffect(cloudSubtitleScale) {
+        if (cloudSubtitleScale > 0.01f && kotlin.math.abs(cloudSubtitleScale - subtitleTextScale) > 0.002f) {
+            subtitleTextScale = cloudSubtitleScale
+        }
+    }
+    LaunchedEffect(cloudResizeMode) {
+        val targetMode = try { VideoResizeMode.valueOf(cloudResizeMode) } catch (e: Exception) { null }
+        if (targetMode != null && targetMode != currentResizeMode) {
+            currentResizeMode = targetMode
+        }
+    }
+
+    val availableSubtitles by remember(streams, selectedStreamIndex, subtitleTracks) {
+        derivedStateOf {
+            val fromStream = streams.getOrNull(selectedStreamIndex)?.subtitles
+                ?: streams.firstOrNull()?.subtitles
+                ?: emptyList()
+            if (fromStream.isNotEmpty()) fromStream else subtitleTracks
+        }
+    }
+
+    var selectedSubtitleTrack by remember { mutableStateOf<SubtitleTrack?>(null) }
+    var isSubtitlesEnabled by remember { mutableStateOf(false) }
+    var showSubtitlesDialog by remember { mutableStateOf(false) }
+
     // Error and Fallback tracking state
     var playerErrorMessage by remember { mutableStateOf<String?>(null) }
     var triedDirectMp4 by remember { mutableStateOf(false) }
@@ -258,6 +323,7 @@ fun RezkaPlayer(
             .setDefaultRequestProperties(
                 mapOf(
                     "Referer" to "$activeMirror/",
+                    "Origin" to activeMirror,
                     "Accept" to "*/*"
                 )
             )
@@ -284,8 +350,28 @@ fun RezkaPlayer(
             }
     }
 
-    // Helper to build proper MediaItem with correct container MIME type
-    fun buildMediaItem(rawUrl: String): MediaItem {
+    // Helper to configure SubtitleView styling with optimal contrast and outline
+    fun configurePlayerView(playerView: PlayerView) {
+        playerView.player = exoPlayer
+        playerView.useController = false
+        playerView.resizeMode = currentResizeMode.mode
+        playerView.subtitleView?.apply {
+            setStyle(
+                CaptionStyleCompat(
+                    android.graphics.Color.WHITE,
+                    android.graphics.Color.argb(160, 0, 0, 0),
+                    android.graphics.Color.TRANSPARENT,
+                    CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                    android.graphics.Color.BLACK,
+                    null
+                )
+            )
+            setFractionalTextSize(subtitleTextScale)
+        }
+    }
+
+    // Helper to build proper MediaItem with correct container MIME type and attached subtitles
+    fun buildMediaItem(rawUrl: String, subTracks: List<SubtitleTrack>): MediaItem {
         val uri = rawUrl.trim()
         val builder = MediaItem.Builder().setUri(uri)
         if (uri.contains(".m3u8") || uri.contains(":hls:manifest.m3u8")) {
@@ -293,7 +379,58 @@ fun RezkaPlayer(
         } else if (uri.endsWith(".mp4") || uri.contains(".mp4?")) {
             builder.setMimeType(MimeTypes.APPLICATION_MP4)
         }
+
+        if (subTracks.isNotEmpty()) {
+            val configs = subTracks.map { sub ->
+                val mime = if (sub.url.contains(".srt", ignoreCase = true)) {
+                    MimeTypes.APPLICATION_SUBRIP
+                } else {
+                    MimeTypes.TEXT_VTT
+                }
+                MediaItem.SubtitleConfiguration.Builder(Uri.parse(sub.url))
+                    .setMimeType(mime)
+                    .setLanguage(sub.language)
+                    .setLabel(sub.title)
+                    .setSelectionFlags(if (sub.isDefault) C.SELECTION_FLAG_DEFAULT else 0)
+                    .build()
+            }
+            builder.setSubtitleConfigurations(configs)
+        }
+
         return builder.build()
+    }
+
+    // Helper to apply subtitle selection cleanly to ExoPlayer
+    fun applySubtitleTrack(track: SubtitleTrack?, enabled: Boolean) {
+        if (!enabled || track == null) {
+            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                .build()
+        } else {
+            val paramsBuilder = exoPlayer.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .setPreferredTextLanguage(track.language)
+
+            val currentTracks = exoPlayer.currentTracks
+            for (group in currentTracks.groups) {
+                if (group.type == C.TRACK_TYPE_TEXT) {
+                    for (i in 0 until group.length) {
+                        val format = group.getTrackFormat(i)
+                        if (format.language.equals(track.language, ignoreCase = true) ||
+                            format.label.equals(track.title, ignoreCase = true)) {
+                            paramsBuilder.setOverrideForType(
+                                TrackSelectionOverride(group.mediaTrackGroup, i)
+                            )
+                            break
+                        }
+                    }
+                }
+            }
+            exoPlayer.trackSelectionParameters = paramsBuilder.build()
+        }
     }
 
     // Player States
@@ -312,8 +449,13 @@ fun RezkaPlayer(
         exoPlayer.stop()
         exoPlayer.clearMediaItems()
         try {
-            exoPlayer.setMediaItem(buildMediaItem(urlToPlay))
+            exoPlayer.setMediaItem(buildMediaItem(urlToPlay, availableSubtitles))
             exoPlayer.prepare()
+            if (isSubtitlesEnabled && selectedSubtitleTrack != null) {
+                applySubtitleTrack(selectedSubtitleTrack, true)
+            } else {
+                applySubtitleTrack(null, false)
+            }
             if (startFrom > 0) {
                 exoPlayer.seekTo(startFrom)
                 currentPosition = startFrom
@@ -327,6 +469,45 @@ fun RezkaPlayer(
             exoPlayer.play()
         } catch (e: Exception) {
             Log.e("RezkaPlayer", "Error loading media item: $urlToPlay", e)
+        }
+    }
+
+    // Intelligent initial subtitle selection based on translation name and user preference
+    LaunchedEffect(availableSubtitles, subtitle) {
+        if (availableSubtitles.isNotEmpty()) {
+            val isOriginalWithSubs = subtitle.contains("субтитр", ignoreCase = true) ||
+                    subtitle.contains("subtitles", ignoreCase = true) ||
+                    subtitle.contains("оригинал", ignoreCase = true)
+
+            val shouldEnable = when {
+                savedSubtitlePref == "off" && !isOriginalWithSubs -> false
+                savedSubtitlePref != null && savedSubtitlePref != "off" -> true
+                isOriginalWithSubs -> true
+                else -> availableSubtitles.any { it.isDefault }
+            }
+
+            if (shouldEnable) {
+                val target = if (!savedSubtitlePref.isNullOrEmpty() && savedSubtitlePref != "off") {
+                    availableSubtitles.find { it.language.equals(savedSubtitlePref, ignoreCase = true) }
+                } else null
+
+                val defaultTrack = target
+                    ?: availableSubtitles.find { it.isDefault }
+                    ?: availableSubtitles.find { it.language == "ru" }
+                    ?: availableSubtitles.first()
+
+                selectedSubtitleTrack = defaultTrack
+                isSubtitlesEnabled = true
+                applySubtitleTrack(defaultTrack, true)
+            } else {
+                isSubtitlesEnabled = false
+                selectedSubtitleTrack = null
+                applySubtitleTrack(null, false)
+            }
+        } else {
+            isSubtitlesEnabled = false
+            selectedSubtitleTrack = null
+            applySubtitleTrack(null, false)
         }
     }
 
@@ -388,6 +569,12 @@ fun RezkaPlayer(
                     if (isSeries && hasNextEpisode && autoNextEpisode && !isAutoNextDismissed && onNextEpisode != null) {
                         showAutoNextCountdown = true
                     }
+                }
+            }
+
+            override fun onTracksChanged(tracks: Tracks) {
+                if (isSubtitlesEnabled && selectedSubtitleTrack != null) {
+                    applySubtitleTrack(selectedSubtitleTrack, true)
                 }
             }
 
@@ -529,14 +716,13 @@ fun RezkaPlayer(
             AndroidView(
                 factory = { ctx ->
                     (LayoutInflater.from(ctx).inflate(R.layout.item_player_view, null) as PlayerView).apply {
-                        player = exoPlayer
-                        useController = false
-                        resizeMode = currentResizeMode.mode
+                        configurePlayerView(this)
                     }
                 },
                 update = { playerView ->
                     playerView.player = exoPlayer
                     playerView.resizeMode = currentResizeMode.mode
+                    playerView.subtitleView?.setFractionalTextSize(subtitleTextScale)
                 },
                 onRelease = { playerView ->
                     playerView.player = null
@@ -587,14 +773,13 @@ fun RezkaPlayer(
                 AndroidView(
                     factory = { ctx ->
                         (LayoutInflater.from(ctx).inflate(R.layout.item_player_view, null) as PlayerView).apply {
-                            player = exoPlayer
-                            useController = false
-                            resizeMode = currentResizeMode.mode
+                            configurePlayerView(this)
                         }
                     },
                     update = { playerView ->
                         playerView.player = exoPlayer
                         playerView.resizeMode = currentResizeMode.mode
+                        playerView.subtitleView?.setFractionalTextSize(subtitleTextScale)
                     },
                     modifier = Modifier
                         .fillMaxSize()
@@ -747,14 +932,13 @@ fun RezkaPlayer(
             AndroidView(
                 factory = { ctx ->
                     (LayoutInflater.from(ctx).inflate(R.layout.item_player_view, null) as PlayerView).apply {
-                        player = exoPlayer
-                        useController = false
-                        resizeMode = currentResizeMode.mode
+                        configurePlayerView(this)
                     }
                 },
                 update = { playerView ->
                     playerView.player = exoPlayer
                     playerView.resizeMode = currentResizeMode.mode
+                    playerView.subtitleView?.setFractionalTextSize(subtitleTextScale)
                 },
                 onRelease = { playerView ->
                     playerView.player = null
@@ -1432,8 +1616,8 @@ fun RezkaPlayer(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Left side: Quality and Speed buttons
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            // Left side: Quality, Speed and Subtitles buttons
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 // Quality button
                                 Button(
                                     onClick = {
@@ -1441,7 +1625,7 @@ fun RezkaPlayer(
                                         showQualityDialog = true
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.5f)),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                     modifier = Modifier
                                         .height(32.dp)
                                         .testTag("player_quality_button")
@@ -1450,13 +1634,13 @@ fun RezkaPlayer(
                                         imageVector = Icons.Default.Settings,
                                         contentDescription = null,
                                         tint = CinemaPrimary,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(15.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Spacer(modifier = Modifier.width(5.dp))
                                     Text(
                                         text = streams[selectedStreamIndex].quality,
                                         color = CinemaTextWhite,
-                                        fontSize = 12.sp
+                                        fontSize = 11.sp
                                     )
                                 }
 
@@ -1468,7 +1652,7 @@ fun RezkaPlayer(
                                         showSpeedDialog = true
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.5f)),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                     modifier = Modifier
                                         .height(32.dp)
                                         .testTag("player_speed_button")
@@ -1477,13 +1661,53 @@ fun RezkaPlayer(
                                         imageVector = Icons.Default.Speed,
                                         contentDescription = null,
                                         tint = CinemaPrimary,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(15.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Spacer(modifier = Modifier.width(5.dp))
                                     Text(
                                         text = speedDisplay,
                                         color = CinemaTextWhite,
-                                        fontSize = 12.sp
+                                        fontSize = 11.sp
+                                    )
+                                }
+
+                                // Subtitles (CC) button
+                                val subBtnTitle = when {
+                                    !isSubtitlesEnabled || selectedSubtitleTrack == null -> "Субтитры: Выкл"
+                                    else -> selectedSubtitleTrack?.title ?: "Субтитры"
+                                }
+                                Button(
+                                    onClick = {
+                                        controlsInteractionKey++
+                                        showSubtitlesDialog = true
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isSubtitlesEnabled && selectedSubtitleTrack != null)
+                                            CinemaPrimary.copy(alpha = 0.25f)
+                                        else
+                                            Color.Black.copy(alpha = 0.5f)
+                                    ),
+                                    border = if (isSubtitlesEnabled && selectedSubtitleTrack != null)
+                                        BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.6f))
+                                    else
+                                        null,
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier
+                                        .height(32.dp)
+                                        .testTag("player_subtitles_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Subtitles,
+                                        contentDescription = "Субтитры",
+                                        tint = if (isSubtitlesEnabled && selectedSubtitleTrack != null) CinemaPrimary else CinemaTextWhite,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text(
+                                        text = subBtnTitle,
+                                        color = CinemaTextWhite,
+                                        fontSize = 11.sp,
+                                        maxLines = 1
                                     )
                                 }
                             }
@@ -1497,6 +1721,8 @@ fun RezkaPlayer(
                                         VideoResizeMode.ZOOM -> VideoResizeMode.FILL
                                         VideoResizeMode.FILL -> VideoResizeMode.FIT
                                     }
+                                    RezkaService.setDefaultResizeMode(currentResizeMode.name)
+                                    FirebaseSyncManager.onSettingsUpdated(resizeMode = currentResizeMode.name)
                                     screenNotificationMessage = "Масштаб: ${currentResizeMode.title}"
                                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                 },
@@ -1754,6 +1980,204 @@ fun RezkaPlayer(
             },
             confirmButton = {
                 TextButton(onClick = { showSpeedDialog = false }) {
+                    Text("Закрыть", color = CinemaPrimary)
+                }
+            }
+        )
+    }
+
+    // Subtitles Selection and Styling Dialog
+    if (showSubtitlesDialog) {
+        AlertDialog(
+            onDismissRequest = { showSubtitlesDialog = false },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Subtitles,
+                        contentDescription = null,
+                        tint = CinemaPrimary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Text("Субтитры", color = CinemaTextWhite, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = CinemaDark,
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Option 1: Turn off
+                    val isOff = !isSubtitlesEnabled || selectedSubtitleTrack == null
+                    Surface(
+                        color = if (isOff) CinemaPrimary.copy(alpha = 0.15f) else Color.Transparent,
+                        shape = RoundedCornerShape(8.dp),
+                        border = if (isOff) BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.4f)) else null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                isSubtitlesEnabled = false
+                                selectedSubtitleTrack = null
+                                applySubtitleTrack(null, false)
+                                prefs.edit().putString("preferred_subtitle_lang", "off").apply()
+                                RezkaService.setPreferredSubtitleLang("off")
+                                FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = "off")
+                                showSubtitlesDialog = false
+                                screenNotificationMessage = "Субтитры выключены"
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 11.dp, horizontal = 14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Выключены",
+                                color = if (isOff) CinemaPrimary else CinemaTextWhite,
+                                fontWeight = if (isOff) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = 14.sp
+                            )
+                            if (isOff) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = CinemaPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(
+                        color = CinemaBorder.copy(alpha = 0.4f),
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+
+                    // Option 2: List of available subtitle tracks
+                    if (availableSubtitles.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp, horizontal = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Для этой озвучки нет отдельных дорожек субтитров",
+                                color = CinemaTextGray,
+                                fontSize = 13.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    } else {
+                        availableSubtitles.forEach { track ->
+                            val isSelected = isSubtitlesEnabled && selectedSubtitleTrack?.url == track.url
+                            Surface(
+                                color = if (isSelected) CinemaPrimary.copy(alpha = 0.15f) else Color.Transparent,
+                                shape = RoundedCornerShape(8.dp),
+                                border = if (isSelected) BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.4f)) else null,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedSubtitleTrack = track
+                                        isSubtitlesEnabled = true
+                                        applySubtitleTrack(track, true)
+                                        prefs.edit().putString("preferred_subtitle_lang", track.language).apply()
+                                        RezkaService.setPreferredSubtitleLang(track.language)
+                                        FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = track.language)
+                                        showSubtitlesDialog = false
+                                        screenNotificationMessage = "Субтитры: ${track.title}"
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 10.dp, horizontal = 14.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f, fill = false)) {
+                                        Text(
+                                            text = track.title,
+                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            fontSize = 14.sp
+                                        )
+                                        if (track.language.isNotEmpty() && track.language != "und") {
+                                            Text(
+                                                text = track.language.uppercase(),
+                                                color = CinemaTextGray,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = CinemaPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Option 3: Subtitle Text Size scaling selector
+                    HorizontalDivider(
+                        color = CinemaBorder.copy(alpha = 0.4f),
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                    )
+                    Text(
+                        text = "Размер шрифта субтитров",
+                        color = CinemaTextGray,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val sizeOptions = listOf(
+                            "Мелкий" to 0.042f,
+                            "Обычный" to 0.053f,
+                            "Крупный" to 0.068f,
+                            "Макс" to 0.082f
+                        )
+                        sizeOptions.forEach { (label, scale) ->
+                            val isChosen = kotlin.math.abs(subtitleTextScale - scale) < 0.005f
+                            Surface(
+                                color = if (isChosen) CinemaPrimary else CinemaSurface,
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable {
+                                        subtitleTextScale = scale
+                                        prefs.edit().putFloat("subtitle_text_scale", scale).apply()
+                                        RezkaService.setSubtitleTextScale(scale)
+                                        FirebaseSyncManager.onSettingsUpdated(subtitleTextScale = scale)
+                                    }
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = if (isChosen) Color.Black else CinemaTextWhite,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isChosen) FontWeight.Bold else FontWeight.Normal,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(vertical = 7.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSubtitlesDialog = false }) {
                     Text("Закрыть", color = CinemaPrimary)
                 }
             }
