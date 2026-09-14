@@ -32,6 +32,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.example.data.RezkaService
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
+import com.example.ui.tv.TvDetector
+import com.example.ui.tv.TvModePreference
 import kotlinx.coroutines.launch
 
 @Composable
@@ -46,6 +48,7 @@ fun SettingsScreen(
     val defaultQuality by viewModel.defaultQuality.collectAsState()
     val autoNextEpisode by viewModel.autoNextEpisode.collectAsState()
     val defaultResizeMode by viewModel.defaultResizeMode.collectAsState()
+    val tvModePreference by viewModel.tvModePreference.collectAsState()
     val presetMirrors = viewModel.presetMirrors
 
     var customMirrorInput by remember(currentMirror) { mutableStateOf(currentMirror) }
@@ -55,6 +58,7 @@ fun SettingsScreen(
     // Категории в выпадающем виде (аккордеоны - все свёрнуты по умолчанию)
     var isMirrorsExpanded by remember { mutableStateOf(false) }
     var isPlaybackExpanded by remember { mutableStateOf(false) }
+    var isTvExpanded by remember { mutableStateOf(false) }
 
     val mirrorArrowRotation by animateFloatAsState(
         targetValue = if (isMirrorsExpanded) 180f else 0f,
@@ -63,6 +67,10 @@ fun SettingsScreen(
     val playbackArrowRotation by animateFloatAsState(
         targetValue = if (isPlaybackExpanded) 180f else 0f,
         label = "playbackArrowRotation"
+    )
+    val tvArrowRotation by animateFloatAsState(
+        targetValue = if (isTvExpanded) 180f else 0f,
+        label = "tvArrowRotation"
     )
 
     Column(
@@ -727,6 +735,148 @@ fun SettingsScreen(
                                     )
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // ---- SECTION: TV & REMOTE CONTROL ----
+        val isDeviceActuallyTv = remember { TvDetector.isRunningOnTv(context) }
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = CinemaDark),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { isTvExpanded = !isTvExpanded }
+                        .padding(16.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(CinemaPrimary.copy(alpha = 0.15f), RoundedCornerShape(10.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Tv,
+                            contentDescription = null,
+                            tint = CinemaPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Интерфейс для ТВ и пульта",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = CinemaTextWhite
+                        )
+                        Text(
+                            text = if (isDeviceActuallyTv) "Телевизор обнаружен" else "Режим Android TV",
+                            fontSize = 11.sp,
+                            color = CinemaTextGray
+                        )
+                    }
+                    IconButton(
+                        onClick = { isTvExpanded = !isTvExpanded },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (isTvExpanded) "Свернуть" else "Развернуть",
+                            tint = CinemaTextGray,
+                            modifier = Modifier.rotate(tvArrowRotation)
+                        )
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = isTvExpanded,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
+                    ) {
+                        HorizontalDivider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Text(
+                            text = "РЕЖИМ ОТОБРАЖЕНИЯ",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = CinemaPrimary,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "В режиме ТВ активируется 10-футовый интерфейс с боковым меню, превью-панелью фильма и полной навигацией со стрелок пульта (D-Pad).",
+                            fontSize = 12.sp,
+                            color = CinemaTextGray,
+                            lineHeight = 16.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        val tvModes = listOf(
+                            TvModePreference.AUTO to "Автоопределение (Рекомендуется)",
+                            TvModePreference.FORCE_TV to "ТВ режим (Android TV)",
+                            TvModePreference.FORCE_MOBILE to "Смартфон / Планшет"
+                        )
+
+                        tvModes.forEach { (mode, title) ->
+                            val isSelected = tvModePreference == mode.id
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isSelected) CinemaPrimary.copy(alpha = 0.15f) else Color.Transparent)
+                                    .clickable {
+                                        viewModel.setTvModePreference(mode.id)
+                                        Toast.makeText(context, "Режим: $title", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        viewModel.setTvModePreference(mode.id)
+                                        Toast.makeText(context, "Режим: $title", Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = CinemaPrimary,
+                                        unselectedColor = CinemaTextGray
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = title,
+                                        color = if (isSelected) CinemaTextWhite else CinemaTextGray,
+                                        fontSize = 13.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                    if (mode == TvModePreference.AUTO) {
+                                        Text(
+                                            text = if (isDeviceActuallyTv) "Текущее устройство: Телевизор" else "Текущее устройство: Смартфон",
+                                            color = CinemaGreen,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
                         }
                     }
                 }
