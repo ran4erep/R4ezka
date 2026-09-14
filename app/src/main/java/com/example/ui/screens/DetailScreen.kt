@@ -49,6 +49,7 @@ import com.example.ui.RezkaViewModel
 import com.example.ui.components.RezkaPlayer
 import com.example.ui.components.ScheduleCalendarDialog
 import com.example.ui.theme.*
+import com.example.ui.tv.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -68,6 +69,16 @@ fun DetailScreen(
     val autoNextEpisode by viewModel.autoNextEpisode.collectAsState()
     val commentsState by viewModel.commentsState.collectAsState()
     val isFavorite = favorites.any { it.id == item.id }
+
+    val tvModePrefString by viewModel.tvModePreference.collectAsState()
+    val isTvMode = remember(context, tvModePrefString) {
+        val pref = when (tvModePrefString) {
+            "force_tv" -> TvModePreference.FORCE_TV
+            "force_mobile" -> TvModePreference.FORCE_MOBILE
+            else -> TvModePreference.AUTO
+        }
+        TvDetector.shouldShowTvInterface(context, pref)
+    }
 
     val scope = rememberCoroutineScope()
 
@@ -315,12 +326,75 @@ fun DetailScreen(
                     }
                 }
 
-                // ---- SCROLLABLE DETAIL PAGE ----
-                LazyColumn(
-                    state = lazyListState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 96.dp)
-                ) {
+                val effectiveSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else detail.seasons
+
+                if (isTvMode) {
+                    TvDetailContent(
+                        detail = detail,
+                        item = item,
+                        isFavorite = isFavorite,
+                        onToggleFavorite = { viewModel.toggleFavorite(item, isFavorite) },
+                        selectedTranslator = selectedTranslator,
+                        onSelectTranslator = { trans ->
+                            selectedTranslator = trans
+                            if (detail.type == RezkaType.SERIES) {
+                                scope.launch {
+                                    val eps = viewModel.getEpisodesForTranslator(detail.numericPostId, trans.id)
+                                    if (eps.isNotEmpty()) {
+                                        dynamicSeasons = eps
+                                        if (selectedSeasonId == null || eps.none { it.id == selectedSeasonId }) {
+                                            selectedSeasonId = eps.first().id
+                                        }
+                                        val curS = eps.find { it.id == selectedSeasonId } ?: eps.first()
+                                        if (selectedEpisodeId == null || curS.episodes.none { it.id == selectedEpisodeId }) {
+                                            selectedEpisodeId = curS.episodes.firstOrNull()?.id
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        selectedSeasonId = selectedSeasonId,
+                        onSelectSeason = { sId ->
+                            selectedSeasonId = sId
+                            val matchedSeason = effectiveSeasons.find { it.id == sId }
+                            selectedEpisodeId = matchedSeason?.episodes?.firstOrNull()?.id
+                        },
+                        selectedEpisodeId = selectedEpisodeId,
+                        onSelectEpisode = { epId -> selectedEpisodeId = epId },
+                        effectiveSeasons = effectiveSeasons,
+                        commentsState = commentsState,
+                        onLoadCommentsPage = { page -> viewModel.loadCommentsPage(page) },
+                        onPlayMovie = {
+                            val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
+                            startPlayback(translator, 0, "")
+                        },
+                        onPlayEpisode = { season, episode ->
+                            val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
+                            startPlayback(translator, season.id, episode.id)
+                        },
+                        onLaunchTrailer = {
+                            launchTrailer(
+                                context = context,
+                                scope = scope,
+                                trailerUrl = detail.trailerUrl,
+                                numericPostId = detail.numericPostId,
+                                title = detail.title,
+                                year = detail.year,
+                                originalTitle = detail.originalTitle
+                            )
+                        },
+                        onOpenSchedule = { showScheduleCalendarDialog = true },
+                        onBack = handleBack
+                    )
+                } else {
+                    // ---- SCROLLABLE MOBILE DETAIL PAGE (with TV/D-Pad support) ----
+                    LazyColumn(
+                        state = lazyListState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .dpadScrollable(lazyListState),
+                        contentPadding = PaddingValues(bottom = 96.dp)
+                    ) {
                     // 1. Backdrop Hero Image
                     item {
                         Box(
@@ -1023,6 +1097,13 @@ fun DetailScreen(
                                     modifier = Modifier
                                         .weight(1.35f)
                                         .height(52.dp)
+                                        .tvFocusableItem(
+                                            onClick = {
+                                                val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
+                                                startPlayback(translator, 0, "")
+                                            },
+                                            shape = RoundedCornerShape(10.dp)
+                                        )
                                         .testTag("movie_play_button")
                                 ) {
                                     Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(22.dp))
@@ -1048,6 +1129,20 @@ fun DetailScreen(
                                     modifier = Modifier
                                         .weight(1f)
                                         .height(52.dp)
+                                        .tvFocusableItem(
+                                            onClick = {
+                                                launchTrailer(
+                                                    context = context,
+                                                    scope = scope,
+                                                    trailerUrl = detail.trailerUrl,
+                                                    numericPostId = detail.numericPostId,
+                                                    title = detail.title,
+                                                    year = detail.year,
+                                                    originalTitle = detail.originalTitle
+                                                )
+                                            },
+                                            shape = RoundedCornerShape(10.dp)
+                                        )
                                         .testTag("trailer_button")
                                 ) {
                                     Row(
@@ -1396,11 +1491,12 @@ fun DetailScreen(
                     }
                 }
             }
-            else -> {}
         }
+        is DetailState.Idle -> {}
+    }
 
-        // Floating Top Bar: Кнопки "Назад" и "В избранное" всегда плавают наверху страницы независимо от скролла
-        if (activePlayerStreams == null) {
+        // Floating Top Bar: Кнопки "Назад" и "В избранное" для мобильного режима
+        if (activePlayerStreams == null && !isTvMode) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -1426,6 +1522,7 @@ fun DetailScreen(
                         onClick = handleBack,
                         modifier = Modifier
                             .size(42.dp)
+                            .tvFocusableItem(onClick = handleBack, shape = CircleShape)
                             .background(Color.Black.copy(alpha = 0.65f), CircleShape)
                             .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
                             .testTag("floating_back_button")
@@ -1442,6 +1539,7 @@ fun DetailScreen(
                         onClick = { viewModel.toggleFavorite(item, isFavorite) },
                         modifier = Modifier
                             .size(42.dp)
+                            .tvFocusableItem(onClick = { viewModel.toggleFavorite(item, isFavorite) }, shape = CircleShape)
                             .background(Color.Black.copy(alpha = 0.65f), CircleShape)
                             .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
                             .testTag("favorite_toggle_button")

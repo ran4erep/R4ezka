@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import com.example.ui.tv.dpadScrollable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material3.Icon
@@ -90,13 +92,16 @@ fun FavoritesScreen(
                     )
                 }
             } else {
+                val gridState = rememberLazyGridState()
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(2),
+                    state = gridState,
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier
                         .fillMaxSize()
+                        .dpadScrollable(gridState)
                         .testTag("favorites_grid")
                 ) {
                     items(
