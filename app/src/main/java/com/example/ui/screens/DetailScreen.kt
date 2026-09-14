@@ -99,7 +99,7 @@ fun DetailScreen(
     // Deterministic calculation of comments section item index in the LazyColumn
     val commentsSectionIndex by remember(detailState, dynamicSeasons) {
         derivedStateOf {
-            val detail = (detailState as? DetailState.Success)?.detail ?: return@derivedStateOf 0
+            val detail = (detailState as? DetailState.Success)?.detail ?: return@derivedStateOf -1
             var idx = 2 // Backdrop (0) + Poster/Meta (1)
             if (detail.translators.isNotEmpty()) {
                 idx++
@@ -349,39 +349,6 @@ fun DetailScreen(
                                         )
                                     )
                             )
-
-                            // Top Back, Trailer and Bookmark Actions Overlay
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .statusBarsPadding()
-                                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                IconButton(
-                                    onClick = handleBack,
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-                                ) {
-                                    Icon(Icons.Default.ArrowBack, contentDescription = "Назад", tint = CinemaTextWhite)
-                                }
-
-                                IconButton(
-                                    onClick = { viewModel.toggleFavorite(item, isFavorite) },
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-                                        .testTag("favorite_toggle_button")
-                                ) {
-                                    Icon(
-                                        imageVector = if (isFavorite) Icons.Default.Bookmark else Icons.Outlined.BookmarkBorder,
-                                        contentDescription = "Избранное",
-                                        tint = if (isFavorite) CinemaPrimary else CinemaTextWhite
-                                    )
-                                }
-                            }
                         }
                     }
 
@@ -1432,6 +1399,64 @@ fun DetailScreen(
             else -> {}
         }
 
+        // Floating Top Bar: Кнопки "Назад" и "В избранное" всегда плавают наверху страницы независимо от скролла
+        if (activePlayerStreams == null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Black.copy(alpha = 0.75f),
+                                Color.Black.copy(alpha = 0.35f),
+                                Color.Transparent
+                            )
+                        )
+                    )
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = handleBack,
+                        modifier = Modifier
+                            .size(42.dp)
+                            .background(Color.Black.copy(alpha = 0.65f), CircleShape)
+                            .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
+                            .testTag("floating_back_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Назад",
+                            tint = CinemaTextWhite,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { viewModel.toggleFavorite(item, isFavorite) },
+                        modifier = Modifier
+                            .size(42.dp)
+                            .background(Color.Black.copy(alpha = 0.65f), CircleShape)
+                            .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
+                            .testTag("favorite_toggle_button")
+                    ) {
+                        Icon(
+                            imageVector = if (isFavorite) Icons.Default.Bookmark else Icons.Outlined.BookmarkBorder,
+                            contentDescription = "Избранное",
+                            tint = if (isFavorite) CinemaPrimary else CinemaTextWhite,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         // Dialog for "Ask" quality selection before starting playback
         pendingStreamsForDialog?.let { streams ->
             AlertDialog(
@@ -1671,7 +1696,18 @@ fun DetailScreen(
         // Кнопка быстрой прокрутки вверх к началу комментариев
         val showScrollToTop by remember {
             derivedStateOf {
-                lazyListState.firstVisibleItemIndex >= commentsSectionIndex && activePlayerStreams == null
+                if (activePlayerStreams != null) return@derivedStateOf false
+                val success = detailState as? DetailState.Success ?: return@derivedStateOf false
+                if (commentsSectionIndex < 0) return@derivedStateOf false
+
+                val displayComments = if (commentsState.comments.isNotEmpty()) commentsState.comments else success.detail.comments
+                if (displayComments.isEmpty()) return@derivedStateOf false
+
+                val firstIndex = lazyListState.firstVisibleItemIndex
+                val firstOffset = lazyListState.firstVisibleItemScrollOffset
+
+                // Кнопка отображается только когда пользователь углубился в чтение комментариев
+                firstIndex > commentsSectionIndex || (firstIndex == commentsSectionIndex && firstOffset > 300)
             }
         }
 
@@ -1687,7 +1723,9 @@ fun DetailScreen(
             FloatingActionButton(
                 onClick = {
                     scope.launch {
-                        lazyListState.animateScrollToItem(commentsSectionIndex)
+                        if (commentsSectionIndex >= 0) {
+                            lazyListState.animateScrollToItem(commentsSectionIndex)
+                        }
                     }
                 },
                 containerColor = CinemaPrimary,

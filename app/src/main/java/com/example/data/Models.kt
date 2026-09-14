@@ -118,11 +118,19 @@ data class Episode(
     val translatorId: String = ""
 ) : Serializable
 
+data class SubtitleTrack(
+    val language: String, // e.g. "ru", "en", "uk"
+    val title: String,    // e.g. "Русский", "English", "Украинский"
+    val url: String,      // Direct URL to WebVTT or SRT file
+    val isDefault: Boolean = false
+) : Serializable
+
 data class StreamUrl(
     val quality: String, // e.g. "1080p Ultra", "1080p", "720p", "480p", "360p"
     val url: String,
     val backupUrls: List<String> = emptyList(),
-    val directMp4Url: String = ""
+    val directMp4Url: String = "",
+    val subtitles: List<SubtitleTrack> = emptyList()
 ) : Serializable
 
 // Room Entities for local database

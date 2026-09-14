@@ -283,4 +283,131 @@ object RezkaDecryptor {
             }
         }
     }
+
+    private val subtitleBracketRegex = Regex("""\[([^\]]+)\]\s*(https?://[^\s,"'<>]+)""")
+    private val subtitleUrlRegex = Regex("""https?://[^\s,"'<>]+\.(?:vtt|srt)[^\s,"'<>]*""")
+
+    /**
+     * Parses the decrypted or raw subtitle string into a list of SubtitleTracks.
+     * Supports formats like:
+     * "[Русский]https://stream.hdrezka.ac/.../ru.vtt,[English]https://stream.hdrezka.ac/.../en.vtt"
+     * and standalone URLs or encrypted strings.
+     */
+    fun parseSubtitles(rawSubtitleStr: String, defaultLang: String = ""): List<SubtitleTrack> {
+        if (rawSubtitleStr.isBlank() || rawSubtitleStr == "false" || rawSubtitleStr == "null") {
+            return emptyList()
+        }
+
+        // Clean and decrypt if encrypted
+        val clean = rawSubtitleStr.replace("\\/", "/").trim()
+        val decoded = if (clean.startsWith("[") || clean.startsWith("http")) {
+            clean
+        } else {
+            decrypt(clean)
+        }
+
+        if (decoded.isBlank()) return emptyList()
+
+        val list = ArrayList<SubtitleTrack>()
+        val seenUrls = HashSet<String>()
+
+        // 1. First attempt: match [Title]URL pairs
+        val bracketMatches = subtitleBracketRegex.findAll(decoded).toList()
+        if (bracketMatches.isNotEmpty()) {
+            for (m in bracketMatches) {
+                val title = m.groupValues[1].trim()
+                val url = m.groupValues[2].trim()
+                if (url.isNotEmpty() && seenUrls.add(url)) {
+                    val lang = deduceSubtitleLanguage(title, url)
+                    val isDef = if (defaultLang.isNotEmpty()) {
+                        lang.equals(defaultLang, ignoreCase = true) || title.contains(defaultLang, ignoreCase = true)
+                    } else {
+                        lang == "ru"
+                    }
+                    list.add(
+                        SubtitleTrack(
+                            language = lang,
+                            title = title,
+                            url = url,
+                            isDefault = isDef
+                        )
+                    )
+                }
+            }
+        }
+
+        // 2. Fallback: match any .vtt or .srt URLs
+        if (list.isEmpty()) {
+            val urlMatches = subtitleUrlRegex.findAll(decoded).toList()
+            for (m in urlMatches) {
+                val url = m.value.trim()
+                if (url.isNotEmpty() && seenUrls.add(url)) {
+                    val deducedName = deduceSubtitleTitleFromUrl(url)
+                    val lang = deduceSubtitleLanguage(deducedName, url)
+                    val isDef = if (defaultLang.isNotEmpty()) {
+                        lang.equals(defaultLang, ignoreCase = true)
+                    } else {
+                        lang == "ru"
+                    }
+                    list.add(
+                        SubtitleTrack(
+                            language = lang,
+                            title = deducedName,
+                            url = url,
+                            isDefault = isDef
+                        )
+                    )
+                }
+            }
+        }
+
+        // If no default was set, set first track (preferring Russian or first) as default
+        if (list.isNotEmpty() && list.none { it.isDefault }) {
+            val ruIdx = list.indexOfFirst { it.language == "ru" }
+            val defIdx = if (ruIdx >= 0) ruIdx else 0
+            list[defIdx] = list[defIdx].copy(isDefault = true)
+        }
+
+        return list
+    }
+
+    private fun deduceSubtitleLanguage(title: String, url: String): String {
+        val lowerT = title.lowercase()
+        val lowerU = url.lowercase()
+        return when {
+            lowerT.contains("рус") || lowerT.contains("ru") || lowerU.contains("/ru.") || lowerU.contains("subtitles/ru") -> "ru"
+            lowerT.contains("укр") || lowerT.contains("uk") || lowerT.contains("ua") || lowerU.contains("/uk.") || lowerU.contains("/ua.") -> "uk"
+            lowerT.contains("англ") || lowerT.contains("eng") || lowerT.contains("en") || lowerU.contains("/en.") -> "en"
+            lowerT.contains("нем") || lowerT.contains("de") || lowerT.contains("ger") -> "de"
+            lowerT.contains("фр") || lowerT.contains("fr") || lowerT.contains("fre") -> "fr"
+            lowerT.contains("исп") || lowerT.contains("es") || lowerT.contains("spa") -> "es"
+            lowerT.contains("ит") || lowerT.contains("it") || lowerT.contains("ita") -> "it"
+            lowerT.contains("яп") || lowerT.contains("ja") || lowerT.contains("jp") -> "ja"
+            lowerT.contains("кор") || lowerT.contains("ko") || lowerT.contains("kor") -> "ko"
+            lowerT.contains("кит") || lowerT.contains("zh") || lowerT.contains("chi") -> "zh"
+            lowerT.contains("пол") || lowerT.contains("pl") || lowerT.contains("pol") -> "pl"
+            lowerT.contains("тур") || lowerT.contains("tr") || lowerT.contains("tur") -> "tr"
+            else -> {
+                val codeMatch = Regex("""^[a-zA-Z]{2,3}$""").find(title.trim())
+                codeMatch?.value?.lowercase() ?: "und"
+            }
+        }
+    }
+
+    private fun deduceSubtitleTitleFromUrl(url: String): String {
+        val lower = url.lowercase()
+        return when {
+            lower.contains("/ru.") || lower.contains("subtitles/ru") -> "Русский"
+            lower.contains("/uk.") || lower.contains("/ua.") || lower.contains("subtitles/uk") -> "Украинский"
+            lower.contains("/en.") || lower.contains("subtitles/en") -> "English"
+            lower.contains("/de.") -> "Немецкий"
+            lower.contains("/fr.") -> "Французский"
+            lower.contains("/es.") -> "Испанский"
+            lower.contains("/it.") -> "Итальянский"
+            else -> {
+                val fileName = url.substringAfterLast('/').substringBeforeLast('.')
+                if (fileName.length in 2..15) fileName.replaceFirstChar { it.uppercase() } else "Субтитры"
+            }
+        }
+    }
 }

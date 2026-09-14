@@ -604,33 +604,41 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     // Auto next episode setting
     val autoNextEpisode: StateFlow<Boolean> = RezkaService.autoNextEpisode
 
+    // Subtitle and Player settings
+    val preferredSubtitleLang: StateFlow<String> = RezkaService.preferredSubtitleLang
+    val subtitleTextScale: StateFlow<Float> = RezkaService.subtitleTextScale
+    val defaultResizeMode: StateFlow<String> = RezkaService.defaultResizeMode
+
     fun setDefaultQuality(quality: String) {
         RezkaService.setDefaultQuality(quality)
-        FirebaseSyncManager.onSettingsUpdated(
-            RezkaService.currentMirror.value,
-            quality,
-            RezkaService.autoNextEpisode.value
-        )
+        FirebaseSyncManager.onSettingsUpdated(quality = quality)
     }
 
     fun setAutoNextEpisode(enabled: Boolean) {
         RezkaService.setAutoNextEpisode(enabled)
-        FirebaseSyncManager.onSettingsUpdated(
-            RezkaService.currentMirror.value,
-            RezkaService.defaultQuality.value,
-            enabled
-        )
+        FirebaseSyncManager.onSettingsUpdated(autoNextEpisode = enabled)
+    }
+
+    fun setPreferredSubtitleLang(lang: String) {
+        RezkaService.setPreferredSubtitleLang(lang)
+        FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = lang)
+    }
+
+    fun setSubtitleTextScale(scale: Float) {
+        RezkaService.setSubtitleTextScale(scale)
+        FirebaseSyncManager.onSettingsUpdated(subtitleTextScale = scale)
+    }
+
+    fun setDefaultResizeMode(mode: String) {
+        RezkaService.setDefaultResizeMode(mode)
+        FirebaseSyncManager.onSettingsUpdated(resizeMode = mode)
     }
 
     fun setMirror(newUrl: String): Boolean {
         val success = RezkaService.setMirror(newUrl)
         if (success) {
             loadCatalog(_currentType.value, forceRefresh = true)
-            FirebaseSyncManager.onSettingsUpdated(
-                RezkaService.currentMirror.value,
-                RezkaService.defaultQuality.value,
-                RezkaService.autoNextEpisode.value
-            )
+            FirebaseSyncManager.onSettingsUpdated(mirror = RezkaService.currentMirror.value)
         }
         return success
     }
@@ -638,11 +646,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     fun resetMirrorToDefault(): String {
         val defaultUrl = RezkaService.resetMirrorToDefault()
         loadCatalog(_currentType.value, forceRefresh = true)
-        FirebaseSyncManager.onSettingsUpdated(
-            defaultUrl,
-            RezkaService.defaultQuality.value,
-            RezkaService.autoNextEpisode.value
-        )
+        FirebaseSyncManager.onSettingsUpdated(mirror = defaultUrl)
         return defaultUrl
     }
 

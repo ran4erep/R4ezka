@@ -28,6 +28,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
 
@@ -69,17 +70,22 @@ fun AuthDialog(
         )
     }
 
-    Dialog(onDismissRequest = {
-        if (!isSubmittingAuth) {
-            onDismiss()
-        }
-    }) {
+    Dialog(
+        onDismissRequest = {
+            if (!isSubmittingAuth) {
+                onDismiss()
+            }
+        },
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false
+        )
+    ) {
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = CinemaDark),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp)
+                .padding(horizontal = 16.dp)
                 .testTag("auth_dialog_card")
         ) {
             Column(

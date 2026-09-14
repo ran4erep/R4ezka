@@ -460,12 +460,15 @@ object FirebaseSyncManager {
     }
 
     /**
-     * Сохранение настроек приложения (зеркало, качество видео, автопереключение серии) в облако
+     * Сохранение настроек приложения (зеркало, качество видео, автопереключение серии, субтитры, масштаб) в облако
      */
     fun onSettingsUpdated(
-        mirror: String,
-        quality: String,
-        autoNextEpisode: Boolean = RezkaService.autoNextEpisode.value
+        mirror: String = RezkaService.currentMirror.value,
+        quality: String = RezkaService.defaultQuality.value,
+        autoNextEpisode: Boolean = RezkaService.autoNextEpisode.value,
+        preferredSubtitleLang: String = RezkaService.preferredSubtitleLang.value,
+        subtitleTextScale: Float = RezkaService.subtitleTextScale.value,
+        resizeMode: String = RezkaService.defaultResizeMode.value
     ) {
         val key = _userKey.value ?: return
         scope.launch {
@@ -474,6 +477,9 @@ object FirebaseSyncManager {
                     put("mirror", mirror)
                     put("defaultQuality", quality)
                     put("autoNextEpisode", autoNextEpisode)
+                    put("preferredSubtitleLang", preferredSubtitleLang)
+                    put("subtitleTextScale", subtitleTextScale.toDouble())
+                    put("resizeMode", resizeMode)
                     put("updatedAt", System.currentTimeMillis())
                 }
                 val request = Request.Builder()
@@ -481,7 +487,7 @@ object FirebaseSyncManager {
                     .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 httpClient.newCall(request).execute().close()
-                Log.d(TAG, "Settings synced to cloud: mirror=$mirror, quality=$quality, autoNextEpisode=$autoNextEpisode")
+                Log.d(TAG, "Settings synced to cloud: mirror=$mirror, quality=$quality, autoNext=$autoNextEpisode, sub=$preferredSubtitleLang, subScale=$subtitleTextScale, resize=$resizeMode")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync settings to Firebase: ${e.message}")
             }
@@ -650,7 +656,7 @@ object FirebaseSyncManager {
                 }
             }
 
-            // 3. Синхронизация Настроек (зеркало, качество видео, автопереключение серии)
+            // 3. Синхронизация Настроек (зеркало, качество видео, автопереключение серии, субтитры, масштаб)
             try {
                 val setReq = Request.Builder().url("$DATABASE_URL/users/$key/settings.json").get().build()
                 val setResp = httpClient.newCall(setReq).execute()
@@ -662,6 +668,9 @@ object FirebaseSyncManager {
                         val remoteQuality = setJson.optString("defaultQuality")
                         val hasAutoNext = setJson.has("autoNextEpisode")
                         val remoteAutoNext = setJson.optBoolean("autoNextEpisode", true)
+                        val remoteSubLang = setJson.optString("preferredSubtitleLang", "")
+                        val remoteSubScale = if (setJson.has("subtitleTextScale")) setJson.optDouble("subtitleTextScale").toFloat() else null
+                        val remoteResize = setJson.optString("resizeMode", "")
 
                         if (remoteMirror.isNotBlank() && remoteMirror != RezkaService.currentMirror.value) {
                             withContext(Dispatchers.Main) {
@@ -678,13 +687,24 @@ object FirebaseSyncManager {
                                 RezkaService.setAutoNextEpisode(remoteAutoNext)
                             }
                         }
+                        if (remoteSubLang.isNotBlank() && remoteSubLang != RezkaService.preferredSubtitleLang.value) {
+                            withContext(Dispatchers.Main) {
+                                RezkaService.setPreferredSubtitleLang(remoteSubLang)
+                            }
+                        }
+                        if (remoteSubScale != null && remoteSubScale > 0.01f && kotlin.math.abs(remoteSubScale - RezkaService.subtitleTextScale.value) > 0.002f) {
+                            withContext(Dispatchers.Main) {
+                                RezkaService.setSubtitleTextScale(remoteSubScale)
+                            }
+                        }
+                        if (remoteResize.isNotBlank() && remoteResize != RezkaService.defaultResizeMode.value) {
+                            withContext(Dispatchers.Main) {
+                                RezkaService.setDefaultResizeMode(remoteResize)
+                            }
+                        }
                     } else {
                         // В облаке ещё нет настроек пользователя - выгружаем текущие
-                        onSettingsUpdated(
-                            RezkaService.currentMirror.value,
-                            RezkaService.defaultQuality.value,
-                            RezkaService.autoNextEpisode.value
-                        )
+                        onSettingsUpdated()
                     }
                 }
             } catch (e: Exception) {
@@ -724,11 +744,7 @@ object FirebaseSyncManager {
             }
 
             // Выгружаем настройки в облако
-            onSettingsUpdated(
-                RezkaService.currentMirror.value,
-                RezkaService.defaultQuality.value,
-                RezkaService.autoNextEpisode.value
-            )
+            onSettingsUpdated()
         } catch (e: Exception) {
             Log.w(TAG, "Failed initial upload of local data: ${e.message}")
         }
