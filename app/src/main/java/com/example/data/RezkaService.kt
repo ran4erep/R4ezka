@@ -456,6 +456,10 @@ object RezkaService {
     private val _defaultResizeMode = MutableStateFlow("FIT")
     val defaultResizeMode: StateFlow<String> = _defaultResizeMode.asStateFlow()
 
+    // Режим интерфейса (auto, force_tv, force_mobile)
+    private val _tvModePreference = MutableStateFlow("auto")
+    val tvModePreference: StateFlow<String> = _tvModePreference.asStateFlow()
+
     private var prefs: SharedPreferences? = null
 
     fun init(context: Context) {
@@ -483,6 +487,9 @@ object RezkaService {
 
         val savedResize = prefs?.getString("default_resize_mode", "FIT") ?: "FIT"
         _defaultResizeMode.value = savedResize
+
+        val savedTvMode = prefs?.getString("tv_mode_preference", "auto") ?: "auto"
+        _tvModePreference.value = savedTvMode
     }
 
     fun setDefaultQuality(quality: String) {
@@ -508,6 +515,11 @@ object RezkaService {
     fun setDefaultResizeMode(mode: String) {
         _defaultResizeMode.value = mode
         prefs?.edit()?.putString("default_resize_mode", mode)?.apply()
+    }
+
+    fun setTvModePreference(mode: String) {
+        _tvModePreference.value = mode
+        prefs?.edit()?.putString("tv_mode_preference", mode)?.apply()
     }
 
     /**

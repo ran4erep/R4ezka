@@ -608,6 +608,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     val preferredSubtitleLang: StateFlow<String> = RezkaService.preferredSubtitleLang
     val subtitleTextScale: StateFlow<Float> = RezkaService.subtitleTextScale
     val defaultResizeMode: StateFlow<String> = RezkaService.defaultResizeMode
+    val tvModePreference: StateFlow<String> = RezkaService.tvModePreference
 
     fun setDefaultQuality(quality: String) {
         RezkaService.setDefaultQuality(quality)
@@ -632,6 +633,10 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     fun setDefaultResizeMode(mode: String) {
         RezkaService.setDefaultResizeMode(mode)
         FirebaseSyncManager.onSettingsUpdated(resizeMode = mode)
+    }
+
+    fun setTvModePreference(mode: String) {
+        RezkaService.setTvModePreference(mode)
     }
 
     fun setMirror(newUrl: String): Boolean {

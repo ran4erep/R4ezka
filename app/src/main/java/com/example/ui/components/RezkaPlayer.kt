@@ -24,6 +24,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -44,7 +45,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -158,6 +162,9 @@ fun RezkaPlayer(
 
     val compActivity = context as? ComponentActivity
     var isInPipMode by remember { mutableStateOf(compActivity?.isInPictureInPictureMode == true) }
+
+    val scope = rememberCoroutineScope()
+    val playerFocusRequester = remember { FocusRequester() }
 
     DisposableEffect(compActivity) {
         if (compActivity == null) return@DisposableEffect onDispose {}
@@ -922,11 +929,98 @@ fun RezkaPlayer(
             return@BoxWithConstraints
         }
 
+        LaunchedEffect(isFloating, isInPipMode) {
+            if (!isFloating && !isInPipMode) {
+                try {
+                    playerFocusRequester.requestFocus()
+                } catch (_: Exception) {}
+            }
+        }
+
         // --- FULLSCREEN IMMERSIVE PLAYER VIEW ---
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black)
+                .focusRequester(playerFocusRequester)
+                .focusable()
+                .onKeyEvent { keyEvent ->
+                    if (keyEvent.type != KeyEventType.KeyDown) return@onKeyEvent false
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                        android.view.KeyEvent.KEYCODE_ENTER,
+                        android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
+                        android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                        android.view.KeyEvent.KEYCODE_SPACE -> {
+                            if (isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            showControls = true
+                            controlsInteractionKey++
+                            true
+                        }
+                        android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                            exoPlayer.play()
+                            showControls = true
+                            controlsInteractionKey++
+                            true
+                        }
+                        android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                            exoPlayer.pause()
+                            showControls = true
+                            controlsInteractionKey++
+                            true
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
+                        android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                            val cur = exoPlayer.currentPosition
+                            val dur = exoPlayer.duration.coerceAtLeast(0L)
+                            val target = (cur + 10000L).coerceAtMost(dur)
+                            exoPlayer.seekTo(target)
+                            currentPosition = target
+                            activeSeekSide = SeekSide.RIGHT
+                            accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
+                            showControls = true
+                            controlsInteractionKey++
+                            scope.launch {
+                                delay(900)
+                                activeSeekSide = SeekSide.NONE
+                                accumulatedSeekSeconds = 0
+                            }
+                            true
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                        android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                            val cur = exoPlayer.currentPosition
+                            val target = (cur - 10000L).coerceAtLeast(0L)
+                            exoPlayer.seekTo(target)
+                            currentPosition = target
+                            activeSeekSide = SeekSide.LEFT
+                            accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
+                            showControls = true
+                            controlsInteractionKey++
+                            scope.launch {
+                                delay(900)
+                                activeSeekSide = SeekSide.NONE
+                                accumulatedSeekSeconds = 0
+                            }
+                            true
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_UP,
+                        android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            showControls = !showControls
+                            controlsInteractionKey++
+                            true
+                        }
+                        android.view.KeyEvent.KEYCODE_BACK -> {
+                            if (showControls) {
+                                showControls = false
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        else -> false
+                    }
+                }
         ) {
             // Media3 Player View (using TextureView via item_player_view layout to avoid SurfaceView EGL errors)
             AndroidView(
