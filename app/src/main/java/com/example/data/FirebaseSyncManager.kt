@@ -608,12 +608,25 @@ object FirebaseSyncManager {
                 repository.insertFavorites(remoteFavorites)
             }
 
-            // Проверяем, есть ли локальные закладки, которых ещё нет в облаке, и дозаливаем их
+            // Проверяем, есть ли локальные закладки, которых ещё нет в облаке, и дозаливаем их в один PATCH-запрос
             val localFavorites = repository.getAllFavoritesList()
             val remoteFavIds = remoteFavorites.map { it.id }.toSet()
+            val favUpdateJson = JSONObject()
             for (localFav in localFavorites) {
                 if (localFav.id !in remoteFavIds) {
-                    onFavoriteAdded(localFav)
+                    val safeId = safeFirebaseKey(localFav.id)
+                    favUpdateJson.put(safeId, favoriteToJson(localFav))
+                }
+            }
+            if (favUpdateJson.length() > 0) {
+                try {
+                    val patchRequest = Request.Builder()
+                        .url("$DATABASE_URL/users/$key/favorites.json")
+                        .patch(favUpdateJson.toString().toRequestBody(JSON_MEDIA_TYPE))
+                        .build()
+                    httpClient.newCall(patchRequest).execute().close()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to patch favorites: ${e.message}")
                 }
             }
 
@@ -641,18 +654,25 @@ object FirebaseSyncManager {
                 repository.insertHistoryList(remoteHistory)
             }
 
-            // Проверяем локальную историю и дозаливаем новые элементы в облако
+            // Проверяем локальную историю и дозаливаем новые элементы в облако в один PATCH-запрос
             val localHistory = repository.getAllHistoryList()
             val remoteHistIds = remoteHistory.map { it.id }.toSet()
+            val histUpdateJson = JSONObject()
             for (localHist in localHistory) {
                 if (localHist.id !in remoteHistIds) {
                     val safeId = safeFirebaseKey(localHist.id)
-                    val json = historyToJson(localHist)
-                    val req = Request.Builder()
-                        .url("$DATABASE_URL/users/$key/history/$safeId.json")
-                        .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    histUpdateJson.put(safeId, historyToJson(localHist))
+                }
+            }
+            if (histUpdateJson.length() > 0) {
+                try {
+                    val patchRequest = Request.Builder()
+                        .url("$DATABASE_URL/users/$key/history.json")
+                        .patch(histUpdateJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                         .build()
-                    httpClient.newCall(req).execute().close()
+                    httpClient.newCall(patchRequest).execute().close()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to patch history: ${e.message}")
                 }
             }
 
@@ -722,23 +742,29 @@ object FirebaseSyncManager {
     private suspend fun uploadLocalDataToCloud(key: String, repository: RezkaRepository) {
         try {
             val localFavorites = repository.getAllFavoritesList()
-            for (fav in localFavorites) {
-                val safeId = safeFirebaseKey(fav.id)
-                val json = favoriteToJson(fav)
+            if (localFavorites.isNotEmpty()) {
+                val favJson = JSONObject()
+                for (fav in localFavorites) {
+                    val safeId = safeFirebaseKey(fav.id)
+                    favJson.put(safeId, favoriteToJson(fav))
+                }
                 val req = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/favorites/$safeId.json")
-                    .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .url("$DATABASE_URL/users/$key/favorites.json")
+                    .patch(favJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 httpClient.newCall(req).execute().close()
             }
 
             val localHistory = repository.getAllHistoryList()
-            for (hist in localHistory) {
-                val safeId = safeFirebaseKey(hist.id)
-                val json = historyToJson(hist)
+            if (localHistory.isNotEmpty()) {
+                val histJson = JSONObject()
+                for (hist in localHistory) {
+                    val safeId = safeFirebaseKey(hist.id)
+                    histJson.put(safeId, historyToJson(hist))
+                }
                 val req = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/history/$safeId.json")
-                    .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .url("$DATABASE_URL/users/$key/history.json")
+                    .patch(histJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 httpClient.newCall(req).execute().close()
             }
@@ -789,7 +815,10 @@ object FirebaseSyncManager {
             put("imageUrl", h.imageUrl)
             put("subtitle", h.subtitle)
             put("url", h.url)
-            put("translatorId", h.translatorId)
+            val transIdNum = h.translatorId.toIntOrNull()
+            if (transIdNum != null) {
+                put("translatorId", transIdNum)
+            }
             put("translatorName", h.translatorName)
             put("season", h.season)
             put("episode", h.episode)
