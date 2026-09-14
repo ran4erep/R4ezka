@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -31,6 +32,7 @@ import com.example.data.RezkaService
 import com.example.data.RezkaType
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
+import com.example.ui.tv.*
 
 @Composable
 fun HistoryScreen(
@@ -112,11 +114,14 @@ fun HistoryScreen(
                     )
                 }
             } else {
+                val listState = rememberLazyListState()
                 LazyColumn(
+                    state = listState,
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier
                         .fillMaxSize()
+                        .dpadScrollable(listState)
                         .testTag("history_list")
                 ) {
                     items(
@@ -158,7 +163,7 @@ fun HistoryCardItem(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .tvFocusableItem(onClick = onClick, scaleFactor = 1.03f, shape = RoundedCornerShape(10.dp))
             .testTag("history_item_${history.itemId}"),
         colors = CardDefaults.cardColors(containerColor = CinemaDark),
         shape = RoundedCornerShape(10.dp)

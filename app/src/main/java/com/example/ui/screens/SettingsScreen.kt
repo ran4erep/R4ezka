@@ -34,6 +34,8 @@ import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
 import com.example.ui.tv.TvDetector
 import com.example.ui.tv.TvModePreference
+import com.example.ui.tv.dpadScrollable
+import com.example.ui.tv.tvFocusableItem
 import kotlinx.coroutines.launch
 
 @Composable
@@ -44,6 +46,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
     val currentMirror by viewModel.currentMirror.collectAsState()
     val defaultQuality by viewModel.defaultQuality.collectAsState()
     val autoNextEpisode by viewModel.autoNextEpisode.collectAsState()
@@ -78,7 +81,8 @@ fun SettingsScreen(
             .fillMaxSize()
             .background(CinemaBlack)
             .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
+            .dpadScrollable(scrollState)
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
         // Header with Back Button

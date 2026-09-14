@@ -28,6 +28,7 @@ import com.example.data.*
 import com.example.ui.CatalogState
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
+import com.example.ui.tv.*
 
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -240,6 +241,7 @@ fun CatalogScreen(
                             verticalArrangement = Arrangement.spacedBy(16.dp),
                             modifier = Modifier
                                 .fillMaxSize()
+                                .dpadScrollable(gridState)
                                 .testTag("catalog_items_grid")
                         ) {
                             items(
@@ -289,7 +291,7 @@ fun RezkaItemCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .tvFocusableItem(onClick = onClick, scaleFactor = 1.05f, shape = RoundedCornerShape(12.dp))
             .testTag("movie_card_${item.id}"),
         colors = CardDefaults.cardColors(containerColor = CinemaDark),
         shape = RoundedCornerShape(12.dp)
