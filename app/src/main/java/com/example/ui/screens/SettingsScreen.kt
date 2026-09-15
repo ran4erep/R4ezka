@@ -778,15 +778,10 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Интерфейс для ТВ и пульта",
+                            text = "Режим интерфейса",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = CinemaTextWhite
-                        )
-                        Text(
-                            text = if (isDeviceActuallyTv) "Телевизор обнаружен" else "Режим Android TV",
-                            fontSize = 11.sp,
-                            color = CinemaTextGray
                         )
                     }
                     IconButton(
@@ -815,27 +810,10 @@ fun SettingsScreen(
                         HorizontalDivider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        Text(
-                            text = "РЕЖИМ ОТОБРАЖЕНИЯ",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = CinemaPrimary,
-                            letterSpacing = 1.sp
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "В режиме ТВ активируется 10-футовый интерфейс с боковым меню, превью-панелью фильма и полной навигацией со стрелок пульта (D-Pad).",
-                            fontSize = 12.sp,
-                            color = CinemaTextGray,
-                            lineHeight = 16.sp
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
                         val tvModes = listOf(
                             TvModePreference.AUTO to "Автоопределение (Рекомендуется)",
-                            TvModePreference.FORCE_TV to "ТВ режим (Android TV)",
-                            TvModePreference.FORCE_MOBILE to "Смартфон / Планшет"
+                            TvModePreference.FORCE_TV to "Телевизор",
+                            TvModePreference.FORCE_MOBILE to "Телефон/Планшет"
                         )
 
                         tvModes.forEach { (mode, title) ->
@@ -871,13 +849,6 @@ fun SettingsScreen(
                                         fontSize = 13.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                     )
-                                    if (mode == TvModePreference.AUTO) {
-                                        Text(
-                                            text = if (isDeviceActuallyTv) "Текущее устройство: Телевизор" else "Текущее устройство: Смартфон",
-                                            color = CinemaGreen,
-                                            fontSize = 11.sp
-                                        )
-                                    }
                                 }
                             }
                             Spacer(modifier = Modifier.height(4.dp))
