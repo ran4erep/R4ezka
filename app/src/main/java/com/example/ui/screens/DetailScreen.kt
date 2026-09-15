@@ -2173,48 +2173,30 @@ fun CommentUserAvatar(
                 .crossfade(true)
                 .build()
         }
-        SubcomposeAsyncImage(
-            model = imageRequest,
-            contentDescription = "Аватар $authorName",
-            contentScale = ContentScale.Crop,
+        Box(
             modifier = modifier
                 .clip(CircleShape)
+                .background(
+                    Brush.linearGradient(
+                        listOf(avatarBg, avatarBg.copy(alpha = 0.7f))
+                    )
+                )
                 .border(1.dp, CinemaPrimary.copy(alpha = 0.25f), CircleShape),
-            loading = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(avatarBg.copy(alpha = 0.4f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = initial,
-                        color = CinemaTextWhite,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
-                }
-            },
-            error = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.linearGradient(
-                                listOf(avatarBg, avatarBg.copy(alpha = 0.7f))
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = initial,
-                        color = CinemaTextWhite,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
-                }
-            }
-        )
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = initial,
+                color = CinemaTextWhite,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp
+            )
+            AsyncImage(
+                model = imageRequest,
+                contentDescription = "Аватар $authorName",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
     } else {
         Box(
             modifier = modifier

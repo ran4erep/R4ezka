@@ -550,15 +550,7 @@ private fun TvHeroPreview(
                         overflow = TextOverflow.Ellipsis
                     )
 
-                    Spacer(modifier = Modifier.height(if (isCompact) 3.dp else 6.dp))
-
-                    Text(
-                        text = "Нажмите 'ОК' на карточке для выбора озвучки, серии или просмотра",
-                        color = CinemaMuted,
-                        fontSize = if (isCompact) 10.sp else 12.sp,
-                        maxLines = if (isCompact) 1 else 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Spacer(modifier = Modifier.height(if (isCompact) 2.dp else 4.dp))
                 }
 
                 // Правая колонка: красивое превью постера с мягким градиентом
@@ -731,14 +723,15 @@ fun <T> TvRezkaDropdown(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
-                    modifier = Modifier.weight(1f, fill = false),
-                    verticalArrangement = Arrangement.Center
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = label,
+                        text = "$label:",
                         color = CinemaTextGray,
-                        fontSize = 9.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1
                     )
@@ -748,7 +741,8 @@ fun <T> TvRezkaDropdown(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                 }
                 Spacer(modifier = Modifier.width(4.dp))
@@ -887,7 +881,7 @@ fun TvCompactSearchBar(
                     // В обычном режиме навигации с пульта отображается только текст превью.
                     // Клавиатура НЕ выскакивает при простом перемещении курсора D-Pad!
                     Text(
-                        text = if (query.isNotEmpty()) query else "Поиск фильмов, сериалов, аниме... (нажмите ОК)",
+                        text = if (query.isNotEmpty()) query else "Поиск фильмов, сериалов, аниме...",
                         color = if (query.isNotEmpty()) CinemaTextWhite else CinemaMuted,
                         fontSize = 13.sp,
                         fontWeight = if (query.isNotEmpty()) FontWeight.Medium else FontWeight.Normal,
