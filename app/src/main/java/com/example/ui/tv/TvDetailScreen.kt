@@ -403,7 +403,7 @@ fun TvDetailContent(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Чипы: Год, Возраст, Кнопка добавления в закладки
+                        // Чипы: Год, Кнопка добавления в закладки
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -416,22 +416,6 @@ fun TvDetailContent(
                                     Text(
                                         text = detail.year,
                                         color = CinemaTextWhite,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                    )
-                                }
-                            }
-
-                            if (effectiveAgeRestriction.isNotEmpty()) {
-                                Surface(
-                                    color = CinemaPrimary.copy(alpha = 0.15f),
-                                    shape = RoundedCornerShape(6.dp),
-                                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.4f))
-                                ) {
-                                    Text(
-                                        text = effectiveAgeRestriction,
-                                        color = CinemaPrimary,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
@@ -492,7 +476,21 @@ fun TvDetailContent(
                 // ---- 2. Тот самый блок с информацией (ИДЕНТИЧНО телефону) ----
                 item {
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusProperties { left = backButtonFocusRequester }
+                            .onKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                    backButtonFocusRequester.requestFocus()
+                                    true
+                                } else false
+                            }
+                            .tvFocusableItem(
+                                onClick = {},
+                                scaleFactor = 1.01f,
+                                shape = RoundedCornerShape(12.dp),
+                                lazyListState = rightScrollState
+                            ),
                         colors = CardDefaults.cardColors(containerColor = CinemaDark),
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -741,20 +739,42 @@ fun TvDetailContent(
 
                 // ---- 5. Описание ----
                 item {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "Описание",
-                            color = CinemaTextWhite,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = detail.description.ifEmpty { "Описание отсутствует." },
-                            color = CinemaTextGray,
-                            fontSize = 13.sp,
-                            lineHeight = 20.sp
-                        )
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusProperties { left = trailerButtonFocusRequester }
+                            .onKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                    trailerButtonFocusRequester.requestFocus()
+                                    true
+                                } else false
+                            }
+                            .tvFocusableItem(
+                                onClick = {},
+                                scaleFactor = 1.01f,
+                                shape = RoundedCornerShape(12.dp),
+                                lazyListState = rightScrollState
+                            ),
+                        colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp)
+                        ) {
+                            Text(
+                                text = "Описание",
+                                color = CinemaTextWhite,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = detail.description.ifEmpty { "Описание отсутствует." },
+                                color = CinemaTextGray,
+                                fontSize = 12.sp,
+                                lineHeight = 18.sp
+                            )
+                        }
                     }
                 }
 

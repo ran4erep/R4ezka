@@ -371,7 +371,7 @@ private fun TvCatalogContent(
     entryFocusRequester: FocusRequester
 ) {
     val gridState = rememberLazyGridState()
-    val searchBarFocusRequester = remember { FocusRequester() }
+    val searchBarFocusRequester = entryFocusRequester
     val categoryDropdownFocusRequester = remember { FocusRequester() }
     val sectionDropdownFocusRequester = remember { FocusRequester() }
     val genreDropdownFocusRequester = remember { FocusRequester() }
