@@ -33,6 +33,8 @@ import androidx.compose.ui.input.key.type
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -109,6 +111,12 @@ fun TvDetailContent(
         val screenHeight = maxHeight
         val screenWidth = maxWidth
         val isCompactHeight = screenHeight < 520.dp
+
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val coroutineScope = rememberCoroutineScope()
+        val scrollStepPx = remember(screenHeight) {
+            with(density) { (screenHeight * 0.05f).toPx() }
+        }
 
         // Гарантированное вычисление возрастного рейтинга (из данных RezkaDetail, описания либо жанров)
         val effectiveAgeRestriction = remember(detail.ageRestriction, item.subtitle, detail.description, detail.genres) {
@@ -376,7 +384,36 @@ fun TvDetailContent(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .testTag("tv_detail_right_column"),
+                    .testTag("tv_detail_right_column")
+                    .onKeyEvent { keyEvent ->
+                        if (keyEvent.type == KeyEventType.KeyDown) {
+                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                    coroutineScope.launch {
+                                        try {
+                                            rightScrollState.animateScrollBy(
+                                                value = scrollStepPx,
+                                                animationSpec = tween(durationMillis = 150, easing = androidx.compose.animation.core.LinearEasing)
+                                            )
+                                        } catch (_: Exception) {}
+                                    }
+                                    false
+                                }
+                                AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                    coroutineScope.launch {
+                                        try {
+                                            rightScrollState.animateScrollBy(
+                                                value = -scrollStepPx,
+                                                animationSpec = tween(durationMillis = 150, easing = androidx.compose.animation.core.LinearEasing)
+                                            )
+                                        } catch (_: Exception) {}
+                                    }
+                                    false
+                                }
+                                else -> false
+                            }
+                        } else false
+                    },
                 contentPadding = PaddingValues(bottom = 36.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
@@ -476,21 +513,7 @@ fun TvDetailContent(
                 // ---- 2. Тот самый блок с информацией (ИДЕНТИЧНО телефону) ----
                 item {
                     Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusProperties { left = backButtonFocusRequester }
-                            .onKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                    backButtonFocusRequester.requestFocus()
-                                    true
-                                } else false
-                            }
-                            .tvFocusableItem(
-                                onClick = {},
-                                scaleFactor = 1.01f,
-                                shape = RoundedCornerShape(12.dp),
-                                lazyListState = rightScrollState
-                            ),
+                        modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = CinemaDark),
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -740,21 +763,7 @@ fun TvDetailContent(
                 // ---- 5. Описание ----
                 item {
                     Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusProperties { left = trailerButtonFocusRequester }
-                            .onKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                    trailerButtonFocusRequester.requestFocus()
-                                    true
-                                } else false
-                            }
-                            .tvFocusableItem(
-                                onClick = {},
-                                scaleFactor = 1.01f,
-                                shape = RoundedCornerShape(12.dp),
-                                lazyListState = rightScrollState
-                            ),
+                        modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = CinemaDark),
                         shape = RoundedCornerShape(12.dp)
                     ) {
