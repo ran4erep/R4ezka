@@ -375,7 +375,44 @@ private fun TvCatalogContent(
     val categoryDropdownFocusRequester = remember { FocusRequester() }
     val sectionDropdownFocusRequester = remember { FocusRequester() }
     val genreDropdownFocusRequester = remember { FocusRequester() }
-    val firstCardFocusRequester = remember { FocusRequester() }
+
+    val coroutineScope = rememberCoroutineScope()
+    var lastFocusedIndex by remember { mutableStateOf(0) }
+    val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+    fun getFocusRequesterForIndex(index: Int): FocusRequester {
+        return itemFocusRequesters.getOrPut(index) { FocusRequester() }
+    }
+
+    val columnCount by remember {
+        derivedStateOf {
+            val visibleItems = gridState.layoutInfo.visibleItemsInfo
+            if (visibleItems.isEmpty()) 4
+            else {
+                val maxCol = visibleItems.maxOfOrNull { it.column } ?: 0
+                maxCol + 1
+            }
+        }
+    }
+
+    val focusGrid: () -> Unit = {
+        coroutineScope.launch {
+            val visibleIndices = gridState.layoutInfo.visibleItemsInfo.map { it.index }
+            val targetIndex = if (lastFocusedIndex in visibleIndices) {
+                lastFocusedIndex
+            } else if (visibleIndices.isNotEmpty()) {
+                gridState.firstVisibleItemIndex
+            } else {
+                0
+            }
+            try {
+                getFocusRequesterForIndex(targetIndex).requestFocus()
+            } catch (_: Exception) {
+                try {
+                    getFocusRequesterForIndex(0).requestFocus()
+                } catch (_: Exception) {}
+            }
+        }
+    }
 
     // По умолчанию на телевизоре курсор должен стоять на строке поиска
     LaunchedEffect(Unit) {
@@ -427,7 +464,7 @@ private fun TvCatalogContent(
                 categoryFocusRequester = categoryDropdownFocusRequester,
                 sectionFocusRequester = sectionDropdownFocusRequester,
                 genreFocusRequester = genreDropdownFocusRequester,
-                firstCardFocusRequester = firstCardFocusRequester,
+                onFocusGrid = focusGrid,
                 sidebarFocusRequester = sidebarFocusRequester,
                 onSearchQueryChanged = {
                     searchInput = it
@@ -487,15 +524,17 @@ private fun TvCatalogContent(
                             items = catalogState.items,
                             key = { _, item -> item.id }
                         ) { index, item ->
-                            val visibleItem = gridState.layoutInfo.visibleItemsInfo.find { it.index == index }
-                            val isFirstRow = visibleItem?.row == 0 || index < 4
-                            val isFirstColumn = visibleItem?.column == 0 || (visibleItem == null && index == 0)
+                            val isFirstRow = index < columnCount
+                            val isFirstColumn = index % columnCount == 0
 
                             TvMovieCard(
                                 item = item,
                                 onClick = { onNavigateToDetail(item) },
-                                onFocused = { onItemFocused(item) },
-                                focusRequester = if (index == 0) firstCardFocusRequester else null,
+                                onFocused = {
+                                    lastFocusedIndex = index
+                                    onItemFocused(item)
+                                },
+                                focusRequester = getFocusRequesterForIndex(index),
                                 isFirstRow = isFirstRow,
                                 isFirstColumn = isFirstColumn,
                                 onUp = { categoryDropdownFocusRequester.requestFocus() },
@@ -649,7 +688,7 @@ private fun TvCatalogFiltersBar(
     categoryFocusRequester: FocusRequester,
     sectionFocusRequester: FocusRequester,
     genreFocusRequester: FocusRequester,
-    firstCardFocusRequester: FocusRequester,
+    onFocusGrid: () -> Unit,
     sidebarFocusRequester: FocusRequester
 ) {
     Column(
@@ -696,7 +735,7 @@ private fun TvCatalogFiltersBar(
                 onUp = { searchBarFocusRequester.requestFocus() },
                 onLeft = { sidebarFocusRequester.requestFocus() },
                 onRight = { sectionFocusRequester.requestFocus() },
-                onDown = { firstCardFocusRequester.requestFocus() }
+                onDown = onFocusGrid
             )
 
             // Dropdown 2: Раздел
@@ -720,7 +759,7 @@ private fun TvCatalogFiltersBar(
                 onUp = { searchBarFocusRequester.requestFocus() },
                 onLeft = { categoryFocusRequester.requestFocus() },
                 onRight = { genreFocusRequester.requestFocus() },
-                onDown = { firstCardFocusRequester.requestFocus() }
+                onDown = onFocusGrid
             )
 
             // Dropdown 3: Жанр
@@ -738,7 +777,7 @@ private fun TvCatalogFiltersBar(
                 focusRequester = genreFocusRequester,
                 onUp = { searchBarFocusRequester.requestFocus() },
                 onLeft = { sectionFocusRequester.requestFocus() },
-                onDown = { firstCardFocusRequester.requestFocus() }
+                onDown = onFocusGrid
             )
         }
     }
