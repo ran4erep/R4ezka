@@ -1669,6 +1669,15 @@ fun DetailScreen(
 
         // Inline Fullscreen Loading Decryptor Overlay
         if (isDecryptingStreams) {
+            var decryptionProgress by remember { mutableStateOf(0) }
+            LaunchedEffect(Unit) {
+                decryptionProgress = 0
+                while (decryptionProgress < 99) {
+                    kotlinx.coroutines.delay(if (decryptionProgress < 40) 45L else if (decryptionProgress < 75) 90L else 180L)
+                    decryptionProgress++
+                }
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1679,13 +1688,13 @@ fun DetailScreen(
                     CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(56.dp))
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "Дешифровка видеопотоков...",
+                        text = "Буферизация...",
                         color = CinemaTextWhite,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Medium
                     )
                     Text(
-                        text = "Очистка мусорных base64 байтов",
+                        text = "Загрузка: $decryptionProgress%",
                         color = CinemaTextGray,
                         fontSize = 12.sp
                     )

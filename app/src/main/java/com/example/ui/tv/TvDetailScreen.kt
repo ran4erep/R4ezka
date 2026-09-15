@@ -93,9 +93,9 @@ fun TvDetailContent(
         if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
     }
 
-    // Автофокус на главном действии при входе (кнопка Смотреть / Серия, либо Избранное / Назад)
+    // Автофокус на кнопке "В закладки" при входе на экран фильма на ТВ
     LaunchedEffect(Unit) {
-        mainActionFocusRequester.requestFocusSafe()
+        favoriteButtonFocusRequester.requestFocusSafe()
     }
 
     BoxWithConstraints(
