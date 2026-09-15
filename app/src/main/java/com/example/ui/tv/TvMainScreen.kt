@@ -151,9 +151,9 @@ fun TvMainScreen(
                         isSelected = isSelected,
                         isExpanded = isSidebarFocused,
                         focusRequester = if (dest == TvNavDestination.CATALOG) sidebarCatalogFocusRequester else null,
-                        onRight = {
-                            rightContentFocusRequester.requestFocus()
-                        },
+                        onRight = if (dest == TvNavDestination.CATALOG) {
+                            { rightContentFocusRequester.requestFocusSafe() }
+                        } else null,
                         onClick = { selectedDestination = dest }
                     )
                 }
@@ -405,10 +405,10 @@ private fun TvCatalogContent(
                 0
             }
             try {
-                getFocusRequesterForIndex(targetIndex).requestFocus()
+                getFocusRequesterForIndex(targetIndex).requestFocusSafe()
             } catch (_: Exception) {
                 try {
-                    getFocusRequesterForIndex(0).requestFocus()
+                    getFocusRequesterForIndex(0).requestFocusSafe()
                 } catch (_: Exception) {}
             }
         }
@@ -417,7 +417,7 @@ private fun TvCatalogContent(
     // По умолчанию на телевизоре курсор должен стоять на строке поиска
     LaunchedEffect(Unit) {
         try {
-            searchBarFocusRequester.requestFocus()
+            searchBarFocusRequester.requestFocusSafe()
         } catch (_: Exception) {}
     }
 
@@ -537,8 +537,8 @@ private fun TvCatalogContent(
                                 focusRequester = getFocusRequesterForIndex(index),
                                 isFirstRow = isFirstRow,
                                 isFirstColumn = isFirstColumn,
-                                onUp = { categoryDropdownFocusRequester.requestFocus() },
-                                onLeft = { sidebarFocusRequester.requestFocus() }
+                                onUp = { categoryDropdownFocusRequester.requestFocusSafe() },
+                                onLeft = { sidebarFocusRequester.requestFocusSafe() }
                             )
                         }
 
@@ -702,8 +702,8 @@ private fun TvCatalogFiltersBar(
             query = searchQuery,
             onQueryChanged = onSearchQueryChanged,
             searchBarFocusRequester = searchBarFocusRequester,
-            onLeft = { sidebarFocusRequester.requestFocus() },
-            onDown = { categoryFocusRequester.requestFocus() },
+            onLeft = { sidebarFocusRequester.requestFocusSafe() },
+            onDown = { categoryFocusRequester.requestFocusSafe() },
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -732,9 +732,9 @@ private fun TvCatalogFiltersBar(
                 getLabel = { it.second },
                 modifier = Modifier.weight(1f),
                 focusRequester = categoryFocusRequester,
-                onUp = { searchBarFocusRequester.requestFocus() },
-                onLeft = { sidebarFocusRequester.requestFocus() },
-                onRight = { sectionFocusRequester.requestFocus() },
+                onUp = { searchBarFocusRequester.requestFocusSafe() },
+                onLeft = { sidebarFocusRequester.requestFocusSafe() },
+                onRight = { sectionFocusRequester.requestFocusSafe() },
                 onDown = onFocusGrid
             )
 
@@ -756,9 +756,9 @@ private fun TvCatalogFiltersBar(
                 getLabel = { it.getDisplayName() },
                 modifier = Modifier.weight(1f),
                 focusRequester = sectionFocusRequester,
-                onUp = { searchBarFocusRequester.requestFocus() },
-                onLeft = { categoryFocusRequester.requestFocus() },
-                onRight = { genreFocusRequester.requestFocus() },
+                onUp = { searchBarFocusRequester.requestFocusSafe() },
+                onLeft = { categoryFocusRequester.requestFocusSafe() },
+                onRight = { genreFocusRequester.requestFocusSafe() },
                 onDown = onFocusGrid
             )
 
@@ -775,8 +775,8 @@ private fun TvCatalogFiltersBar(
                 getLabel = { it.name },
                 modifier = Modifier.weight(1.1f),
                 focusRequester = genreFocusRequester,
-                onUp = { searchBarFocusRequester.requestFocus() },
-                onLeft = { sectionFocusRequester.requestFocus() },
+                onUp = { searchBarFocusRequester.requestFocusSafe() },
+                onLeft = { sectionFocusRequester.requestFocusSafe() },
                 onDown = onFocusGrid
             )
         }
@@ -809,9 +809,7 @@ fun <T> TvRezkaDropdown(
 
     LaunchedEffect(expanded) {
         if (!expanded) {
-            try {
-                triggerRequester.requestFocus()
-            } catch (_: Exception) {}
+            triggerRequester.requestFocusSafe()
         }
     }
 
@@ -898,9 +896,7 @@ fun <T> TvRezkaDropdown(
             onDismissRequest = {
                 expanded = false
                 coroutineScope.launch {
-                    try {
-                        triggerRequester.requestFocus()
-                    } catch (_: Exception) {}
+                    triggerRequester.requestFocusSafe()
                 }
             },
             properties = PopupProperties(focusable = true),
@@ -935,9 +931,7 @@ fun <T> TvRezkaDropdown(
                         expanded = false
                         onOptionSelected(option)
                         coroutineScope.launch {
-                            try {
-                                triggerRequester.requestFocus()
-                            } catch (_: Exception) {}
+                            triggerRequester.requestFocusSafe()
                         }
                     },
                     modifier = Modifier
@@ -947,9 +941,7 @@ fun <T> TvRezkaDropdown(
                                 expanded = false
                                 onOptionSelected(option)
                                 coroutineScope.launch {
-                                    try {
-                                        triggerRequester.requestFocus()
-                                    } catch (_: Exception) {}
+                                    triggerRequester.requestFocusSafe()
                                 }
                             },
                             scaleFactor = 1.02f,
@@ -1066,10 +1058,8 @@ fun TvCompactSearchBar(
                 } else {
                     // Режим редактирования: активируется ТОЛЬКО по явному нажатию кнопки ОК на пульте
                     LaunchedEffect(Unit) {
-                        try {
-                            focusRequester.requestFocus()
-                            keyboardController?.show()
-                        } catch (_: Exception) {}
+                        focusRequester.requestFocusSafe()
+                        keyboardController?.show()
                     }
 
                     BasicTextField(
