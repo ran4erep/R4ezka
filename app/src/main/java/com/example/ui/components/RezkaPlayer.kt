@@ -44,6 +44,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -97,6 +98,14 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 enum class SeekSide { NONE, LEFT, RIGHT }
+
+/**
+ * Секции трехуровневой навигации пульта в плеере:
+ * - MAIN: центральная часть (видео: Center/OK - пауза/воспроизведение, Left/Right - перемотка)
+ * - TOP: верхний ряд кнопок (Назад, PiP / Картинка в картинке, Блокировка экрана)
+ * - BOTTOM: нижний ряд кнопок (Качество, Скорость, Субтитры, Масштаб)
+ */
+enum class PlayerFocusArea { MAIN, TOP, BOTTOM }
 
 /**
  * Режимы масштабирования видео (ExoPlayer AspectRatioFrameLayout)
@@ -666,6 +675,18 @@ fun RezkaPlayer(
     var showControls by remember { mutableStateOf(true) }
     var controlsInteractionKey by remember { mutableIntStateOf(0) }
 
+    // Remote Control (D-Pad) 3-tier Navigation State
+    var currentFocusArea by remember { mutableStateOf(PlayerFocusArea.MAIN) }
+    var selectedTopIndex by remember { mutableIntStateOf(1) } // 0: Back, 1: PiP, 2: Lock
+    var selectedBottomIndex by remember { mutableIntStateOf(0) } // 0: Quality, 1: Speed, 2: Subtitles, 3: Resize
+
+    // Reset remote focus tier back to MAIN whenever controls are dismissed
+    LaunchedEffect(showControls) {
+        if (!showControls) {
+            currentFocusArea = PlayerFocusArea.MAIN
+        }
+    }
+
     // Multi-tap continuous seek accumulation state
     var activeSeekSide by remember { mutableStateOf(SeekSide.NONE) }
     var accumulatedSeekSeconds by remember { mutableIntStateOf(0) }
@@ -946,79 +967,291 @@ fun RezkaPlayer(
                 .focusable()
                 .onKeyEvent { keyEvent ->
                     if (keyEvent.type != KeyEventType.KeyDown) return@onKeyEvent false
-                    when (keyEvent.nativeKeyEvent.keyCode) {
-                        android.view.KeyEvent.KEYCODE_DPAD_CENTER,
-                        android.view.KeyEvent.KEYCODE_ENTER,
-                        android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
-                        android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-                        android.view.KeyEvent.KEYCODE_SPACE -> {
-                            if (isPlaying) exoPlayer.pause() else exoPlayer.play()
-                            showControls = true
-                            controlsInteractionKey++
-                            true
-                        }
-                        android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> {
-                            exoPlayer.play()
-                            showControls = true
-                            controlsInteractionKey++
-                            true
-                        }
-                        android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> {
-                            exoPlayer.pause()
-                            showControls = true
-                            controlsInteractionKey++
-                            true
-                        }
-                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
-                        android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                            val cur = exoPlayer.currentPosition
-                            val dur = exoPlayer.duration.coerceAtLeast(0L)
-                            val target = (cur + 10000L).coerceAtMost(dur)
-                            exoPlayer.seekTo(target)
-                            currentPosition = target
-                            activeSeekSide = SeekSide.RIGHT
-                            accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
-                            showControls = true
-                            controlsInteractionKey++
-                            scope.launch {
-                                delay(900)
-                                activeSeekSide = SeekSide.NONE
-                                accumulatedSeekSeconds = 0
+
+                    // If screen is locked, notify user and absorb input
+                    if (isScreenLocked) {
+                        showLockOverlay = true
+                        lockOverlayInteractionKey++
+                        screenNotificationMessage = "Экран заблокирован. Удерживайте 2 сек. для разблокировки."
+                        return@onKeyEvent true
+                    }
+
+                    // Handle navigation inside Quality Selection Dialog
+                    if (showQualityDialog) {
+                        when (keyEvent.nativeKeyEvent.keyCode) {
+                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                selectedStreamIndex = (selectedStreamIndex - 1).coerceAtLeast(0)
+                                return@onKeyEvent true
                             }
-                            true
+                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                selectedStreamIndex = (selectedStreamIndex + 1).coerceAtMost(streams.lastIndex)
+                                return@onKeyEvent true
+                            }
+                            android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                            android.view.KeyEvent.KEYCODE_ENTER,
+                            android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                                if (selectedStreamIndex in streams.indices) {
+                                    val stream = streams[selectedStreamIndex]
+                                    preferredQualityName = stream.quality
+                                    playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
+                                }
+                                showQualityDialog = false
+                                currentFocusArea = PlayerFocusArea.BOTTOM
+                                return@onKeyEvent true
+                            }
+                            android.view.KeyEvent.KEYCODE_BACK -> {
+                                showQualityDialog = false
+                                return@onKeyEvent true
+                            }
+                            else -> return@onKeyEvent false
                         }
-                        android.view.KeyEvent.KEYCODE_DPAD_LEFT,
-                        android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                            val cur = exoPlayer.currentPosition
-                            val target = (cur - 10000L).coerceAtLeast(0L)
-                            exoPlayer.seekTo(target)
-                            currentPosition = target
-                            activeSeekSide = SeekSide.LEFT
-                            accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
+                    }
+
+                    // Handle navigation inside Speed Selection Dialog
+                    if (showSpeedDialog) {
+                        val availableSpeeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+                        val curIdx = availableSpeeds.indexOf(playbackSpeed).let { if (it >= 0) it else 2 }
+                        when (keyEvent.nativeKeyEvent.keyCode) {
+                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                val newSpeed = availableSpeeds[(curIdx - 1).coerceAtLeast(0)]
+                                playbackSpeed = newSpeed
+                                exoPlayer.setPlaybackSpeed(newSpeed)
+                                return@onKeyEvent true
+                            }
+                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                val newSpeed = availableSpeeds[(curIdx + 1).coerceAtMost(availableSpeeds.lastIndex)]
+                                playbackSpeed = newSpeed
+                                exoPlayer.setPlaybackSpeed(newSpeed)
+                                return@onKeyEvent true
+                            }
+                            android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                            android.view.KeyEvent.KEYCODE_ENTER,
+                            android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                                showSpeedDialog = false
+                                currentFocusArea = PlayerFocusArea.BOTTOM
+                                return@onKeyEvent true
+                            }
+                            android.view.KeyEvent.KEYCODE_BACK -> {
+                                showSpeedDialog = false
+                                return@onKeyEvent true
+                            }
+                            else -> return@onKeyEvent false
+                        }
+                    }
+
+                    // Handle navigation inside Subtitles Dialog
+                    if (showSubtitlesDialog) {
+                        when (keyEvent.nativeKeyEvent.keyCode) {
+                            android.view.KeyEvent.KEYCODE_BACK,
+                            android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                            android.view.KeyEvent.KEYCODE_ENTER,
+                            android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                                showSubtitlesDialog = false
+                                currentFocusArea = PlayerFocusArea.BOTTOM
+                                return@onKeyEvent true
+                            }
+                            else -> return@onKeyEvent false
+                        }
+                    }
+
+                    // Main 3-tier remote D-pad navigation logic
+                    when (currentFocusArea) {
+                        PlayerFocusArea.MAIN -> {
+                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                                android.view.KeyEvent.KEYCODE_ENTER,
+                                android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
+                                android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                                android.view.KeyEvent.KEYCODE_SPACE -> {
+                                    if (isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                                    exoPlayer.play()
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                                    exoPlayer.pause()
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
+                                android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                                    val cur = exoPlayer.currentPosition
+                                    val dur = exoPlayer.duration.coerceAtLeast(0L)
+                                    val target = (cur + 10000L).coerceAtMost(dur)
+                                    exoPlayer.seekTo(target)
+                                    currentPosition = target
+                                    activeSeekSide = SeekSide.RIGHT
+                                    accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    scope.launch {
+                                        delay(900)
+                                        activeSeekSide = SeekSide.NONE
+                                        accumulatedSeekSeconds = 0
+                                    }
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                                android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                                    val cur = exoPlayer.currentPosition
+                                    val target = (cur - 10000L).coerceAtLeast(0L)
+                                    exoPlayer.seekTo(target)
+                                    currentPosition = target
+                                    activeSeekSide = SeekSide.LEFT
+                                    accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    scope.launch {
+                                        delay(900)
+                                        activeSeekSide = SeekSide.NONE
+                                        accumulatedSeekSeconds = 0
+                                    }
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                    // Navigate up to Top bar buttons (PiP / Screen Lock / Back)
+                                    currentFocusArea = PlayerFocusArea.TOP
+                                    selectedTopIndex = 1 // Focus initially on PiP button
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                    // Navigate down to Bottom bar buttons (Quality / Speed / Subtitles / Stretch)
+                                    currentFocusArea = PlayerFocusArea.BOTTOM
+                                    selectedBottomIndex = 0 // Focus initially on Quality button
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_BACK -> {
+                                    if (showControls) {
+                                        showControls = false
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                                else -> false
+                            }
+                        }
+
+                        PlayerFocusArea.TOP -> {
                             showControls = true
                             controlsInteractionKey++
-                            scope.launch {
-                                delay(900)
-                                activeSeekSide = SeekSide.NONE
-                                accumulatedSeekSeconds = 0
+                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                    selectedTopIndex = (selectedTopIndex - 1).coerceAtLeast(0)
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                    selectedTopIndex = (selectedTopIndex + 1).coerceAtMost(2)
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                    // Return down to central main playback control
+                                    currentFocusArea = PlayerFocusArea.MAIN
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                                android.view.KeyEvent.KEYCODE_ENTER,
+                                android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                                    when (selectedTopIndex) {
+                                        0 -> onBack()
+                                        1 -> {
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity != null) {
+                                                try {
+                                                    val params = PictureInPictureParams.Builder()
+                                                        .setAspectRatio(Rational(16, 9))
+                                                        .build()
+                                                    activity.enterPictureInPictureMode(params)
+                                                } catch (e: Exception) {
+                                                    isFloating = true
+                                                    showControls = false
+                                                }
+                                            } else {
+                                                isFloating = true
+                                                showControls = false
+                                            }
+                                        }
+                                        2 -> {
+                                            isScreenLocked = true
+                                            showControls = false
+                                            showLockOverlay = true
+                                            screenNotificationMessage = "Экран заблокирован. Удерживайте 2 сек. для разблокировки."
+                                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                        }
+                                    }
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_BACK -> {
+                                    currentFocusArea = PlayerFocusArea.MAIN
+                                    showControls = false
+                                    true
+                                }
+                                else -> false
                             }
-                            true
                         }
-                        android.view.KeyEvent.KEYCODE_DPAD_UP,
-                        android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                            showControls = !showControls
+
+                        PlayerFocusArea.BOTTOM -> {
+                            showControls = true
                             controlsInteractionKey++
-                            true
-                        }
-                        android.view.KeyEvent.KEYCODE_BACK -> {
-                            if (showControls) {
-                                showControls = false
-                                true
-                            } else {
-                                false
+                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                    selectedBottomIndex = (selectedBottomIndex - 1).coerceAtLeast(0)
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                    selectedBottomIndex = (selectedBottomIndex + 1).coerceAtMost(3)
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                    // Return up to central main playback control
+                                    currentFocusArea = PlayerFocusArea.MAIN
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                                android.view.KeyEvent.KEYCODE_ENTER,
+                                android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                                    when (selectedBottomIndex) {
+                                        0 -> showQualityDialog = true
+                                        1 -> showSpeedDialog = true
+                                        2 -> showSubtitlesDialog = true
+                                        3 -> {
+                                            currentResizeMode = when (currentResizeMode) {
+                                                VideoResizeMode.FIT -> VideoResizeMode.ZOOM
+                                                VideoResizeMode.ZOOM -> VideoResizeMode.FILL
+                                                VideoResizeMode.FILL -> VideoResizeMode.FIT
+                                            }
+                                            RezkaService.setDefaultResizeMode(currentResizeMode.name)
+                                            FirebaseSyncManager.onSettingsUpdated(resizeMode = currentResizeMode.name)
+                                            screenNotificationMessage = "Масштаб: ${currentResizeMode.title}"
+                                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                        }
+                                    }
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_BACK -> {
+                                    currentFocusArea = PlayerFocusArea.MAIN
+                                    showControls = false
+                                    true
+                                }
+                                else -> false
                             }
                         }
-                        else -> false
                     }
                 }
         ) {
@@ -1483,6 +1716,10 @@ fun RezkaPlayer(
                         .padding(WindowInsets.safeDrawing.asPaddingValues())
                 ) {
                     // ---- TOP BAR ----
+                    val isBackRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.TOP && selectedTopIndex == 0
+                    val isPipRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.TOP && selectedTopIndex == 1
+                    val isLockRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.TOP && selectedTopIndex == 2
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1491,15 +1728,26 @@ fun RezkaPlayer(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(
-                            onClick = onBack,
+                            onClick = {
+                                controlsInteractionKey++
+                                selectedTopIndex = 0
+                                onBack()
+                            },
                             modifier = Modifier
-                                .background(Color.Black.copy(alpha = 0.4f), CircleShape)
+                                .scale(if (isBackRemoteFocused) 1.15f else 1.0f)
+                                .background(
+                                    if (isBackRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.4f),
+                                    CircleShape
+                                )
+                                .then(
+                                    if (isBackRemoteFocused) Modifier.border(2.dp, CinemaPrimary, CircleShape) else Modifier
+                                )
                                 .testTag("player_back_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ArrowBack,
                                 contentDescription = "Назад",
-                                tint = CinemaTextWhite
+                                tint = if (isBackRemoteFocused) CinemaPrimary else CinemaTextWhite
                             )
                         }
                         Spacer(modifier = Modifier.width(16.dp))
@@ -1530,6 +1778,8 @@ fun RezkaPlayer(
                             // 1. Floating mini-player button (PiP with drag & resize)
                             IconButton(
                                 onClick = {
+                                    controlsInteractionKey++
+                                    selectedTopIndex = 1
                                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity != null) {
                                         try {
                                             val params = PictureInPictureParams.Builder()
@@ -1547,19 +1797,28 @@ fun RezkaPlayer(
                                     }
                                 },
                                 modifier = Modifier
-                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
+                                    .scale(if (isPipRemoteFocused) 1.15f else 1.0f)
+                                    .background(
+                                        if (isPipRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.4f),
+                                        CircleShape
+                                    )
+                                    .then(
+                                        if (isPipRemoteFocused) Modifier.border(2.dp, CinemaPrimary, CircleShape) else Modifier
+                                    )
                                     .testTag("player_pip_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.PictureInPictureAlt,
                                     contentDescription = "Сделать плеер плавающим",
-                                    tint = CinemaTextWhite
+                                    tint = if (isPipRemoteFocused) CinemaPrimary else CinemaTextWhite
                                 )
                             }
 
                             // 2. Lock screen button (locks touches until held 2 seconds)
                             IconButton(
                                 onClick = {
+                                    controlsInteractionKey++
+                                    selectedTopIndex = 2
                                     isScreenLocked = true
                                     showControls = false
                                     showLockOverlay = true
@@ -1567,13 +1826,20 @@ fun RezkaPlayer(
                                     view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                                 },
                                 modifier = Modifier
-                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
+                                    .scale(if (isLockRemoteFocused) 1.15f else 1.0f)
+                                    .background(
+                                        if (isLockRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.4f),
+                                        CircleShape
+                                    )
+                                    .then(
+                                        if (isLockRemoteFocused) Modifier.border(2.dp, CinemaPrimary, CircleShape) else Modifier
+                                    )
                                     .testTag("player_lock_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.LockOpen,
                                     contentDescription = "Заблокировать касания",
-                                    tint = CinemaTextWhite
+                                    tint = if (isLockRemoteFocused) CinemaPrimary else CinemaTextWhite
                                 )
                             }
                         }
@@ -1703,6 +1969,11 @@ fun RezkaPlayer(
                         )
 
                         // Secondary Bottom Controls
+                        val isQualityRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == 0
+                        val isSpeedRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == 1
+                        val isSubtitlesRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == 2
+                        val isResizeRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == 3
+
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1716,11 +1987,16 @@ fun RezkaPlayer(
                                 Button(
                                     onClick = {
                                         controlsInteractionKey++
+                                        selectedBottomIndex = 0
                                         showQualityDialog = true
                                     },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.5f)),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isQualityRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
+                                    ),
+                                    border = if (isQualityRemoteFocused) BorderStroke(2.dp, CinemaPrimary) else null,
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                     modifier = Modifier
+                                        .scale(if (isQualityRemoteFocused) 1.08f else 1.0f)
                                         .height(32.dp)
                                         .testTag("player_quality_button")
                                 ) {
@@ -1743,11 +2019,16 @@ fun RezkaPlayer(
                                 Button(
                                     onClick = {
                                         controlsInteractionKey++
+                                        selectedBottomIndex = 1
                                         showSpeedDialog = true
                                     },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.5f)),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isSpeedRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
+                                    ),
+                                    border = if (isSpeedRemoteFocused) BorderStroke(2.dp, CinemaPrimary) else null,
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                     modifier = Modifier
+                                        .scale(if (isSpeedRemoteFocused) 1.08f else 1.0f)
                                         .height(32.dp)
                                         .testTag("player_speed_button")
                                 ) {
@@ -1773,27 +2054,31 @@ fun RezkaPlayer(
                                 Button(
                                     onClick = {
                                         controlsInteractionKey++
+                                        selectedBottomIndex = 2
                                         showSubtitlesDialog = true
                                     },
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isSubtitlesEnabled && selectedSubtitleTrack != null)
-                                            CinemaPrimary.copy(alpha = 0.25f)
-                                        else
-                                            Color.Black.copy(alpha = 0.5f)
+                                        containerColor = when {
+                                            isSubtitlesRemoteFocused -> CinemaPrimary.copy(alpha = 0.45f)
+                                            isSubtitlesEnabled && selectedSubtitleTrack != null -> CinemaPrimary.copy(alpha = 0.25f)
+                                            else -> Color.Black.copy(alpha = 0.5f)
+                                        }
                                     ),
-                                    border = if (isSubtitlesEnabled && selectedSubtitleTrack != null)
-                                        BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.6f))
-                                    else
-                                        null,
+                                    border = when {
+                                        isSubtitlesRemoteFocused -> BorderStroke(2.dp, CinemaPrimary)
+                                        isSubtitlesEnabled && selectedSubtitleTrack != null -> BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.6f))
+                                        else -> null
+                                    },
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                     modifier = Modifier
+                                        .scale(if (isSubtitlesRemoteFocused) 1.08f else 1.0f)
                                         .height(32.dp)
                                         .testTag("player_subtitles_button")
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Subtitles,
                                         contentDescription = "Субтитры",
-                                        tint = if (isSubtitlesEnabled && selectedSubtitleTrack != null) CinemaPrimary else CinemaTextWhite,
+                                        tint = if (isSubtitlesRemoteFocused || (isSubtitlesEnabled && selectedSubtitleTrack != null)) CinemaPrimary else CinemaTextWhite,
                                         modifier = Modifier.size(15.dp)
                                     )
                                     Spacer(modifier = Modifier.width(5.dp))
@@ -1810,6 +2095,7 @@ fun RezkaPlayer(
                             Button(
                                 onClick = {
                                     controlsInteractionKey++
+                                    selectedBottomIndex = 3
                                     currentResizeMode = when (currentResizeMode) {
                                         VideoResizeMode.FIT -> VideoResizeMode.ZOOM
                                         VideoResizeMode.ZOOM -> VideoResizeMode.FILL
@@ -1820,9 +2106,13 @@ fun RezkaPlayer(
                                     screenNotificationMessage = "Масштаб: ${currentResizeMode.title}"
                                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.5f)),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isResizeRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
+                                ),
+                                border = if (isResizeRemoteFocused) BorderStroke(2.dp, CinemaPrimary) else null,
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                 modifier = Modifier
+                                    .scale(if (isResizeRemoteFocused) 1.08f else 1.0f)
                                     .height(32.dp)
                                     .testTag("player_resize_button")
                             ) {

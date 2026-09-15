@@ -869,48 +869,83 @@ fun DetailScreen(
                     // 6. Series Navigation Panel (Seasons & Episodes Grid)
                     val effectiveSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else detail.seasons
                     if (detail.type == RezkaType.SERIES && effectiveSeasons.isNotEmpty()) {
-                        // Seasons List Selector
+                        // Seasons Dropdown Selector
                         item {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 20.dp)
+                                    .padding(top = 20.dp, start = 16.dp, end = 16.dp)
                             ) {
                                 Text(
-                                    text = "Сезоны",
+                                    text = "Сезон",
                                     color = CinemaTextWhite,
                                     fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                    fontWeight = FontWeight.Bold
                                 )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                LazyRow(
-                                    contentPadding = PaddingValues(horizontal = 16.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    items(effectiveSeasons) { s ->
-                                        val isSelected = selectedSeasonId == s.id
-                                        val bgAnimate by animateColorAsState(
-                                            targetValue = if (isSelected) CinemaPrimary.copy(alpha = 0.2f) else CinemaDark,
-                                            animationSpec = tween(200)
-                                        )
+                                Spacer(modifier = Modifier.height(8.dp))
 
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(bgAnimate)
-                                                .clickable {
-                                                    selectedSeasonId = s.id
-                                                    selectedEpisodeId = s.episodes.firstOrNull()?.id
-                                                }
-                                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                                        ) {
-                                            Text(
-                                                text = s.name,
-                                                color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Bold
+                                val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
+                                var seasonDropdownExpanded by remember { mutableStateOf(false) }
+
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(CinemaDark)
+                                            .clickable { seasonDropdownExpanded = true }
+                                            .padding(horizontal = 14.dp, vertical = 12.dp)
+                                            .testTag("season_dropdown_trigger"),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = currentSeason.name,
+                                            color = CinemaTextWhite,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Icon(
+                                            imageVector = if (seasonDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                            contentDescription = "Выбор сезона",
+                                            tint = CinemaPrimary,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+
+                                    DropdownMenu(
+                                        expanded = seasonDropdownExpanded,
+                                        onDismissRequest = { seasonDropdownExpanded = false },
+                                        modifier = Modifier
+                                            .background(CinemaDark)
+                                            .fillMaxWidth(0.9f)
+                                            .heightIn(max = 300.dp)
+                                    ) {
+                                        effectiveSeasons.forEach { s ->
+                                            val isSelected = s.id == currentSeason.id
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Text(
+                                                        text = s.name,
+                                                        color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                    )
+                                                },
+                                                onClick = {
+                                                    seasonDropdownExpanded = false
+                                                    if (!isSelected) {
+                                                        selectedSeasonId = s.id
+                                                        selectedEpisodeId = s.episodes.firstOrNull()?.id
+                                                    }
+                                                },
+                                                colors = MenuDefaults.itemColors(
+                                                    textColor = CinemaTextWhite
+                                                )
                                             )
                                         }
                                     }
