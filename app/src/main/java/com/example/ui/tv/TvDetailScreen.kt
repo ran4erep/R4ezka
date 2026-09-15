@@ -84,11 +84,15 @@ fun TvDetailContent(
         } catch (_: Exception) {}
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(CinemaBlack)
     ) {
+        val screenHeight = maxHeight
+        val screenWidth = maxWidth
+        val isCompactHeight = screenHeight < 520.dp
+
         // 1. Полноэкранный кинотеатральный фоновый арт (Backdrop) с мягким затемнением
         Box(modifier = Modifier.fillMaxSize()) {
             AsyncImage(
@@ -116,24 +120,30 @@ fun TvDetailContent(
             )
         }
 
-        // 2. Основная рабочая область: Двухпанельный ТВ-лейаут
+        // 2. Основная рабочая область: Двухпанельный ТВ-лейаут (Адаптивный под любые размеры экрана)
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 18.dp),
-            horizontalArrangement = Arrangement.spacedBy(24.dp)
+                .padding(
+                    horizontal = if (isCompactHeight) 16.dp else 24.dp,
+                    vertical = if (isCompactHeight) 10.dp else 18.dp
+                ),
+            horizontalArrangement = Arrangement.spacedBy(if (isCompactHeight) 16.dp else 24.dp)
         ) {
             // =========================================================================
             // ЛЕВАЯ ПАНЕЛЬ:
-            // В строгом соответствии с запросом:
+            // Адаптивная ширина и высота: постер подстраивается под высоту экрана
             // Кнопка назад -> Обложка (постер) -> Снизу ТОЛЬКО кнопка трейлера.
-            // Никаких рейтингов, кнопок смотреть или метаданных под постером слева нет!
+            // Кнопка трейлера ГАРАНТИРОВАННО помещается на экране даже в телефоне ландшафта!
             // =========================================================================
+            val availablePosterHeight = (screenHeight - (if (isCompactHeight) 20.dp else 36.dp) - (if (isCompactHeight) 34.dp else 42.dp) - (if (isCompactHeight) 36.dp else 46.dp) - (if (isCompactHeight) 16.dp else 24.dp)).coerceAtLeast(110.dp)
+            val leftPanelWidth = if (isCompactHeight) (availablePosterHeight * 0.68f).coerceIn(135.dp, 260.dp) else 260.dp
+
             Column(
                 modifier = Modifier
-                    .width(260.dp)
+                    .width(leftPanelWidth)
                     .fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 8.dp else 12.dp)
             ) {
                 // Кнопка "Назад"
                 Surface(
@@ -141,6 +151,8 @@ fun TvDetailContent(
                     shape = RoundedCornerShape(10.dp),
                     border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
                     modifier = Modifier
+                        .fillMaxWidth()
+                        .height(if (isCompactHeight) 34.dp else 42.dp)
                         .tvFocusableItem(
                             onClick = onBack,
                             scaleFactor = 1.05f,
@@ -149,30 +161,35 @@ fun TvDetailContent(
                         .testTag("tv_back_button")
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = if (isCompactHeight) 10.dp else 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Назад",
                             tint = CinemaTextWhite,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(if (isCompactHeight) 16.dp else 18.dp)
                         )
                         Text(
                             text = "Назад к каталогу",
                             color = CinemaTextWhite,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
+                            fontSize = if (isCompactHeight) 11.sp else 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
 
-                // Постер фильма (пропорции кинопостера)
+                // Постер фильма (пропорции кинопостера 0.68f, адаптивно масштабируемый по высоте)
                 Card(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(0.68f),
+                        .weight(1f, fill = false)
+                        .aspectRatio(0.68f, matchHeightConstraintsFirst = true)
+                        .align(Alignment.CenterHorizontally),
                     shape = RoundedCornerShape(12.dp),
                     elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
                     colors = CardDefaults.cardColors(containerColor = CinemaDark)
@@ -193,28 +210,28 @@ fun TvDetailContent(
                                 border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .padding(8.dp)
+                                    .padding(if (isCompactHeight) 6.dp else 8.dp)
                             ) {
                                 Text(
                                     text = detail.ageRestriction,
                                     color = CinemaPrimary,
-                                    fontSize = 11.sp,
+                                    fontSize = if (isCompactHeight) 10.sp else 11.sp,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                                 )
                             }
                         }
                     }
                 }
 
-                // СНИЗУ ПОД ОБЛОЖКОЙ: ТОЛЬКО КНОПКА ТРЕЙЛЕРА
+                // СНИЗУ ПОД ОБЛОЖКОЙ: КНОПКА ТРЕЙЛЕРА (ВСЕГДА ВИДНА НА ЭКРАНЕ ЛЮБОГО РАЗМЕРА!)
                 Surface(
                     color = CinemaCard,
                     shape = RoundedCornerShape(10.dp),
                     border = BorderStroke(1.dp, Color(0xFFFF0000).copy(alpha = 0.6f)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(46.dp)
+                        .height(if (isCompactHeight) 36.dp else 46.dp)
                         .tvFocusableItem(
                             onClick = onLaunchTrailer,
                             scaleFactor = 1.05f,
@@ -227,12 +244,16 @@ fun TvDetailContent(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        YouTubeLogoIcon(width = 22.dp, height = 15.dp, playIconSize = 10.dp)
-                        Spacer(modifier = Modifier.width(8.dp))
+                        YouTubeLogoIcon(
+                            width = if (isCompactHeight) 18.dp else 22.dp,
+                            height = if (isCompactHeight) 13.dp else 15.dp,
+                            playIconSize = if (isCompactHeight) 8.dp else 10.dp
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "Трейлер",
                             color = CinemaTextWhite,
-                            fontSize = 13.sp,
+                            fontSize = if (isCompactHeight) 12.sp else 13.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -603,6 +624,7 @@ fun TvDetailContent(
                 // ---- 6. Озвучка / Перевод ----
                 if (detail.translators.isNotEmpty()) {
                     item {
+                        val currentTrans = selectedTranslator ?: detail.translators.first()
                         Column(modifier = Modifier.fillMaxWidth()) {
                             Text(
                                 text = "Озвучка / Перевод",
@@ -611,39 +633,15 @@ fun TvDetailContent(
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.height(8.dp))
-                            val currentTrans = selectedTranslator ?: detail.translators.first()
 
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                items(detail.translators) { trans ->
-                                    val isSelected = trans.id == currentTrans.id
-                                    Surface(
-                                        color = if (isSelected) CinemaPrimary.copy(alpha = 0.22f) else CinemaDark,
-                                        shape = RoundedCornerShape(8.dp),
-                                        border = BorderStroke(
-                                            1.dp,
-                                            if (isSelected) CinemaPrimary else Color.White.copy(alpha = 0.15f)
-                                        ),
-                                        modifier = Modifier
-                                            .tvFocusableItem(
-                                                onClick = { onSelectTranslator(trans) },
-                                                scaleFactor = 1.05f,
-                                                shape = RoundedCornerShape(8.dp)
-                                            )
-                                            .testTag("tv_translator_${trans.id}")
-                                    ) {
-                                        Text(
-                                            text = trans.name,
-                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
-                                        )
-                                    }
-                                }
-                            }
+                            TvRezkaDropdown(
+                                label = "Озвучка",
+                                options = detail.translators,
+                                selectedOption = currentTrans,
+                                onOptionSelected = { trans -> onSelectTranslator(trans) },
+                                getLabel = { it.name },
+                                modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f)
+                            )
                         }
                     }
                 }
@@ -688,52 +686,31 @@ fun TvDetailContent(
 
                 // ---- 8. СЕЗОНЫ И СЕРИИ (для сериалов) ----
                 if (detail.type == RezkaType.SERIES && effectiveSeasons.isNotEmpty()) {
-                    // Сезоны
+                    // Сезоны (выпадающий список для ТВ)
+                    val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
+
                     item {
                         Column(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = "Сезоны",
+                                text = "Сезон",
                                 color = CinemaTextWhite,
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.height(8.dp))
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                items(effectiveSeasons) { s ->
-                                    val isSelected = selectedSeasonId == s.id
-                                    Surface(
-                                        color = if (isSelected) CinemaPrimary.copy(alpha = 0.22f) else CinemaDark,
-                                        shape = RoundedCornerShape(8.dp),
-                                        border = BorderStroke(
-                                            1.dp,
-                                            if (isSelected) CinemaPrimary else Color.White.copy(alpha = 0.15f)
-                                        ),
-                                        modifier = Modifier
-                                            .tvFocusableItem(
-                                                onClick = { onSelectSeason(s.id) },
-                                                scaleFactor = 1.05f,
-                                                shape = RoundedCornerShape(8.dp)
-                                            )
-                                            .testTag("tv_season_${s.id}")
-                                    ) {
-                                        Text(
-                                            text = s.name,
-                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
-                                        )
-                                    }
-                                }
-                            }
+
+                            TvRezkaDropdown(
+                                label = "Сезон",
+                                options = effectiveSeasons,
+                                selectedOption = currentSeason,
+                                onOptionSelected = { s -> onSelectSeason(s.id) },
+                                getLabel = { it.name },
+                                modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f)
+                            )
                         }
                     }
 
                     // Серии текущего сезона
-                    val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
                     item {
                         Column(modifier = Modifier.fillMaxWidth()) {
                             Row(
@@ -927,7 +904,15 @@ fun TvDetailContent(
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 displayComments.forEach { comment ->
                                     Card(
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .tvFocusableItem(
+                                                onClick = { /* Фокус на отзыве для плавной прокрутки пультом D-Pad */ },
+                                                scaleFactor = 1.01f,
+                                                focusedBorderWidth = 2.dp,
+                                                shape = RoundedCornerShape(12.dp)
+                                            )
+                                            .testTag("tv_comment_card"),
                                         colors = CardDefaults.cardColors(containerColor = CinemaDark),
                                         shape = RoundedCornerShape(12.dp)
                                     ) {

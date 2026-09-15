@@ -13,6 +13,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -21,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -28,8 +31,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -139,34 +145,6 @@ fun TvMainScreen(
                         isExpanded = isSidebarFocused,
                         onClick = { selectedDestination = dest }
                     )
-                }
-            }
-
-            // Bottom Device Status Badge
-            if (isSidebarFocused) {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.4f),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.padding(horizontal = 4.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CastConnected,
-                            contentDescription = null,
-                            tint = CinemaPrimary,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Android TV Mode",
-                            color = CinemaTextGray,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
                 }
             }
         }
@@ -383,21 +361,22 @@ private fun TvCatalogContent(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 10.dp, start = 16.dp, end = 16.dp)
-    ) {
-        var searchInput by remember { mutableStateOf(viewModel.searchQuery) }
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val isCompactHeight = maxHeight < 500.dp
 
-        // ---- 1. HERO PREVIEW SECTION (только если не идёт поиск) ----
-        if (viewModel.searchQuery.isEmpty()) {
-            val previewItem = focusedItem ?: (catalogState as? CatalogState.Success)?.items?.firstOrNull()
-            TvHeroPreview(item = previewItem, onPlayClick = {
-                previewItem?.let { onNavigateToDetail(it) }
-            })
-            Spacer(modifier = Modifier.height(10.dp))
-        }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = if (isCompactHeight) 6.dp else 10.dp, start = 16.dp, end = 16.dp)
+        ) {
+            var searchInput by remember { mutableStateOf(viewModel.searchQuery) }
+
+            // ---- 1. HERO PREVIEW SECTION (только если не идёт поиск) ----
+            if (viewModel.searchQuery.isEmpty()) {
+                val previewItem = focusedItem ?: (catalogState as? CatalogState.Success)?.items?.firstOrNull()
+                TvHeroPreview(item = previewItem, isCompact = isCompactHeight)
+                Spacer(modifier = Modifier.height(if (isCompactHeight) 6.dp else 10.dp))
+            }
 
         // ---- 2. ВЫПАДАЮЩИЕ СПИСКИ И КОМПАКТНЫЙ ПОИСК ДЛЯ ТВ ----
         TvCatalogFiltersBar(
@@ -488,6 +467,7 @@ private fun TvCatalogContent(
         }
     }
 }
+}
 
 /**
  * Динамический Hero баннер для ТВ:
@@ -496,12 +476,12 @@ private fun TvCatalogContent(
 @Composable
 private fun TvHeroPreview(
     item: RezkaItem?,
-    onPlayClick: () -> Unit
+    isCompact: Boolean = false
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(170.dp)
+            .height(if (isCompact) 115.dp else 160.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(CinemaDark)
     ) {
@@ -513,87 +493,62 @@ private fun TvHeroPreview(
                     modifier = Modifier
                         .weight(1.3f)
                         .fillMaxHeight()
-                        .padding(start = 20.dp, top = 16.dp, bottom = 16.dp, end = 12.dp),
-                    verticalArrangement = Arrangement.SpaceBetween
+                        .padding(
+                            start = if (isCompact) 14.dp else 20.dp,
+                            top = if (isCompact) 10.dp else 16.dp,
+                            bottom = if (isCompact) 10.dp else 16.dp,
+                            end = 12.dp
+                        ),
+                    verticalArrangement = Arrangement.Center
                 ) {
-                    Column {
-                        // Бейдж рейтинга и тип
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            if (item.rating.isNotEmpty()) {
-                                Surface(
-                                    color = CinemaPrimary,
-                                    shape = RoundedCornerShape(6.dp)
-                                ) {
-                                    Text(
-                                        text = item.rating,
-                                        color = Color.White,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
+                    // Бейдж рейтинга и тип
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (item.rating.isNotEmpty()) {
+                            Surface(
+                                color = CinemaPrimary,
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    text = item.rating,
+                                    color = Color.White,
+                                    fontSize = if (isCompact) 10.sp else 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
                             }
-                            Text(
-                                text = item.subtitle,
-                                color = CinemaTextGray,
-                                fontSize = 12.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
                         }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
                         Text(
-                            text = item.title,
-                            color = CinemaTextWhite,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
+                            text = item.subtitle,
+                            color = CinemaTextGray,
+                            fontSize = if (isCompact) 11.sp else 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Text(
-                            text = "Нажмите 'ОК' на пульте для просмотра подробностей, выбора озвучки или серии",
-                            color = CinemaMuted,
-                            fontSize = 12.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
 
-                    // Кнопка быстрого запуска
-                    Row(
-                        modifier = Modifier
-                            .tvFocusableItem(
-                                onClick = onPlayClick,
-                                scaleFactor = 1.05f,
-                                focusedBorderWidth = 2.dp,
-                                shape = RoundedCornerShape(8.dp)
-                            )
-                            .background(CinemaPrimary, RoundedCornerShape(8.dp))
-                            .padding(horizontal = 14.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Смотреть",
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    Spacer(modifier = Modifier.height(if (isCompact) 3.dp else 6.dp))
+
+                    Text(
+                        text = item.title,
+                        color = CinemaTextWhite,
+                        fontSize = if (isCompact) 16.sp else 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Spacer(modifier = Modifier.height(if (isCompact) 3.dp else 6.dp))
+
+                    Text(
+                        text = "Нажмите 'ОК' на карточке для выбора озвучки, серии или просмотра",
+                        color = CinemaMuted,
+                        fontSize = if (isCompact) 10.sp else 12.sp,
+                        maxLines = if (isCompact) 1 else 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
 
                 // Правая колонка: красивое превью постера с мягким градиентом
@@ -848,24 +803,41 @@ fun <T> TvRezkaDropdown(
  * Компактная поисковая строка для ТВ-интерфейса.
  * Не занимает лишнего места по высоте и ширине, адаптирована под ТВ-пульт.
  */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun TvCompactSearchBar(
     query: String,
     onQueryChanged: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var isFocused by remember { mutableStateOf(false) }
+    var isEditing by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
     Surface(
-        color = if (isFocused) CinemaCard else CinemaDark,
+        color = CinemaDark,
         shape = RoundedCornerShape(10.dp),
         border = BorderStroke(
             1.dp,
-            if (isFocused || query.isNotEmpty()) CinemaPrimary else Color.White.copy(alpha = 0.15f)
+            if (query.isNotEmpty() || isEditing) CinemaPrimary else Color.White.copy(alpha = 0.15f)
         ),
         modifier = modifier
             .height(42.dp)
-            .onFocusChanged { isFocused = it.hasFocus }
+            .focusProperties {
+                // Запрещаем переход фокуса ВВЕРХ с поисковой строки в боковое меню.
+                // Боковое меню должно открываться только при нажатии ВЛЕВО!
+                up = FocusRequester.Cancel
+            }
+            .tvFocusableItem(
+                onClick = {
+                    isEditing = true
+                },
+                scaleFactor = 1.02f,
+                focusedBorderWidth = 2.dp,
+                shape = RoundedCornerShape(10.dp)
+            )
+            .testTag("tv_search_bar")
     ) {
         Row(
             modifier = Modifier
@@ -876,35 +848,85 @@ fun TvCompactSearchBar(
             Icon(
                 imageVector = Icons.Default.Search,
                 contentDescription = "Поиск",
-                tint = if (isFocused || query.isNotEmpty()) CinemaPrimary else CinemaTextGray,
+                tint = if (isEditing || query.isNotEmpty()) CinemaPrimary else CinemaTextGray,
                 modifier = Modifier.size(18.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))
-            BasicTextField(
-                value = query,
-                onValueChange = onQueryChanged,
-                singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(
-                    color = CinemaTextWhite,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium
-                ),
-                cursorBrush = SolidColor(CinemaPrimary),
-                modifier = Modifier.weight(1f),
-                decorationBox = { innerTextField ->
-                    if (query.isEmpty()) {
-                        Text(
-                            text = "Поиск фильмов, сериалов, аниме...",
-                            color = CinemaMuted,
-                            fontSize = 13.sp
-                        )
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                if (!isEditing) {
+                    // В обычном режиме навигации с пульта отображается только текст превью.
+                    // Клавиатура НЕ выскакивает при простом перемещении курсора D-Pad!
+                    Text(
+                        text = if (query.isNotEmpty()) query else "Поиск фильмов, сериалов, аниме... (нажмите ОК)",
+                        color = if (query.isNotEmpty()) CinemaTextWhite else CinemaMuted,
+                        fontSize = 13.sp,
+                        fontWeight = if (query.isNotEmpty()) FontWeight.Medium else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                } else {
+                    // Режим редактирования: активируется ТОЛЬКО по явному нажатию кнопки ОК на пульте
+                    LaunchedEffect(Unit) {
+                        try {
+                            focusRequester.requestFocus()
+                            keyboardController?.show()
+                        } catch (_: Exception) {}
                     }
-                    innerTextField()
+
+                    BasicTextField(
+                        value = query,
+                        onValueChange = onQueryChanged,
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = CinemaTextWhite,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        cursorBrush = SolidColor(CinemaPrimary),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                isEditing = false
+                                keyboardController?.hide()
+                                focusManager.clearFocus()
+                            }
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester)
+                            .onFocusChanged { focusState ->
+                                if (!focusState.isFocused && isEditing) {
+                                    isEditing = false
+                                    keyboardController?.hide()
+                                }
+                            },
+                        decorationBox = { innerTextField ->
+                            if (query.isEmpty()) {
+                                Text(
+                                    text = "Введите название...",
+                                    color = CinemaMuted,
+                                    fontSize = 13.sp
+                                )
+                            }
+                            innerTextField()
+                        }
+                    )
                 }
-            )
+            }
+
             if (query.isNotEmpty()) {
                 IconButton(
-                    onClick = { onQueryChanged("") },
+                    onClick = {
+                        onQueryChanged("")
+                        isEditing = false
+                        keyboardController?.hide()
+                    },
                     modifier = Modifier.size(24.dp)
                 ) {
                     Icon(
