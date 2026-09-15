@@ -5,6 +5,9 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.collection.LruCache
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -339,6 +342,56 @@ object RezkaService {
                 chain.proceed(requestBuilder.build())
             }
             .build()
+    }
+
+    private val translatorPremiumCache = ConcurrentHashMap<String, Boolean>()
+
+    fun hasPremiumWarning(html: String): Boolean {
+        if (html.isBlank()) return false
+        try {
+            val doc = org.jsoup.Jsoup.parse(html)
+            val text = doc.text().replace('\u00A0', ' ')
+            
+            // 1. Точные совпадения с ключевыми фразами блокировки перевода
+            if (text.contains("Перевод доступен только для Premium", ignoreCase = true) ||
+                text.contains("Перевод доступен только с HDrezka Premium", ignoreCase = true) ||
+                text.contains("доступен только для Premium", ignoreCase = true) ||
+                text.contains("доступен только с HDrezka Premium", ignoreCase = true) ||
+                text.contains("Перевод доступен только для подписчиков", ignoreCase = true)) {
+                return true
+            }
+
+            // 2. Безопасное контекстное пересечение: фраза должна касаться именно перевода/озвучки и Premium/подписки
+            val hasTranslationContext = text.contains("Перевод доступен", ignoreCase = true) || 
+                                       text.contains("Озвучка доступна", ignoreCase = true) ||
+                                       text.contains("доступен только перевод", ignoreCase = true)
+            
+            if (hasTranslationContext && (text.contains("Premium", ignoreCase = true) || text.contains("подписчиков", ignoreCase = true))) {
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e("RezkaService", "Ошибка парсинга текста для премиум-проверки: ${e.message}")
+        }
+        return false
+    }
+
+    fun getTranslatorUrl(baseUrl: String, tId: String, tName: String, rawHref: String): String {
+        if (rawHref.isNotEmpty()) {
+            if (rawHref.startsWith("http")) return rawHref
+            val root = baseUrl.substringBefore("/films/").substringBefore("/series/").substringBefore("/cartoons/").substringBefore("/animation/")
+            return root + if (rawHref.startsWith("/")) rawHref else "/$rawHref"
+        }
+        val cleanBase = baseUrl.substringBeforeLast(".html")
+        val segments = cleanBase.split("/")
+        val baseFilmPath = if (segments.size > 6) {
+            segments.dropLast(1).joinToString("/")
+        } else {
+            cleanBase
+        }
+        // Роутер HDRezka определяет переводчика исключительно по ID (tId) перед дефисом.
+        // Использование "x" в качестве заглушки заставляет сайт автоматически перенаправить (301/302 redirect) 
+        // на каноничный URL нужного перевода. Это на 100% обходит несовпадения в транслитерации (например, r-dublyazh).
+        return "$baseFilmPath/$tId-x.html"
     }
 
     /**
@@ -1487,14 +1540,67 @@ object RezkaService {
                         }
 
                         // Извлекаем озвучки/переводы
-                        val translators = ArrayList<Translator>()
+                        val rawTranslators = ArrayList<Triple<String, String, Boolean>>()
+                        val rawUrls = ArrayList<String>()
                         val translatorItems = doc.select(".b-translator__item, #translators-list li, .b-translators__list li")
                         for (tEl in translatorItems) {
                             val tId = tEl.attr("data-translator_id").ifEmpty { tEl.attr("data-id") }
                             val tName = tEl.text().trim()
                             val isDefault = tEl.hasClass("active") || tEl.hasClass("current")
+                            val rawHref = tEl.attr("href").ifEmpty { tEl.selectFirst("a")?.attr("href") }.orEmpty()
+                            val tUrl = getTranslatorUrl(normalizedUrl, tId, tName, rawHref)
                             if (tId.isNotEmpty() && tName.isNotEmpty()) {
-                                translators.add(Translator(tId, tName, isDefault))
+                                rawTranslators.add(Triple(tId, tName, isDefault))
+                                rawUrls.add(tUrl)
+                            }
+                        }
+
+                        val translators = ArrayList<Translator>()
+                        if (rawTranslators.isNotEmpty()) {
+                            // Оптимизированный параллельный опрос премиальности страниц
+                            val isPremiumFlags = kotlinx.coroutines.coroutineScope {
+                                rawTranslators.mapIndexed { idx, item ->
+                                    val (tId, tName, isDefault) = item
+                                    val tUrl = rawUrls[idx]
+                                    async(Dispatchers.IO) {
+                                        if (isDefault) {
+                                            // Для активного переводчика у нас уже есть загруженный HTML текущей страницы!
+                                            hasPremiumWarning(html)
+                                        } else {
+                                            // Сначала проверяем в кэше
+                                            translatorPremiumCache[tUrl] ?: try {
+                                                val checkReq = Request.Builder()
+                                                    .url(tUrl)
+                                                    .header("User-Agent", USER_AGENT)
+                                                    .header("Referer", "$currentBaseUrl/")
+                                                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+                                                    .build()
+                                                
+                                                client.newCall(checkReq).execute().use { response ->
+                                                    val resHtml = response.body?.string().orEmpty()
+                                                    val resDoc = org.jsoup.Jsoup.parse(resHtml)
+                                                    if (isAntiBotPage(resHtml, resDoc) || isAntiBotTitle(resDoc.title())) {
+                                                        Log.w(TAG, "В фоновом режиме обнаружена проверка Anti-Bot для $tUrl, не сохраняем результат")
+                                                        false
+                                                    } else {
+                                                        val premium = hasPremiumWarning(resHtml)
+                                                        translatorPremiumCache[tUrl] = premium
+                                                        premium
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                Log.w(TAG, "Ошибка проверки премиальности для $tName ($tUrl): ${e.message}")
+                                                false
+                                            }
+                                        }
+                                    }
+                                }.awaitAll()
+                            }
+
+                            for (i in rawTranslators.indices) {
+                                val (tId, tName, isDefault) = rawTranslators[i]
+                                val isPremium = isPremiumFlags[i]
+                                translators.add(Translator(tId, tName, isDefault, isPremium))
                             }
                         }
 

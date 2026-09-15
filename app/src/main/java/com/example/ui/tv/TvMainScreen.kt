@@ -99,9 +99,6 @@ fun TvMainScreen(
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val isEndReached by viewModel.isEndReached.collectAsState()
 
-    // Элемент, на котором сейчас находится фокус пульта (для Hero Preview)
-    var focusedItem by remember { mutableStateOf<RezkaItem?>(null) }
-
     // Анимированная ширина бокового меню: 64dp в свернутом виде, 190dp при фокусе
     val sidebarWidth by animateDpAsState(
         targetValue = if (isSidebarFocused) 190.dp else 64.dp,
@@ -177,8 +174,6 @@ fun TvMainScreen(
                         genresList = genresList,
                         isLoadingMore = isLoadingMore,
                         isEndReached = isEndReached,
-                        focusedItem = focusedItem,
-                        onItemFocused = { focusedItem = it },
                         onNavigateToDetail = onNavigateToDetail,
                         sidebarFocusRequester = sidebarCatalogFocusRequester,
                         entryFocusRequester = rightContentFocusRequester
@@ -364,8 +359,6 @@ private fun TvCatalogContent(
     genresList: List<GenreItem>,
     isLoadingMore: Boolean,
     isEndReached: Boolean,
-    focusedItem: RezkaItem?,
-    onItemFocused: (RezkaItem) -> Unit,
     onNavigateToDetail: (RezkaItem) -> Unit,
     sidebarFocusRequester: FocusRequester,
     entryFocusRequester: FocusRequester
@@ -446,13 +439,6 @@ private fun TvCatalogContent(
         ) {
             var searchInput by remember { mutableStateOf(viewModel.searchQuery) }
 
-            // ---- 1. HERO PREVIEW SECTION (только если не идёт поиск) ----
-            if (viewModel.searchQuery.isEmpty()) {
-                val previewItem = focusedItem ?: (catalogState as? CatalogState.Success)?.items?.firstOrNull()
-                TvHeroPreview(item = previewItem, isCompact = isCompactHeight)
-                Spacer(modifier = Modifier.height(if (isCompactHeight) 6.dp else 10.dp))
-            }
-
             // ---- 2. ВЫПАДАЮЩИЕ СПИСКИ И КОМПАКТНЫЙ ПОИСК ДЛЯ ТВ ----
             TvCatalogFiltersBar(
                 currentType = currentType,
@@ -532,7 +518,6 @@ private fun TvCatalogContent(
                                 onClick = { onNavigateToDetail(item) },
                                 onFocused = {
                                     lastFocusedIndex = index
-                                    onItemFocused(item)
                                 },
                                 focusRequester = getFocusRequesterForIndex(index),
                                 isFirstRow = isFirstRow,

@@ -102,8 +102,11 @@ data class RezkaDetail(
 data class Translator(
     val id: String,
     val name: String,
-    val isDefault: Boolean = false
-) : Serializable
+    val isDefault: Boolean = false,
+    val isPremium: Boolean = false
+) : Serializable {
+    fun getDisplayName(): String = if (isPremium) "$name (Премиум)" else name
+}
 
 data class Season(
     val id: Int,
