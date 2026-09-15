@@ -104,9 +104,7 @@ data class Translator(
     val name: String,
     val isDefault: Boolean = false,
     val isPremium: Boolean = false
-) : Serializable {
-    fun getDisplayName(): String = if (isPremium) "$name (Премиум)" else name
-}
+) : Serializable
 
 data class Season(
     val id: Int,

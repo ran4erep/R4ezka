@@ -798,7 +798,7 @@ fun DetailScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = currentTrans.getDisplayName(),
+                                            text = if (currentTrans.isPremium) "${currentTrans.name} (Premium 👑)" else currentTrans.name,
                                             color = CinemaTextWhite,
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.SemiBold,
@@ -828,7 +828,7 @@ fun DetailScreen(
                                             DropdownMenuItem(
                                                 text = {
                                                     Text(
-                                                        text = trans.getDisplayName(),
+                                                        text = if (trans.isPremium) "${trans.name} (Premium 👑)" else trans.name,
                                                         color = if (isSelected) CinemaPrimary else CinemaTextWhite,
                                                         fontSize = 13.sp,
                                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
