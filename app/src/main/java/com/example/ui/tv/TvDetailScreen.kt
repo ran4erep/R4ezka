@@ -90,17 +90,7 @@ fun TvDetailContent(
 
     // Автофокус на главном действии при входе (кнопка Смотреть / Серия, либо Избранное / Назад)
     LaunchedEffect(Unit) {
-        try {
-            mainActionFocusRequester.requestFocus()
-        } catch (_: Exception) {
-            try {
-                favoriteButtonFocusRequester.requestFocus()
-            } catch (_: Exception) {
-                try {
-                    backButtonFocusRequester.requestFocus()
-                } catch (_: Exception) {}
-            }
-        }
+        mainActionFocusRequester.requestFocusSafe()
     }
 
     BoxWithConstraints(
@@ -213,19 +203,12 @@ fun TvDetailContent(
                             if (event.type == KeyEventType.KeyDown) {
                                 when (event.nativeKeyEvent.keyCode) {
                                     AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                        trailerButtonFocusRequester.requestFocus()
+                                        trailerButtonFocusRequester.requestFocusSafe()
                                         true
                                     }
                                     AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                        try {
-                                            favoriteButtonFocusRequester.requestFocus()
-                                            true
-                                        } catch (_: Exception) {
-                                            try {
-                                                mainActionFocusRequester.requestFocus()
-                                                true
-                                            } catch (_: Exception) { false }
-                                        }
+                                        favoriteButtonFocusRequester.requestFocusSafe()
+                                        true
                                     }
                                     else -> false
                                 }
@@ -319,19 +302,12 @@ fun TvDetailContent(
                             if (event.type == KeyEventType.KeyDown) {
                                 when (event.nativeKeyEvent.keyCode) {
                                     AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                                        backButtonFocusRequester.requestFocus()
+                                        backButtonFocusRequester.requestFocusSafe()
                                         true
                                     }
                                     AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                        try {
-                                            mainActionFocusRequester.requestFocus()
-                                            true
-                                        } catch (_: Exception) {
-                                            try {
-                                                favoriteButtonFocusRequester.requestFocus()
-                                                true
-                                            } catch (_: Exception) { false }
-                                        }
+                                        mainActionFocusRequester.requestFocusSafe()
+                                        true
                                     }
                                     else -> false
                                 }
@@ -384,36 +360,7 @@ fun TvDetailContent(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .testTag("tv_detail_right_column")
-                    .onKeyEvent { keyEvent ->
-                        if (keyEvent.type == KeyEventType.KeyDown) {
-                            when (keyEvent.nativeKeyEvent.keyCode) {
-                                AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                    coroutineScope.launch {
-                                        try {
-                                            rightScrollState.animateScrollBy(
-                                                value = scrollStepPx,
-                                                animationSpec = tween(durationMillis = 150, easing = androidx.compose.animation.core.LinearEasing)
-                                            )
-                                        } catch (_: Exception) {}
-                                    }
-                                    false
-                                }
-                                AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                                    coroutineScope.launch {
-                                        try {
-                                            rightScrollState.animateScrollBy(
-                                                value = -scrollStepPx,
-                                                animationSpec = tween(durationMillis = 150, easing = androidx.compose.animation.core.LinearEasing)
-                                            )
-                                        } catch (_: Exception) {}
-                                    }
-                                    false
-                                }
-                                else -> false
-                            }
-                        } else false
-                    },
+                    .testTag("tv_detail_right_column"),
                 contentPadding = PaddingValues(bottom = 36.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
@@ -474,7 +421,7 @@ fun TvDetailContent(
                                     }
                                     .onKeyEvent { event ->
                                         if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                            backButtonFocusRequester.requestFocus()
+                                            backButtonFocusRequester.requestFocusSafe()
                                             true
                                         } else false
                                     }
@@ -614,7 +561,7 @@ fun TvDetailContent(
                                             }
                                             .onKeyEvent { event ->
                                                 if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                                    backButtonFocusRequester.requestFocus()
+                                                    backButtonFocusRequester.requestFocusSafe()
                                                     true
                                                 } else false
                                             }
@@ -678,7 +625,7 @@ fun TvDetailContent(
                                         }
                                         .onKeyEvent { event ->
                                             if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                                backButtonFocusRequester.requestFocus()
+                                                backButtonFocusRequester.requestFocusSafe()
                                                 true
                                             } else false
                                         }
@@ -803,7 +750,7 @@ fun TvDetailContent(
                                 .focusProperties { left = backButtonFocusRequester }
                                 .onKeyEvent { event ->
                                     if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                        backButtonFocusRequester.requestFocus()
+                                        backButtonFocusRequester.requestFocusSafe()
                                         true
                                     } else false
                                 }
@@ -829,7 +776,7 @@ fun TvDetailContent(
                                 }
                                 .onKeyEvent { event ->
                                     if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                        trailerButtonFocusRequester.requestFocus()
+                                        trailerButtonFocusRequester.requestFocusSafe()
                                         true
                                     } else false
                                 }
@@ -877,7 +824,7 @@ fun TvDetailContent(
                                 .focusProperties { left = trailerButtonFocusRequester }
                                 .onKeyEvent { event ->
                                     if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                        trailerButtonFocusRequester.requestFocus()
+                                        trailerButtonFocusRequester.requestFocusSafe()
                                         true
                                     } else false
                                 }
@@ -910,7 +857,7 @@ fun TvDetailContent(
                                             .focusProperties { left = trailerButtonFocusRequester }
                                             .onKeyEvent { event ->
                                                 if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                                    trailerButtonFocusRequester.requestFocus()
+                                                    trailerButtonFocusRequester.requestFocusSafe()
                                                     true
                                                 } else false
                                             }
@@ -979,7 +926,7 @@ fun TvDetailContent(
                                                                 .focusProperties { left = trailerButtonFocusRequester }
                                                                 .onKeyEvent { event ->
                                                                     if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                                                        trailerButtonFocusRequester.requestFocus()
+                                                                        trailerButtonFocusRequester.requestFocusSafe()
                                                                         true
                                                                     } else false
                                                                 }

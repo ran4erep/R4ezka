@@ -343,3 +343,16 @@ fun Modifier.dpadScrollable(
         } else false
     }
 }
+
+/**
+ * Безопасный вызов requestFocus для предотвращения IllegalStateException,
+ * если компонент еще не прикреплен к дереву композиции или уже уничтожен.
+ */
+fun FocusRequester.requestFocusSafe() {
+    try {
+        this.requestFocus()
+    } catch (_: Throwable) {
+        // Поглощаем любые исключения неинициализированного/открепленного фокуса для стабильности
+    }
+}
+
