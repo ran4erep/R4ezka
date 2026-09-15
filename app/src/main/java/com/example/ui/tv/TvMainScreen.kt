@@ -27,6 +27,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.*
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -42,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.PopupProperties
 import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
 import com.example.data.*
 import com.example.ui.CatalogState
 import com.example.ui.RezkaViewModel
@@ -112,6 +115,9 @@ fun TvMainScreen(
             .background(CinemaBlack)
     ) {
         // ---- 1. TV SIDEBAR (NAVIGATION RAIL) ----
+        val sidebarCatalogFocusRequester = remember { FocusRequester() }
+        val rightContentFocusRequester = remember { FocusRequester() }
+
         Column(
             modifier = Modifier
                 .width(sidebarWidth)
@@ -144,6 +150,10 @@ fun TvMainScreen(
                         destination = dest,
                         isSelected = isSelected,
                         isExpanded = isSidebarFocused,
+                        focusRequester = if (dest == TvNavDestination.CATALOG) sidebarCatalogFocusRequester else null,
+                        onRight = {
+                            rightContentFocusRequester.requestFocus()
+                        },
                         onClick = { selectedDestination = dest }
                     )
                 }
@@ -169,7 +179,9 @@ fun TvMainScreen(
                         isEndReached = isEndReached,
                         focusedItem = focusedItem,
                         onItemFocused = { focusedItem = it },
-                        onNavigateToDetail = onNavigateToDetail
+                        onNavigateToDetail = onNavigateToDetail,
+                        sidebarFocusRequester = sidebarCatalogFocusRequester,
+                        entryFocusRequester = rightContentFocusRequester
                     )
                 }
                 TvNavDestination.FAVORITES -> {
@@ -203,7 +215,9 @@ private fun TvSidebarButton(
     destination: TvNavDestination,
     isSelected: Boolean,
     isExpanded: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    focusRequester: FocusRequester? = null,
+    onRight: (() -> Unit)? = null
 ) {
     val bgColor = if (isSelected) CinemaPrimary.copy(alpha = 0.2f) else Color.Transparent
     val contentColor = if (isSelected) CinemaPrimary else CinemaTextWhite
@@ -214,11 +228,20 @@ private fun TvSidebarButton(
             .height(46.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(bgColor)
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_RIGHT) {
+                    if (onRight != null) {
+                        onRight()
+                        true
+                    } else false
+                } else false
+            }
             .tvFocusableItem(
                 onClick = onClick,
                 scaleFactor = 1.04f,
                 focusedBorderWidth = 2.dp,
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(10.dp),
+                focusRequester = focusRequester
             )
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -343,10 +366,16 @@ private fun TvCatalogContent(
     isEndReached: Boolean,
     focusedItem: RezkaItem?,
     onItemFocused: (RezkaItem) -> Unit,
-    onNavigateToDetail: (RezkaItem) -> Unit
+    onNavigateToDetail: (RezkaItem) -> Unit,
+    sidebarFocusRequester: FocusRequester,
+    entryFocusRequester: FocusRequester
 ) {
     val gridState = rememberLazyGridState()
     val searchBarFocusRequester = remember { FocusRequester() }
+    val categoryDropdownFocusRequester = remember { FocusRequester() }
+    val sectionDropdownFocusRequester = remember { FocusRequester() }
+    val genreDropdownFocusRequester = remember { FocusRequester() }
+    val firstCardFocusRequester = remember { FocusRequester() }
 
     // По умолчанию на телевизоре курсор должен стоять на строке поиска
     LaunchedEffect(Unit) {
@@ -387,78 +416,92 @@ private fun TvCatalogContent(
                 Spacer(modifier = Modifier.height(if (isCompactHeight) 6.dp else 10.dp))
             }
 
-        // ---- 2. ВЫПАДАЮЩИЕ СПИСКИ И КОМПАКТНЫЙ ПОИСК ДЛЯ ТВ ----
-        TvCatalogFiltersBar(
-            currentType = currentType,
-            currentSection = currentSection,
-            currentGenre = currentGenre,
-            genresList = genresList,
-            searchQuery = searchInput,
-            searchBarFocusRequester = searchBarFocusRequester,
-            onSearchQueryChanged = {
-                searchInput = it
-                viewModel.onSearchQueryChanged(it)
-            },
-            onTypeSelected = { type ->
-                searchInput = ""
-                viewModel.loadCatalog(type = type, genre = "", forceRefresh = true)
-            },
-            onSectionSelected = { section ->
-                searchInput = ""
-                viewModel.loadCatalog(section = section, forceRefresh = true)
-            },
-            onGenreSelected = { genreSlug ->
-                searchInput = ""
-                viewModel.loadCatalog(genre = genreSlug, forceRefresh = true)
-            }
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // ---- 3. TV MOVIES GRID ----
-        when (catalogState) {
-            is CatalogState.Loading -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
+            // ---- 2. ВЫПАДАЮЩИЕ СПИСКИ И КОМПАКТНЫЙ ПОИСК ДЛЯ ТВ ----
+            TvCatalogFiltersBar(
+                currentType = currentType,
+                currentSection = currentSection,
+                currentGenre = currentGenre,
+                genresList = genresList,
+                searchQuery = searchInput,
+                searchBarFocusRequester = searchBarFocusRequester,
+                categoryFocusRequester = categoryDropdownFocusRequester,
+                sectionFocusRequester = sectionDropdownFocusRequester,
+                genreFocusRequester = genreDropdownFocusRequester,
+                firstCardFocusRequester = firstCardFocusRequester,
+                sidebarFocusRequester = sidebarFocusRequester,
+                onSearchQueryChanged = {
+                    searchInput = it
+                    viewModel.onSearchQueryChanged(it)
+                },
+                onTypeSelected = { type ->
+                    searchInput = ""
+                    viewModel.loadCatalog(type = type, genre = "", forceRefresh = true)
+                },
+                onSectionSelected = { section ->
+                    searchInput = ""
+                    viewModel.loadCatalog(section = section, forceRefresh = true)
+                },
+                onGenreSelected = { genreSlug ->
+                    searchInput = ""
+                    viewModel.loadCatalog(genre = genreSlug, forceRefresh = true)
                 }
-            }
-            is CatalogState.Error -> {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(catalogState.message, color = CinemaTextWhite, fontSize = 16.sp)
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Button(
-                        onClick = { viewModel.loadCatalog(forceRefresh = true) },
-                        colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ---- 3. TV MOVIES GRID ----
+            when (catalogState) {
+                is CatalogState.Loading -> {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
+                    }
+                }
+                is CatalogState.Error -> {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text("Повторить")
+                        Text(catalogState.message, color = CinemaTextWhite, fontSize = 16.sp)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = { viewModel.loadCatalog(forceRefresh = true) },
+                            colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
+                        ) {
+                            Text("Повторить")
+                        }
                     }
                 }
-            }
-            is CatalogState.Success -> {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 150.dp),
-                    state = gridState,
-                    contentPadding = PaddingValues(bottom = 32.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .testTag("tv_catalog_grid")
-                ) {
-                    items(
-                        items = catalogState.items,
-                        key = { it.id }
-                    ) { item ->
-                        TvMovieCard(
-                            item = item,
-                            onClick = { onNavigateToDetail(item) },
-                            onFocused = { onItemFocused(item) }
-                        )
-                    }
+                is CatalogState.Success -> {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 150.dp),
+                        state = gridState,
+                        contentPadding = PaddingValues(bottom = 32.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("tv_catalog_grid")
+                    ) {
+                        itemsIndexed(
+                            items = catalogState.items,
+                            key = { _, item -> item.id }
+                        ) { index, item ->
+                            val visibleItem = gridState.layoutInfo.visibleItemsInfo.find { it.index == index }
+                            val isFirstRow = visibleItem?.row == 0 || index < 4
+                            val isFirstColumn = visibleItem?.column == 0 || (visibleItem == null && index == 0)
+
+                            TvMovieCard(
+                                item = item,
+                                onClick = { onNavigateToDetail(item) },
+                                onFocused = { onItemFocused(item) },
+                                focusRequester = if (index == 0) firstCardFocusRequester else null,
+                                isFirstRow = isFirstRow,
+                                isFirstColumn = isFirstColumn,
+                                onUp = { categoryDropdownFocusRequester.requestFocus() },
+                                onLeft = { sidebarFocusRequester.requestFocus() }
+                            )
+                        }
 
                     if (isLoadingMore) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
@@ -602,7 +645,12 @@ private fun TvCatalogFiltersBar(
     onTypeSelected: (RezkaType) -> Unit,
     onSectionSelected: (SectionType) -> Unit,
     onGenreSelected: (String) -> Unit,
-    searchBarFocusRequester: FocusRequester? = null
+    searchBarFocusRequester: FocusRequester,
+    categoryFocusRequester: FocusRequester,
+    sectionFocusRequester: FocusRequester,
+    genreFocusRequester: FocusRequester,
+    firstCardFocusRequester: FocusRequester,
+    sidebarFocusRequester: FocusRequester
 ) {
     Column(
         modifier = Modifier
@@ -615,6 +663,8 @@ private fun TvCatalogFiltersBar(
             query = searchQuery,
             onQueryChanged = onSearchQueryChanged,
             searchBarFocusRequester = searchBarFocusRequester,
+            onLeft = { sidebarFocusRequester.requestFocus() },
+            onDown = { categoryFocusRequester.requestFocus() },
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -641,7 +691,12 @@ private fun TvCatalogFiltersBar(
                 selectedOption = currentCategoryPair,
                 onOptionSelected = { pair -> onTypeSelected(pair.first) },
                 getLabel = { it.second },
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                focusRequester = categoryFocusRequester,
+                onUp = { searchBarFocusRequester.requestFocus() },
+                onLeft = { sidebarFocusRequester.requestFocus() },
+                onRight = { sectionFocusRequester.requestFocus() },
+                onDown = { firstCardFocusRequester.requestFocus() }
             )
 
             // Dropdown 2: Раздел
@@ -660,7 +715,12 @@ private fun TvCatalogFiltersBar(
                 selectedOption = currentSection,
                 onOptionSelected = onSectionSelected,
                 getLabel = { it.getDisplayName() },
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                focusRequester = sectionFocusRequester,
+                onUp = { searchBarFocusRequester.requestFocus() },
+                onLeft = { categoryFocusRequester.requestFocus() },
+                onRight = { genreFocusRequester.requestFocus() },
+                onDown = { firstCardFocusRequester.requestFocus() }
             )
 
             // Dropdown 3: Жанр
@@ -674,7 +734,11 @@ private fun TvCatalogFiltersBar(
                 selectedOption = currentGenreItem,
                 onOptionSelected = { genreItem -> onGenreSelected(genreItem.slug) },
                 getLabel = { it.name },
-                modifier = Modifier.weight(1.1f)
+                modifier = Modifier.weight(1.1f),
+                focusRequester = genreFocusRequester,
+                onUp = { searchBarFocusRequester.requestFocus() },
+                onLeft = { sectionFocusRequester.requestFocus() },
+                onDown = { firstCardFocusRequester.requestFocus() }
             )
         }
     }
@@ -693,9 +757,24 @@ fun <T> TvRezkaDropdown(
     getLabel: (T) -> String,
     modifier: Modifier = Modifier,
     surfaceModifier: Modifier = Modifier,
-    focusRequester: FocusRequester? = null
+    focusRequester: FocusRequester? = null,
+    onUp: (() -> Unit)? = null,
+    onDown: (() -> Unit)? = null,
+    onLeft: (() -> Unit)? = null,
+    onRight: (() -> Unit)? = null,
+    lazyListState: androidx.compose.foundation.lazy.LazyListState? = null
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val triggerRequester = focusRequester ?: remember { FocusRequester() }
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(expanded) {
+        if (!expanded) {
+            try {
+                triggerRequester.requestFocus()
+            } catch (_: Exception) {}
+        }
+    }
 
     Box(modifier = modifier) {
         Surface(
@@ -709,11 +788,31 @@ fun <T> TvRezkaDropdown(
                 .fillMaxWidth()
                 .height(42.dp)
                 .then(surfaceModifier)
+                .onKeyEvent { keyEvent ->
+                    if (keyEvent.type == KeyEventType.KeyDown) {
+                        when (keyEvent.nativeKeyEvent.keyCode) {
+                            AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                if (onUp != null) { onUp(); true } else false
+                            }
+                            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                if (onDown != null) { onDown(); true } else false
+                            }
+                            AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                if (onLeft != null) { onLeft(); true } else false
+                            }
+                            AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                if (onRight != null) { onRight(); true } else false
+                            }
+                            else -> false
+                        }
+                    } else false
+                }
                 .tvFocusableItem(
                     onClick = { expanded = !expanded },
                     scaleFactor = 1.04f,
                     shape = RoundedCornerShape(10.dp),
-                    focusRequester = focusRequester
+                    focusRequester = triggerRequester,
+                    lazyListState = lazyListState
                 )
         ) {
             Row(
@@ -757,7 +856,14 @@ fun <T> TvRezkaDropdown(
 
         DropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false },
+            onDismissRequest = {
+                expanded = false
+                coroutineScope.launch {
+                    try {
+                        triggerRequester.requestFocus()
+                    } catch (_: Exception) {}
+                }
+            },
             properties = PopupProperties(focusable = true),
             modifier = Modifier
                 .background(CinemaDark)
@@ -787,15 +893,25 @@ fun <T> TvRezkaDropdown(
                         }
                     } else null,
                     onClick = {
-                        onOptionSelected(option)
                         expanded = false
+                        onOptionSelected(option)
+                        coroutineScope.launch {
+                            try {
+                                triggerRequester.requestFocus()
+                            } catch (_: Exception) {}
+                        }
                     },
                     modifier = Modifier
                         .fillMaxWidth()
                         .tvFocusableItem(
                             onClick = {
-                                onOptionSelected(option)
                                 expanded = false
+                                onOptionSelected(option)
+                                coroutineScope.launch {
+                                    try {
+                                        triggerRequester.requestFocus()
+                                    } catch (_: Exception) {}
+                                }
                             },
                             scaleFactor = 1.02f,
                             shape = RoundedCornerShape(6.dp)
@@ -819,7 +935,9 @@ fun TvCompactSearchBar(
     query: String,
     onQueryChanged: (String) -> Unit,
     modifier: Modifier = Modifier,
-    searchBarFocusRequester: FocusRequester? = null
+    searchBarFocusRequester: FocusRequester? = null,
+    onLeft: (() -> Unit)? = null,
+    onDown: (() -> Unit)? = null
 ) {
     var isEditing by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
@@ -843,8 +961,26 @@ fun TvCompactSearchBar(
             .height(42.dp)
             .focusProperties {
                 // Запрещаем переход фокуса ВВЕРХ с поисковой строки в боковое меню.
-                // Боковое меню должно открываться только при нажатии ВЛЕВО!
                 up = FocusRequester.Cancel
+            }
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown) {
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                            if (!isEditing && onLeft != null) {
+                                onLeft()
+                                true
+                            } else false
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                            if (!isEditing && onDown != null) {
+                                onDown()
+                                true
+                            } else false
+                        }
+                        else -> false
+                    }
+                } else false
             }
             .tvFocusableItem(
                 onClick = {
@@ -968,17 +1104,42 @@ private fun TvMovieCard(
     item: RezkaItem,
     onClick: () -> Unit,
     onFocused: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+    isFirstRow: Boolean = false,
+    isFirstColumn: Boolean = false,
+    onUp: (() -> Unit)? = null,
+    onLeft: (() -> Unit)? = null
 ) {
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown) {
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                            if (isFirstRow && onUp != null) {
+                                onUp()
+                                true
+                            } else false
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                            if (isFirstColumn && onLeft != null) {
+                                onLeft()
+                                true
+                            } else false
+                        }
+                        else -> false
+                    }
+                } else false
+            }
             .tvFocusableItem(
                 onClick = onClick,
                 onFocused = onFocused,
                 scaleFactor = 1.08f,
                 focusedBorderWidth = 3.dp,
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(12.dp),
+                focusRequester = focusRequester
             )
             .testTag("tv_movie_card_${item.id}"),
         colors = CardDefaults.cardColors(containerColor = CinemaDark),

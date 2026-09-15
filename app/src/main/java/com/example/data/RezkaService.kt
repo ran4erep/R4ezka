@@ -1340,7 +1340,7 @@ object RezkaService {
                                 label.contains("жанр") -> {
                                     genres.addAll(value.split(",").map { it.trim() }.filter { it.isNotEmpty() })
                                 }
-                                label.contains("возраст") -> {
+                                label.contains("возраст") || label.contains("ограничение") || label.contains("mpaa") -> {
                                     val boldSpan = tdVal?.selectFirst("span.bold, span.age, span")?.text()?.trim() ?: ""
                                     ageRestriction = cleanAgeRestriction(if (boldSpan.isNotEmpty()) boldSpan else value)
                                 }
@@ -1374,15 +1374,15 @@ object RezkaService {
 
                         // Возрастное ограничение из бейджей и метатегов
                         if (ageRestriction.isEmpty()) {
-                            val ageEl = doc.selectFirst(".b-post__age, .age-restricted, .b-post__info .age, span[class*='age'], meta[itemprop='contentRating']")
+                            val ageEl = doc.selectFirst(".b-post__age, .age-restricted, .b-post__info .age, span[class*='age'], meta[itemprop='contentRating'], .b-post__rating_mpaa")
                             if (ageEl != null) {
                                 val rawVal = if (ageEl.tagName().equals("meta", ignoreCase = true)) ageEl.attr("content") else ageEl.text()
                                 ageRestriction = cleanAgeRestriction(rawVal.trim())
                             }
                         }
                         if (ageRestriction.isEmpty()) {
-                            val infoText = doc.selectFirst(".b-post__info")?.text() ?: ""
-                            val ageMatch = Regex("""\b(18\+|16\+|12\+|6\+|0\+|PG-13|NC-17|TV-MA|TV-14|R)\b""").find(infoText)
+                            val infoText = doc.select(".b-post__info, .b-post__infotable, .b-post__status").text()
+                            val ageMatch = Regex("""\b(18\+|16\+|12\+|6\+|0\+|PG-13|NC-17|TV-MA|TV-14|TV-PG|TV-G|TV-Y7|R|PG|G)\b""", RegexOption.IGNORE_CASE).find(infoText)
                             if (ageMatch != null) {
                                 ageRestriction = cleanAgeRestriction(ageMatch.value)
                             }
