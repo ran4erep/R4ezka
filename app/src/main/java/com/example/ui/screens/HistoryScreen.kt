@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -72,12 +73,29 @@ fun HistoryScreen(
             }
 
             if (historyList.isNotEmpty()) {
-                IconButton(onClick = { viewModel.clearAllHistory() }) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Очистить историю",
-                        tint = CinemaPrimary
-                    )
+                Surface(
+                    color = Color.Transparent,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .size(40.dp)
+                        .tvFocusableItem(
+                            onClick = { viewModel.clearAllHistory() },
+                            scaleFactor = 1.1f,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .testTag("clear_all_history_button")
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Очистить историю",
+                            tint = CinemaPrimary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
             }
         }
@@ -160,135 +178,165 @@ fun HistoryCardItem(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Card(
+    Row(
         modifier = modifier
             .fillMaxWidth()
-            .tvFocusableItem(onClick = onClick, scaleFactor = 1.03f, shape = RoundedCornerShape(10.dp))
-            .testTag("history_item_${history.itemId}"),
-        colors = CardDefaults.cardColors(containerColor = CinemaDark),
-        shape = RoundedCornerShape(10.dp)
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Row(
+        // Главная карточка элемента (проигрывание при клике)
+        Card(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Poster thumbnail
-            Box(
-                modifier = Modifier
-                    .size(width = 65.dp, height = 95.dp)
-                    .clip(RoundedCornerShape(6.dp))
-            ) {
-                AsyncImage(
-                    model = history.imageUrl,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
+                .weight(1f)
+                .tvFocusableItem(
+                    onClick = onClick, 
+                    scaleFactor = 1.02f, 
+                    shape = RoundedCornerShape(10.dp)
                 )
-
-                // Overlay Play Icon
+                .testTag("history_item_${history.itemId}"),
+            colors = CardDefaults.cardColors(containerColor = CinemaDark),
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Poster thumbnail
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.3f)),
-                    contentAlignment = Alignment.Center
+                        .size(width = 65.dp, height = 95.dp)
+                        .clip(RoundedCornerShape(6.dp))
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Смотреть",
-                        tint = CinemaTextWhite,
-                        modifier = Modifier.size(24.dp)
+                    AsyncImage(
+                        model = history.imageUrl,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
                     )
+
+                    // Overlay Play Icon
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.3f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Смотреть",
+                            tint = CinemaTextWhite,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
-            }
 
-            Spacer(modifier = Modifier.width(14.dp))
+                Spacer(modifier = Modifier.width(14.dp))
 
-            // Info texts
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .align(Alignment.CenterVertically)
-            ) {
-                Text(
-                    text = history.title,
-                    color = CinemaTextWhite,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                
-                if (history.isSeries) {
+                // Info texts
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .align(Alignment.CenterVertically)
+                ) {
                     Text(
-                        text = "Сезон ${history.latestSeason}, Серия ${history.latestEpisode}",
-                        color = CinemaPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
-                    Text(
-                        text = "Просмотрено ${history.watchedEpisodesCount} из ${history.totalEpisodesCount} серий",
-                        color = CinemaTextGray,
-                        fontSize = 11.sp,
+                        text = history.title,
+                        color = CinemaTextWhite,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 2.dp)
+                        overflow = TextOverflow.Ellipsis
                     )
-                } else {
-                    Text(
-                        text = "Полный фильм",
-                        color = CinemaTextGray,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
-                    if (history.latestTranslatorName.isNotEmpty()) {
+                    
+                    if (history.isSeries) {
                         Text(
-                            text = history.latestTranslatorName,
+                            text = "Сезон ${history.latestSeason}, Серия ${history.latestEpisode}",
+                            color = CinemaPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                        Text(
+                            text = "Просмотрено ${history.watchedEpisodesCount} из ${history.totalEpisodesCount} серий",
                             color = CinemaTextGray,
                             fontSize = 11.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(top = 2.dp)
                         )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Progress Meter Bar
-                LinearProgressIndicator(
-                    progress = { history.totalProgressFraction.coerceIn(0f, 1f) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp)),
-                    color = CinemaPrimary,
-                    trackColor = CinemaSecondary,
-                )
-
-                Text(
-                    text = if (history.isSeries) {
-                        "${(history.totalProgressFraction * 100).toInt()}% общего прогресса"
                     } else {
-                        "${(history.totalProgressFraction * 100).toInt()}% просмотрено"
-                    },
-                    color = CinemaTextGray,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
+                        Text(
+                            text = "Полный фильм",
+                            color = CinemaTextGray,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                        if (history.latestTranslatorName.isNotEmpty()) {
+                            Text(
+                                text = history.latestTranslatorName,
+                                color = CinemaTextGray,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Progress Meter Bar
+                    LinearProgressIndicator(
+                        progress = { history.totalProgressFraction.coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp)),
+                        color = CinemaPrimary,
+                        trackColor = CinemaSecondary,
+                    )
+
+                    Text(
+                        text = if (history.isSeries) {
+                            "${(history.totalProgressFraction * 100).toInt()}% общего прогресса"
+                        } else {
+                            "${(history.totalProgressFraction * 100).toInt()}% просмотрено"
+                        },
+                        color = CinemaTextGray,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
             }
+        }
 
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Delete watch item button
-            IconButton(onClick = onDelete) {
+        // Кнопка удаления из истории (полноценный ТВ-фокусируемый элемент с подсветкой)
+        Surface(
+            color = CinemaDark,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+                .size(48.dp)
+                .tvFocusableItem(
+                    onClick = onDelete,
+                    scaleFactor = 1.1f,
+                    focusedBorderColor = CinemaPrimary,
+                    shape = RoundedCornerShape(10.dp)
+                )
+                .testTag("history_item_delete_${history.itemId}"),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(
                     imageVector = Icons.Default.Delete,
-                    contentDescription = "Удалить",
-                    tint = CinemaMuted
+                    contentDescription = "Удалить из истории",
+                    tint = CinemaMuted,
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }

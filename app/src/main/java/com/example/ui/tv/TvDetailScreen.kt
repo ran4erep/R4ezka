@@ -58,6 +58,7 @@ import com.example.ui.theme.*
  *   единый информационный блок с рейтингами (Кинопоиск, IMDb, HDRezka) и метаданными,
  *   входит в списки, блок актеров, описание, выбор озвучки, сезоны и серии, кнопка "Смотреть" и отзывы.
  */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun TvDetailContent(
     detail: RezkaDetail,
@@ -87,6 +88,10 @@ fun TvDetailContent(
     val mainActionFocusRequester = remember { FocusRequester() }
     val rightScrollState = rememberLazyListState()
     var isActorsExpanded by remember { mutableStateOf(false) }
+
+    val displayComments = remember(commentsState.comments, detail.comments) {
+        if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
+    }
 
     // Автофокус на главном действии при входе (кнопка Смотреть / Серия, либо Избранное / Назад)
     LaunchedEffect(Unit) {
@@ -196,8 +201,9 @@ fun TvDetailContent(
                         .fillMaxWidth()
                         .height(if (isCompactHeight) 34.dp else 42.dp)
                         .focusProperties {
+                            up = FocusRequester.Cancel
+                            left = FocusRequester.Cancel
                             down = trailerButtonFocusRequester
-                            right = favoriteButtonFocusRequester
                         }
                         .onKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown) {
@@ -206,8 +212,8 @@ fun TvDetailContent(
                                         trailerButtonFocusRequester.requestFocusSafe()
                                         true
                                     }
-                                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                        favoriteButtonFocusRequester.requestFocusSafe()
+                                    AndroidKeyEvent.KEYCODE_DPAD_UP,
+                                    AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
                                         true
                                     }
                                     else -> false
@@ -295,8 +301,9 @@ fun TvDetailContent(
                         .fillMaxWidth()
                         .height(if (isCompactHeight) 36.dp else 46.dp)
                         .focusProperties {
+                            down = FocusRequester.Cancel
+                            left = FocusRequester.Cancel
                             up = backButtonFocusRequester
-                            right = mainActionFocusRequester
                         }
                         .onKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown) {
@@ -305,8 +312,8 @@ fun TvDetailContent(
                                         backButtonFocusRequester.requestFocusSafe()
                                         true
                                     }
-                                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                        mainActionFocusRequester.requestFocusSafe()
+                                    AndroidKeyEvent.KEYCODE_DPAD_DOWN,
+                                    AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
                                         true
                                     }
                                     else -> false
@@ -418,11 +425,20 @@ fun TvDetailContent(
                                 modifier = Modifier
                                     .focusProperties {
                                         left = backButtonFocusRequester
+                                        up = FocusRequester.Cancel
                                     }
                                     .onKeyEvent { event ->
-                                        if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                            backButtonFocusRequester.requestFocusSafe()
-                                            true
+                                        if (event.type == KeyEventType.KeyDown) {
+                                            when (event.nativeKeyEvent.keyCode) {
+                                                AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                    backButtonFocusRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                    true
+                                                }
+                                                else -> false
+                                            }
                                         } else false
                                     }
                                     .tvFocusableItem(
@@ -773,16 +789,30 @@ fun TvDetailContent(
                                 .height(48.dp)
                                 .focusProperties {
                                     left = trailerButtonFocusRequester
+                                    if (displayComments.isEmpty()) {
+                                        down = FocusRequester.Cancel
+                                    }
                                 }
                                 .onKeyEvent { event ->
-                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                        trailerButtonFocusRequester.requestFocusSafe()
-                                        true
+                                    if (event.type == KeyEventType.KeyDown) {
+                                        when (event.nativeKeyEvent.keyCode) {
+                                            AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                trailerButtonFocusRequester.requestFocusSafe()
+                                                true
+                                            }
+                                            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                if (displayComments.isEmpty()) {
+                                                    true
+                                                } else false
+                                            }
+                                            else -> false
+                                        }
                                     } else false
                                 }
                                 .tvFocusableItem(
                                     onClick = onPlayMovie,
                                     scaleFactor = 1.03f,
+                                    focusedBorderColor = Color.White,
                                     shape = RoundedCornerShape(10.dp),
                                     focusRequester = mainActionFocusRequester,
                                     lazyListState = rightScrollState
@@ -911,6 +941,8 @@ fun TvDetailContent(
                                         rowEpisodes.forEachIndexed { colIndex, ep ->
                                             val isSelected = selectedEpisodeId == ep.id
                                             val isMainActionTarget = (isSelected || (selectedEpisodeId.isNullOrEmpty() && rowIndex == 0 && colIndex == 0))
+                                             val isLastEpisodeRow = rowIndex == chunks.lastIndex
+                                            val hasNoComments = displayComments.isEmpty()
                                             Surface(
                                                 color = if (isSelected) CinemaPrimary.copy(alpha = 0.2f) else CinemaDark,
                                                 shape = RoundedCornerShape(8.dp),
@@ -921,16 +953,33 @@ fun TvDetailContent(
                                                 modifier = Modifier
                                                     .weight(1f)
                                                     .then(
-                                                        if (colIndex == 0) {
-                                                            Modifier
-                                                                .focusProperties { left = trailerButtonFocusRequester }
-                                                                .onKeyEvent { event ->
-                                                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                                                        trailerButtonFocusRequester.requestFocusSafe()
-                                                                        true
-                                                                    } else false
+                                                        Modifier
+                                                            .focusProperties {
+                                                                if (colIndex == 0) {
+                                                                    left = trailerButtonFocusRequester
                                                                 }
-                                                        } else Modifier
+                                                                if (isLastEpisodeRow && hasNoComments) {
+                                                                    down = FocusRequester.Cancel
+                                                                }
+                                                            }
+                                                            .onKeyEvent { event ->
+                                                                if (event.type == KeyEventType.KeyDown) {
+                                                                    when (event.nativeKeyEvent.keyCode) {
+                                                                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                                            if (colIndex == 0) {
+                                                                                trailerButtonFocusRequester.requestFocusSafe()
+                                                                                true
+                                                                            } else false
+                                                                        }
+                                                                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                                            if (isLastEpisodeRow && hasNoComments) {
+                                                                                true
+                                                                            } else false
+                                                                        }
+                                                                        else -> false
+                                                                    }
+                                                                } else false
+                                                            }
                                                     )
                                                     .tvFocusableItem(
                                                         onClick = {
@@ -985,7 +1034,6 @@ fun TvDetailContent(
                 }
 
                 // ---- 9. ОТЗЫВЫ ЗРИТЕЛЕЙ (ВИРТУАЛИЗИРОВАННЫЙ СПИСОК С ПЛАВНЫМ DPAD СКРОЛЛОМ) ----
-                val displayComments = if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
                 val totalPages = maxOf(commentsState.totalPages, detail.commentsTotalPages, commentsState.currentPage)
                 val totalReviewsCount = when {
                     commentsState.totalCount > 0 -> commentsState.totalCount
@@ -1048,11 +1096,34 @@ fun TvDetailContent(
                         items = displayComments,
                         key = { idx, comment -> "${comment.id}_${comment.author}_${comment.date}_$idx" }
                     ) { idx, comment ->
+                        val isLastComment = idx == displayComments.lastIndex
                         Surface(
                             color = CinemaDark,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .focusProperties {
+                                    left = trailerButtonFocusRequester
+                                    if (isLastComment) {
+                                        down = FocusRequester.Cancel
+                                    }
+                                }
+                                .onKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown) {
+                                        when (event.nativeKeyEvent.keyCode) {
+                                            AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                trailerButtonFocusRequester.requestFocusSafe()
+                                                true
+                                            }
+                                            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                if (isLastComment) {
+                                                    true
+                                                } else false
+                                            }
+                                            else -> false
+                                        }
+                                    } else false
+                                }
                                 .tvFocusableItem(
                                     onClick = {},
                                     scaleFactor = 1.01f,
