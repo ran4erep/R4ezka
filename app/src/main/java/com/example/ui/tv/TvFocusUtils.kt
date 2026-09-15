@@ -13,6 +13,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -29,6 +30,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -127,12 +131,16 @@ fun Modifier.tvFocusableItem(
     focusedBorderColor: Color = CinemaPrimary,
     focusedBorderWidth: Dp = 2.5.dp,
     shape: Shape = RoundedCornerShape(12.dp),
-    focusRequester: FocusRequester? = null
+    focusRequester: FocusRequester? = null,
+    lazyListState: LazyListState? = null,
+    targetViewportY: Float = 220f
 ): Modifier = composed {
     var isFocused by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    var itemCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var scrollJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     val scale by animateFloatAsState(
         targetValue = when {
@@ -150,6 +158,7 @@ fun Modifier.tvFocusableItem(
             scaleX = scale
             scaleY = scale
         }
+        .onGloballyPositioned { itemCoordinates = it }
         .bringIntoViewRequester(bringIntoViewRequester)
         .then(
             if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier
@@ -158,10 +167,30 @@ fun Modifier.tvFocusableItem(
             isFocused = focusState.isFocused
             if (focusState.isFocused) {
                 onFocused?.invoke()
-                coroutineScope.launch {
+                scrollJob?.cancel()
+                scrollJob = coroutineScope.launch {
                     try {
-                        bringIntoViewRequester.bringIntoView()
-                    } catch (_: Exception) {}
+                        if (lazyListState != null) {
+                            if (itemCoordinates?.isAttached == true) {
+                                val bounds = try { itemCoordinates?.boundsInWindow() } catch (_: Throwable) { null }
+                                if (bounds != null) {
+                                    val delta = bounds.top - targetViewportY
+                                    if (kotlin.math.abs(delta) > 20f) {
+                                        lazyListState.animateScrollBy(
+                                            value = delta,
+                                            animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            try {
+                                bringIntoViewRequester.bringIntoView()
+                            } catch (_: Throwable) {}
+                        }
+                    } catch (_: Throwable) {
+                        // Поглощаем любые отмены корутин и сбои скролла для стабильности
+                    }
                 }
             }
         }

@@ -110,13 +110,30 @@ fun TvDetailContent(
         val screenWidth = maxWidth
         val isCompactHeight = screenHeight < 520.dp
 
-        // Гарантированное вычисление возрастного рейтинга (из данных RezkaDetail либо из подзаголовка карточки)
-        val effectiveAgeRestriction = remember(detail.ageRestriction, item.subtitle) {
+        // Гарантированное вычисление возрастного рейтинга (из данных RezkaDetail, описания либо жанров)
+        val effectiveAgeRestriction = remember(detail.ageRestriction, item.subtitle, detail.description, detail.genres) {
             if (detail.ageRestriction.isNotEmpty()) {
                 detail.ageRestriction
             } else {
-                val match = Regex("""\b(18\+|16\+|12\+|6\+|0\+|PG-13|NC-17|TV-MA|TV-14|R)\b""").find(item.subtitle)
-                match?.value ?: ""
+                val candidates = listOf(item.subtitle, detail.title, detail.description)
+                var found = ""
+                for (c in candidates) {
+                    val match = Regex("""\b(18\+|16\+|12\+|6\+|0\+|PG-13|NC-17|TV-MA|TV-14|TV-PG|R|PG)\b""", RegexOption.IGNORE_CASE).find(c)
+                    if (match != null) {
+                        found = RezkaService.cleanAgeRestriction(match.value)
+                        break
+                    }
+                }
+                if (found.isEmpty()) {
+                    when {
+                        detail.genres.any { it.contains("ужас", ignoreCase = true) || it.contains("криминал", ignoreCase = true) || it.contains("эротик", ignoreCase = true) } -> "18+"
+                        detail.genres.any { it.contains("боевик", ignoreCase = true) || it.contains("триллер", ignoreCase = true) } -> "16+"
+                        detail.genres.any { it.contains("мультфильм", ignoreCase = true) || it.contains("детск", ignoreCase = true) || it.contains("семейн", ignoreCase = true) } -> "6+"
+                        else -> "16+"
+                    }
+                } else {
+                    found
+                }
             }
         }
 
@@ -444,7 +461,8 @@ fun TvDetailContent(
                                         onClick = onToggleFavorite,
                                         scaleFactor = 1.05f,
                                         shape = RoundedCornerShape(6.dp),
-                                        focusRequester = favoriteButtonFocusRequester
+                                        focusRequester = favoriteButtonFocusRequester,
+                                        lazyListState = rightScrollState
                                     )
                                     .testTag("tv_favorite_button")
                             ) {
@@ -582,7 +600,8 @@ fun TvDetailContent(
                                             .tvFocusableItem(
                                                 onClick = {},
                                                 scaleFactor = 1.05f,
-                                                shape = RoundedCornerShape(8.dp)
+                                                shape = RoundedCornerShape(8.dp),
+                                                lazyListState = rightScrollState
                                             )
                                     ) {
                                         Row(
@@ -644,7 +663,8 @@ fun TvDetailContent(
                                         }
                                         .tvFocusableItem(
                                             onClick = { isActorsExpanded = !isActorsExpanded },
-                                            shape = RoundedCornerShape(6.dp)
+                                            shape = RoundedCornerShape(6.dp),
+                                            lazyListState = rightScrollState
                                         )
                                         .clickable(enabled = detail.actors.size > initialActorCount) {
                                             isActorsExpanded = !isActorsExpanded
@@ -742,32 +762,23 @@ fun TvDetailContent(
                 if (detail.translators.isNotEmpty()) {
                     item {
                         val currentTrans = selectedTranslator ?: detail.translators.first()
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = "Озвучка / Перевод",
-                                color = CinemaTextWhite,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            TvRezkaDropdown(
-                                label = "Озвучка",
-                                options = detail.translators,
-                                selectedOption = currentTrans,
-                                onOptionSelected = { trans -> onSelectTranslator(trans) },
-                                getLabel = { it.name },
-                                modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f),
-                                surfaceModifier = Modifier
-                                    .focusProperties { left = backButtonFocusRequester }
-                                    .onKeyEvent { event ->
-                                        if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                            backButtonFocusRequester.requestFocus()
-                                            true
-                                        } else false
-                                    }
-                            )
-                        }
+                        TvRezkaDropdown(
+                            label = "Озвучка",
+                            options = detail.translators,
+                            selectedOption = currentTrans,
+                            onOptionSelected = { trans -> onSelectTranslator(trans) },
+                            getLabel = { it.name },
+                            modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f),
+                            lazyListState = rightScrollState,
+                            surfaceModifier = Modifier
+                                .focusProperties { left = backButtonFocusRequester }
+                                .onKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                        backButtonFocusRequester.requestFocus()
+                                        true
+                                    } else false
+                                }
+                        )
                     }
                 }
 
@@ -797,7 +808,8 @@ fun TvDetailContent(
                                     onClick = onPlayMovie,
                                     scaleFactor = 1.03f,
                                     shape = RoundedCornerShape(10.dp),
-                                    focusRequester = mainActionFocusRequester
+                                    focusRequester = mainActionFocusRequester,
+                                    lazyListState = rightScrollState
                                 )
                                 .testTag("tv_movie_play_button")
                         ) {
@@ -824,32 +836,23 @@ fun TvDetailContent(
                     val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
 
                     item {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = "Сезон",
-                                color = CinemaTextWhite,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            TvRezkaDropdown(
-                                label = "Сезон",
-                                options = effectiveSeasons,
-                                selectedOption = currentSeason,
-                                onOptionSelected = { s -> onSelectSeason(s.id) },
-                                getLabel = { it.name },
-                                modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f),
-                                surfaceModifier = Modifier
-                                    .focusProperties { left = trailerButtonFocusRequester }
-                                    .onKeyEvent { event ->
-                                        if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                            trailerButtonFocusRequester.requestFocus()
-                                            true
-                                        } else false
-                                    }
-                            )
-                        }
+                        TvRezkaDropdown(
+                            label = "Сезон",
+                            options = effectiveSeasons,
+                            selectedOption = currentSeason,
+                            onOptionSelected = { s -> onSelectSeason(s.id) },
+                            getLabel = { it.name },
+                            modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f),
+                            lazyListState = rightScrollState,
+                            surfaceModifier = Modifier
+                                .focusProperties { left = trailerButtonFocusRequester }
+                                .onKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                        trailerButtonFocusRequester.requestFocus()
+                                        true
+                                    } else false
+                                }
+                        )
                     }
 
                     // Серии текущего сезона
@@ -885,7 +888,8 @@ fun TvDetailContent(
                                             .tvFocusableItem(
                                                 onClick = onOpenSchedule,
                                                 scaleFactor = 1.05f,
-                                                shape = RoundedCornerShape(8.dp)
+                                                shape = RoundedCornerShape(8.dp),
+                                                lazyListState = rightScrollState
                                             )
                                             .testTag("tv_schedule_button")
                                     ) {
@@ -959,7 +963,8 @@ fun TvDetailContent(
                                                         },
                                                         scaleFactor = 1.04f,
                                                         shape = RoundedCornerShape(8.dp),
-                                                        focusRequester = if (isMainActionTarget) mainActionFocusRequester else null
+                                                        focusRequester = if (isMainActionTarget) mainActionFocusRequester else null,
+                                                        lazyListState = rightScrollState
                                                     )
                                                     .testTag("tv_episode_${ep.id}")
                                             ) {
@@ -1065,25 +1070,19 @@ fun TvDetailContent(
                 } else {
                     itemsIndexed(
                         items = displayComments,
-                        key = { idx, comment -> if (comment.id.isNotEmpty()) comment.id else "${comment.author}_${comment.date}_$idx" }
+                        key = { idx, comment -> "${comment.id}_${comment.author}_${comment.date}_$idx" }
                     ) { idx, comment ->
                         Surface(
                             color = CinemaDark,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .focusProperties { left = trailerButtonFocusRequester }
-                                .onKeyEvent { event ->
-                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                        trailerButtonFocusRequester.requestFocus()
-                                        true
-                                    } else false
-                                }
                                 .tvFocusableItem(
                                     onClick = {},
                                     scaleFactor = 1.01f,
                                     shape = RoundedCornerShape(12.dp),
-                                    focusedBorderColor = CinemaPrimary.copy(alpha = 0.5f)
+                                    focusedBorderColor = CinemaPrimary.copy(alpha = 0.5f),
+                                    lazyListState = rightScrollState
                                 )
                                 .testTag("tv_comment_card_$idx")
                         ) {
@@ -1171,17 +1170,11 @@ fun TvDetailContent(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(42.dp)
-                                        .focusProperties { left = trailerButtonFocusRequester }
-                                        .onKeyEvent { event ->
-                                            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                                trailerButtonFocusRequester.requestFocus()
-                                                true
-                                            } else false
-                                        }
                                         .tvFocusableItem(
                                             onClick = onAppendNextCommentsPage,
                                             scaleFactor = 1.03f,
-                                            shape = RoundedCornerShape(10.dp)
+                                            shape = RoundedCornerShape(10.dp),
+                                            lazyListState = rightScrollState
                                         )
                                         .testTag("tv_comments_load_more_button")
                                 ) {
@@ -1235,20 +1228,14 @@ fun TvDetailContent(
                                         color = CinemaCard,
                                         shape = RoundedCornerShape(8.dp),
                                         modifier = Modifier
-                                            .focusProperties { left = trailerButtonFocusRequester }
-                                            .onKeyEvent { event ->
-                                                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                                    trailerButtonFocusRequester.requestFocus()
-                                                    true
-                                                } else false
-                                            }
                                             .tvFocusableItem(
                                                 onClick = {
                                                     if (commentsState.currentPage > 1) {
                                                         onLoadCommentsPage(commentsState.currentPage - 1)
                                                     }
                                                 },
-                                                shape = RoundedCornerShape(8.dp)
+                                                shape = RoundedCornerShape(8.dp),
+                                                lazyListState = rightScrollState
                                             )
                                     ) {
                                         Icon(
@@ -1275,7 +1262,8 @@ fun TvDetailContent(
                                                 ),
                                                 modifier = Modifier.tvFocusableItem(
                                                     onClick = { onLoadCommentsPage(pageNum) },
-                                                    shape = RoundedCornerShape(8.dp)
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    lazyListState = rightScrollState
                                                 )
                                             ) {
                                                 Text(
@@ -1299,7 +1287,8 @@ fun TvDetailContent(
                                                     onLoadCommentsPage(commentsState.currentPage + 1)
                                                 }
                                             },
-                                            shape = RoundedCornerShape(8.dp)
+                                            shape = RoundedCornerShape(8.dp),
+                                            lazyListState = rightScrollState
                                         )
                                     ) {
                                         Icon(
