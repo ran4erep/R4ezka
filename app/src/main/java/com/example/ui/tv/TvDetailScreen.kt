@@ -25,6 +25,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -73,15 +78,26 @@ fun TvDetailContent(
     onAppendNextCommentsPage: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val playButtonFocusRequester = remember { FocusRequester() }
+    val backButtonFocusRequester = remember { FocusRequester() }
+    val trailerButtonFocusRequester = remember { FocusRequester() }
+    val favoriteButtonFocusRequester = remember { FocusRequester() }
+    val mainActionFocusRequester = remember { FocusRequester() }
     val rightScrollState = rememberLazyListState()
     var isActorsExpanded by remember { mutableStateOf(false) }
 
-    // Автофокус на основной кнопке просмотра при старте
+    // Автофокус на главном действии при входе (кнопка Смотреть / Серия, либо Избранное / Назад)
     LaunchedEffect(Unit) {
         try {
-            playButtonFocusRequester.requestFocus()
-        } catch (_: Exception) {}
+            mainActionFocusRequester.requestFocus()
+        } catch (_: Exception) {
+            try {
+                favoriteButtonFocusRequester.requestFocus()
+            } catch (_: Exception) {
+                try {
+                    backButtonFocusRequester.requestFocus()
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     BoxWithConstraints(
@@ -153,10 +169,37 @@ fun TvDetailContent(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(if (isCompactHeight) 34.dp else 42.dp)
+                        .focusProperties {
+                            down = trailerButtonFocusRequester
+                            right = favoriteButtonFocusRequester
+                        }
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown) {
+                                when (event.nativeKeyEvent.keyCode) {
+                                    AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                        trailerButtonFocusRequester.requestFocus()
+                                        true
+                                    }
+                                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        try {
+                                            favoriteButtonFocusRequester.requestFocus()
+                                            true
+                                        } catch (_: Exception) {
+                                            try {
+                                                mainActionFocusRequester.requestFocus()
+                                                true
+                                            } catch (_: Exception) { false }
+                                        }
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
                         .tvFocusableItem(
                             onClick = onBack,
                             scaleFactor = 1.05f,
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(10.dp),
+                            focusRequester = backButtonFocusRequester
                         )
                         .testTag("tv_back_button")
                 ) {
@@ -232,10 +275,37 @@ fun TvDetailContent(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(if (isCompactHeight) 36.dp else 46.dp)
+                        .focusProperties {
+                            up = backButtonFocusRequester
+                            right = mainActionFocusRequester
+                        }
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown) {
+                                when (event.nativeKeyEvent.keyCode) {
+                                    AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                        backButtonFocusRequester.requestFocus()
+                                        true
+                                    }
+                                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        try {
+                                            mainActionFocusRequester.requestFocus()
+                                            true
+                                        } catch (_: Exception) {
+                                            try {
+                                                favoriteButtonFocusRequester.requestFocus()
+                                                true
+                                            } catch (_: Exception) { false }
+                                        }
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
                         .tvFocusableItem(
                             onClick = onLaunchTrailer,
                             scaleFactor = 1.05f,
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(10.dp),
+                            focusRequester = trailerButtonFocusRequester
                         )
                         .testTag("tv_trailer_button")
                 ) {
@@ -351,10 +421,20 @@ fun TvDetailContent(
                                     if (isFavorite) CinemaPrimary else CinemaSecondary.copy(alpha = 0.3f)
                                 ),
                                 modifier = Modifier
+                                    .focusProperties {
+                                        left = backButtonFocusRequester
+                                    }
+                                    .onKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                            backButtonFocusRequester.requestFocus()
+                                            true
+                                        } else false
+                                    }
                                     .tvFocusableItem(
                                         onClick = onToggleFavorite,
                                         scaleFactor = 1.05f,
-                                        shape = RoundedCornerShape(6.dp)
+                                        shape = RoundedCornerShape(6.dp),
+                                        focusRequester = favoriteButtonFocusRequester
                                     )
                                     .testTag("tv_favorite_button")
                             ) {
@@ -471,11 +551,21 @@ fun TvDetailContent(
                                         color = CinemaCard,
                                         shape = RoundedCornerShape(8.dp),
                                         border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.2f)),
-                                        modifier = Modifier.tvFocusableItem(
-                                            onClick = {},
-                                            scaleFactor = 1.05f,
-                                            shape = RoundedCornerShape(8.dp)
-                                        )
+                                        modifier = Modifier
+                                            .focusProperties {
+                                                left = backButtonFocusRequester
+                                            }
+                                            .onKeyEvent { event ->
+                                                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                                    backButtonFocusRequester.requestFocus()
+                                                    true
+                                                } else false
+                                            }
+                                            .tvFocusableItem(
+                                                onClick = {},
+                                                scaleFactor = 1.05f,
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
                                     ) {
                                         Row(
                                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -525,6 +615,15 @@ fun TvDetailContent(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .focusProperties {
+                                            left = backButtonFocusRequester
+                                        }
+                                        .onKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                                backButtonFocusRequester.requestFocus()
+                                                true
+                                            } else false
+                                        }
                                         .tvFocusableItem(
                                             onClick = { isActorsExpanded = !isActorsExpanded },
                                             shape = RoundedCornerShape(6.dp)
@@ -640,7 +739,15 @@ fun TvDetailContent(
                                 selectedOption = currentTrans,
                                 onOptionSelected = { trans -> onSelectTranslator(trans) },
                                 getLabel = { it.name },
-                                modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f)
+                                modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f),
+                                surfaceModifier = Modifier
+                                    .focusProperties { left = backButtonFocusRequester }
+                                    .onKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                            backButtonFocusRequester.requestFocus()
+                                            true
+                                        } else false
+                                    }
                             )
                         }
                     }
@@ -659,11 +766,20 @@ fun TvDetailContent(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(48.dp)
+                                .focusProperties {
+                                    left = trailerButtonFocusRequester
+                                }
+                                .onKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                        trailerButtonFocusRequester.requestFocus()
+                                        true
+                                    } else false
+                                }
                                 .tvFocusableItem(
                                     onClick = onPlayMovie,
                                     scaleFactor = 1.03f,
                                     shape = RoundedCornerShape(10.dp),
-                                    focusRequester = playButtonFocusRequester
+                                    focusRequester = mainActionFocusRequester
                                 )
                                 .testTag("tv_movie_play_button")
                         ) {
@@ -705,7 +821,15 @@ fun TvDetailContent(
                                 selectedOption = currentSeason,
                                 onOptionSelected = { s -> onSelectSeason(s.id) },
                                 getLabel = { it.name },
-                                modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f)
+                                modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f),
+                                surfaceModifier = Modifier
+                                    .focusProperties { left = trailerButtonFocusRequester }
+                                    .onKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                            trailerButtonFocusRequester.requestFocus()
+                                            true
+                                        } else false
+                                    }
                             )
                         }
                     }
@@ -733,6 +857,13 @@ fun TvDetailContent(
                                         shape = RoundedCornerShape(8.dp),
                                         border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
                                         modifier = Modifier
+                                            .focusProperties { left = trailerButtonFocusRequester }
+                                            .onKeyEvent { event ->
+                                                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                                    trailerButtonFocusRequester.requestFocus()
+                                                    true
+                                                } else false
+                                            }
                                             .tvFocusableItem(
                                                 onClick = onOpenSchedule,
                                                 scaleFactor = 1.05f,
@@ -774,13 +905,14 @@ fun TvDetailContent(
                             // Сетка серий по 3 штуки в строке
                             val chunks = currentSeason.episodes.chunked(3)
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                chunks.forEach { rowEpisodes ->
+                                chunks.forEachIndexed { rowIndex, rowEpisodes ->
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        rowEpisodes.forEach { ep ->
+                                        rowEpisodes.forEachIndexed { colIndex, ep ->
                                             val isSelected = selectedEpisodeId == ep.id
+                                            val isMainActionTarget = (isSelected || (selectedEpisodeId.isNullOrEmpty() && rowIndex == 0 && colIndex == 0))
                                             Surface(
                                                 color = if (isSelected) CinemaPrimary.copy(alpha = 0.2f) else CinemaDark,
                                                 shape = RoundedCornerShape(8.dp),
@@ -790,13 +922,26 @@ fun TvDetailContent(
                                                 ),
                                                 modifier = Modifier
                                                     .weight(1f)
+                                                    .then(
+                                                        if (colIndex == 0) {
+                                                            Modifier
+                                                                .focusProperties { left = trailerButtonFocusRequester }
+                                                                .onKeyEvent { event ->
+                                                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                                                        trailerButtonFocusRequester.requestFocus()
+                                                                        true
+                                                                    } else false
+                                                                }
+                                                        } else Modifier
+                                                    )
                                                     .tvFocusableItem(
                                                         onClick = {
                                                             onSelectEpisode(ep.id)
                                                             onPlayEpisode(currentSeason, ep)
                                                         },
                                                         scaleFactor = 1.04f,
-                                                        shape = RoundedCornerShape(8.dp)
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        focusRequester = if (isMainActionTarget) mainActionFocusRequester else null
                                                     )
                                                     .testTag("tv_episode_${ep.id}")
                                             ) {
@@ -906,12 +1051,6 @@ fun TvDetailContent(
                                     Card(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .tvFocusableItem(
-                                                onClick = { /* Фокус на отзыве для плавной прокрутки пультом D-Pad */ },
-                                                scaleFactor = 1.01f,
-                                                focusedBorderWidth = 2.dp,
-                                                shape = RoundedCornerShape(12.dp)
-                                            )
                                             .testTag("tv_comment_card"),
                                         colors = CardDefaults.cardColors(containerColor = CinemaDark),
                                         shape = RoundedCornerShape(12.dp)
@@ -1001,6 +1140,13 @@ fun TvDetailContent(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(42.dp)
+                                                .focusProperties { left = trailerButtonFocusRequester }
+                                                .onKeyEvent { event ->
+                                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                                        trailerButtonFocusRequester.requestFocus()
+                                                        true
+                                                    } else false
+                                                }
                                                 .tvFocusableItem(
                                                     onClick = onAppendNextCommentsPage,
                                                     scaleFactor = 1.03f,
@@ -1057,14 +1203,22 @@ fun TvDetailContent(
                                             Surface(
                                                 color = CinemaCard,
                                                 shape = RoundedCornerShape(8.dp),
-                                                modifier = Modifier.tvFocusableItem(
-                                                    onClick = {
-                                                        if (commentsState.currentPage > 1) {
-                                                            onLoadCommentsPage(commentsState.currentPage - 1)
-                                                        }
-                                                    },
-                                                    shape = RoundedCornerShape(8.dp)
-                                                )
+                                                modifier = Modifier
+                                                    .focusProperties { left = trailerButtonFocusRequester }
+                                                    .onKeyEvent { event ->
+                                                        if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                                            trailerButtonFocusRequester.requestFocus()
+                                                            true
+                                                        } else false
+                                                    }
+                                                    .tvFocusableItem(
+                                                        onClick = {
+                                                            if (commentsState.currentPage > 1) {
+                                                                onLoadCommentsPage(commentsState.currentPage - 1)
+                                                            }
+                                                        },
+                                                        shape = RoundedCornerShape(8.dp)
+                                                    )
                                             ) {
                                                 Icon(
                                                     Icons.AutoMirrored.Filled.ArrowBack,

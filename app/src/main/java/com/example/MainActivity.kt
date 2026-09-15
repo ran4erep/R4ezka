@@ -102,12 +102,33 @@ fun MainContent() {
             .fillMaxSize()
             .background(CinemaBlack)
     ) {
-        if (isTvMode && !isSettingsOpen && selectedItem == null) {
-            TvMainScreen(
-                viewModel = viewModel,
-                onNavigateToDetail = { selectedItem = it },
-                modifier = Modifier.fillMaxSize()
-            )
+        if (isTvMode) {
+            // Режим Android TV: строго изолированный рендеринг активного экрана
+            // Никаких скрытых мобильных Scaffold, фоновых сеток каталога или полей ввода!
+            when {
+                selectedItem != null -> {
+                    DetailScreen(
+                        viewModel = viewModel,
+                        item = selectedItem!!,
+                        onBack = { selectedItem = null },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                isSettingsOpen -> {
+                    SettingsScreen(
+                        viewModel = viewModel,
+                        onBack = { isSettingsOpen = false },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                else -> {
+                    TvMainScreen(
+                        viewModel = viewModel,
+                        onNavigateToDetail = { selectedItem = it },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
         } else {
             Scaffold(
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -228,34 +249,34 @@ fun MainContent() {
                     }
                 }
             }
-        }
 
-        // Animated Fullscreen Settings Screen overlay
-        AnimatedVisibility(
-            visible = isSettingsOpen && selectedItem == null,
-            enter = slideInHorizontally(initialOffsetX = { it }),
-            exit = slideOutHorizontally(targetOffsetX = { it }),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            SettingsScreen(
-                viewModel = viewModel,
-                onBack = { isSettingsOpen = false }
-            )
-        }
-
-        // Animated Fullscreen Details Screen overlay
-        AnimatedVisibility(
-            visible = selectedItem != null,
-            enter = slideInHorizontally(initialOffsetX = { it }),
-            exit = slideOutHorizontally(targetOffsetX = { it }),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            selectedItem?.let { item ->
-                DetailScreen(
+            // Animated Fullscreen Settings Screen overlay for Mobile
+            AnimatedVisibility(
+                visible = isSettingsOpen && selectedItem == null,
+                enter = slideInHorizontally(initialOffsetX = { it }),
+                exit = slideOutHorizontally(targetOffsetX = { it }),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                SettingsScreen(
                     viewModel = viewModel,
-                    item = item,
-                    onBack = { selectedItem = null }
+                    onBack = { isSettingsOpen = false }
                 )
+            }
+
+            // Animated Fullscreen Details Screen overlay for Mobile
+            AnimatedVisibility(
+                visible = selectedItem != null,
+                enter = slideInHorizontally(initialOffsetX = { it }),
+                exit = slideOutHorizontally(targetOffsetX = { it }),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                selectedItem?.let { item ->
+                    DetailScreen(
+                        viewModel = viewModel,
+                        item = item,
+                        onBack = { selectedItem = null }
+                    )
+                }
             }
         }
     }

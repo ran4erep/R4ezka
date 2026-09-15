@@ -1,5 +1,6 @@
 package com.example.ui.tv
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -345,6 +346,14 @@ private fun TvCatalogContent(
     onNavigateToDetail: (RezkaItem) -> Unit
 ) {
     val gridState = rememberLazyGridState()
+    val searchBarFocusRequester = remember { FocusRequester() }
+
+    // По умолчанию на телевизоре курсор должен стоять на строке поиска
+    LaunchedEffect(Unit) {
+        try {
+            searchBarFocusRequester.requestFocus()
+        } catch (_: Exception) {}
+    }
 
     // Пагинация для ТВ-сетки
     val shouldLoadMore by remember {
@@ -385,6 +394,7 @@ private fun TvCatalogContent(
             currentGenre = currentGenre,
             genresList = genresList,
             searchQuery = searchInput,
+            searchBarFocusRequester = searchBarFocusRequester,
             onSearchQueryChanged = {
                 searchInput = it
                 viewModel.onSearchQueryChanged(it)
@@ -599,7 +609,8 @@ private fun TvCatalogFiltersBar(
     onSearchQueryChanged: (String) -> Unit,
     onTypeSelected: (RezkaType) -> Unit,
     onSectionSelected: (SectionType) -> Unit,
-    onGenreSelected: (String) -> Unit
+    onGenreSelected: (String) -> Unit,
+    searchBarFocusRequester: FocusRequester? = null
 ) {
     Column(
         modifier = Modifier
@@ -611,6 +622,7 @@ private fun TvCatalogFiltersBar(
         TvCompactSearchBar(
             query = searchQuery,
             onQueryChanged = onSearchQueryChanged,
+            searchBarFocusRequester = searchBarFocusRequester,
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -687,7 +699,9 @@ fun <T> TvRezkaDropdown(
     selectedOption: T,
     onOptionSelected: (T) -> Unit,
     getLabel: (T) -> String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    surfaceModifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -702,10 +716,12 @@ fun <T> TvRezkaDropdown(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(42.dp)
+                .then(surfaceModifier)
                 .tvFocusableItem(
                     onClick = { expanded = !expanded },
                     scaleFactor = 1.04f,
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(10.dp),
+                    focusRequester = focusRequester
                 )
         ) {
             Row(
@@ -808,12 +824,19 @@ fun <T> TvRezkaDropdown(
 fun TvCompactSearchBar(
     query: String,
     onQueryChanged: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    searchBarFocusRequester: FocusRequester? = null
 ) {
     var isEditing by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+
+    // При открытой клавиатуре по кнопке Назад пульта скрываем клавиатуру и сохраняем фокус на строке поиска
+    BackHandler(enabled = isEditing) {
+        isEditing = false
+        keyboardController?.hide()
+    }
 
     Surface(
         color = CinemaDark,
@@ -835,7 +858,8 @@ fun TvCompactSearchBar(
                 },
                 scaleFactor = 1.02f,
                 focusedBorderWidth = 2.dp,
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(10.dp),
+                focusRequester = searchBarFocusRequester
             )
             .testTag("tv_search_bar")
     ) {
