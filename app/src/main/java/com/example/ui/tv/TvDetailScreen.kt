@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -108,6 +109,16 @@ fun TvDetailContent(
         val screenHeight = maxHeight
         val screenWidth = maxWidth
         val isCompactHeight = screenHeight < 520.dp
+
+        // Гарантированное вычисление возрастного рейтинга (из данных RezkaDetail либо из подзаголовка карточки)
+        val effectiveAgeRestriction = remember(detail.ageRestriction, item.subtitle) {
+            if (detail.ageRestriction.isNotEmpty()) {
+                detail.ageRestriction
+            } else {
+                val match = Regex("""\b(18\+|16\+|12\+|6\+|0\+|PG-13|NC-17|TV-MA|TV-14|R)\b""").find(item.subtitle)
+                match?.value ?: ""
+            }
+        }
 
         // 1. Полноэкранный кинотеатральный фоновый арт (Backdrop) с мягким затемнением
         Box(modifier = Modifier.fillMaxSize()) {
@@ -246,7 +257,7 @@ fun TvDetailContent(
                         )
 
                         // Бейдж возраста
-                        if (detail.ageRestriction.isNotEmpty()) {
+                        if (effectiveAgeRestriction.isNotEmpty()) {
                             Surface(
                                 color = CinemaDark.copy(alpha = 0.88f),
                                 shape = RoundedCornerShape(6.dp),
@@ -256,7 +267,7 @@ fun TvDetailContent(
                                     .padding(if (isCompactHeight) 6.dp else 8.dp)
                             ) {
                                 Text(
-                                    text = detail.ageRestriction,
+                                    text = effectiveAgeRestriction,
                                     color = CinemaPrimary,
                                     fontSize = if (isCompactHeight) 10.sp else 11.sp,
                                     fontWeight = FontWeight.Bold,
@@ -348,7 +359,6 @@ fun TvDetailContent(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .dpadScrollable(rightScrollState)
                     .testTag("tv_detail_right_column"),
                 contentPadding = PaddingValues(bottom = 36.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -396,14 +406,14 @@ fun TvDetailContent(
                                 }
                             }
 
-                            if (detail.ageRestriction.isNotEmpty()) {
+                            if (effectiveAgeRestriction.isNotEmpty()) {
                                 Surface(
                                     color = CinemaPrimary.copy(alpha = 0.15f),
                                     shape = RoundedCornerShape(6.dp),
                                     border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.4f))
                                 ) {
                                     Text(
-                                        text = detail.ageRestriction,
+                                        text = effectiveAgeRestriction,
                                         color = CinemaPrimary,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
@@ -525,6 +535,14 @@ fun TvDetailContent(
                                     icon = Icons.Default.CollectionsBookmark,
                                     label = "Из серии:",
                                     value = detail.seriesCollection
+                                )
+                            }
+
+                            if (effectiveAgeRestriction.isNotEmpty()) {
+                                DetailMetaRow(
+                                    icon = Icons.Default.Explicit,
+                                    label = "Возраст:",
+                                    value = effectiveAgeRestriction
                                 )
                             }
                         }
@@ -985,300 +1003,311 @@ fun TvDetailContent(
                     }
                 }
 
-                // ---- 9. ОТЗЫВЫ ЗРИТЕЛЕЙ (ИДЕНТИЧНО ТЕЛЕФОНУ) ----
-                item {
-                    val displayComments = if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
-                    val totalPages = maxOf(commentsState.totalPages, detail.commentsTotalPages, commentsState.currentPage)
-                    val totalReviewsCount = when {
-                        commentsState.totalCount > 0 -> commentsState.totalCount
-                        detail.commentsTotalCount > 0 -> detail.commentsTotalCount
-                        else -> displayComments.size
-                    }
+                // ---- 9. ОТЗЫВЫ ЗРИТЕЛЕЙ (ВИРТУАЛИЗИРОВАННЫЙ СПИСОК С ПЛАВНЫМ DPAD СКРОЛЛОМ) ----
+                val displayComments = if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
+                val totalPages = maxOf(commentsState.totalPages, detail.commentsTotalPages, commentsState.currentPage)
+                val totalReviewsCount = when {
+                    commentsState.totalCount > 0 -> commentsState.totalCount
+                    detail.commentsTotalCount > 0 -> detail.commentsTotalCount
+                    else -> displayComments.size
+                }
 
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                item(key = "comments_header") {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        // Заголовок отзывов
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.RateReview,
+                                contentDescription = null,
+                                tint = CinemaPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (totalReviewsCount > 0) "Отзывы зрителей ($totalReviewsCount)" else "Отзывы зрителей",
+                                color = CinemaTextWhite,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        if (totalPages > 1) {
+                            Text(
+                                text = "Стр. ${commentsState.currentPage} из $totalPages",
+                                color = CinemaTextGray,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+
+                if (commentsState.isLoading) {
+                    item(key = "comments_loading") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 16.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.RateReview,
-                                    contentDescription = null,
-                                    tint = CinemaPrimary,
-                                    modifier = Modifier.size(18.dp)
+                            CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(24.dp))
+                        }
+                    }
+                } else if (displayComments.isEmpty()) {
+                    item(key = "comments_empty") {
+                        Text(
+                            text = "Отзывов пока нет.",
+                            color = CinemaTextGray,
+                            fontSize = 13.sp
+                        )
+                    }
+                } else {
+                    itemsIndexed(
+                        items = displayComments,
+                        key = { idx, comment -> if (comment.id.isNotEmpty()) comment.id else "${comment.author}_${comment.date}_$idx" }
+                    ) { idx, comment ->
+                        Surface(
+                            color = CinemaDark,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusProperties { left = trailerButtonFocusRequester }
+                                .onKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                        trailerButtonFocusRequester.requestFocus()
+                                        true
+                                    } else false
+                                }
+                                .tvFocusableItem(
+                                    onClick = {},
+                                    scaleFactor = 1.01f,
+                                    shape = RoundedCornerShape(12.dp),
+                                    focusedBorderColor = CinemaPrimary.copy(alpha = 0.5f)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
+                                .testTag("tv_comment_card_$idx")
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    CommentUserAvatar(
+                                        avatarUrl = comment.avatarUrl,
+                                        authorName = comment.author,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = comment.author,
+                                            color = CinemaTextWhite,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                        if (comment.date.isNotEmpty()) {
+                                            Text(
+                                                text = comment.date,
+                                                color = CinemaTextGray,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+
+                                    // Бейдж лайков отзыва
+                                    if (comment.likes.isNotEmpty() && comment.likes != "(0)" && comment.likes != "0") {
+                                        Surface(
+                                            color = CinemaCard,
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.ThumbUp,
+                                                    contentDescription = null,
+                                                    tint = CinemaPrimary,
+                                                    modifier = Modifier.size(12.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    text = comment.likes.replace("(", "").replace(")", ""),
+                                                    color = CinemaTextWhite,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
                                 Text(
-                                    text = if (totalReviewsCount > 0) "Отзывы зрителей ($totalReviewsCount)" else "Отзывы зрителей",
-                                    color = CinemaTextWhite,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            if (totalPages > 1) {
-                                Text(
-                                    text = "Стр. ${commentsState.currentPage} из $totalPages",
-                                    color = CinemaTextGray,
-                                    fontSize = 12.sp
+                                    text = comment.text,
+                                    color = CinemaTextWhite.copy(alpha = 0.9f),
+                                    fontSize = 13.sp,
+                                    lineHeight = 18.sp
                                 )
                             }
                         }
+                    }
+                }
 
-                        if (commentsState.isLoading) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(24.dp))
-                            }
-                        } else if (displayComments.isEmpty()) {
-                            Text(
-                                text = "Отзывов пока нет.",
-                                color = CinemaTextGray,
-                                fontSize = 13.sp
-                            )
-                        } else {
-                            // Список комментариев в дизайне телефонной версии
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                displayComments.forEach { comment ->
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .testTag("tv_comment_card"),
-                                        colors = CardDefaults.cardColors(containerColor = CinemaDark),
-                                        shape = RoundedCornerShape(12.dp)
+                // Пагинация отзывов (Загрузить ещё + Номера страниц с поддержкой ТВ-пульта)
+                if (totalPages > 1) {
+                    item(key = "comments_pagination") {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            // Кнопка "Загрузить ещё отзывы"
+                            if (commentsState.hasMore || commentsState.currentPage < totalPages) {
+                                Surface(
+                                    color = CinemaCard,
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.35f)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(42.dp)
+                                        .focusProperties { left = trailerButtonFocusRequester }
+                                        .onKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                                trailerButtonFocusRequester.requestFocus()
+                                                true
+                                            } else false
+                                        }
+                                        .tvFocusableItem(
+                                            onClick = onAppendNextCommentsPage,
+                                            scaleFactor = 1.03f,
+                                            shape = RoundedCornerShape(10.dp)
+                                        )
+                                        .testTag("tv_comments_load_more_button")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
                                     ) {
-                                        Column(modifier = Modifier.padding(12.dp)) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                CommentUserAvatar(
-                                                    avatarUrl = comment.avatarUrl,
-                                                    authorName = comment.author,
-                                                    modifier = Modifier.size(32.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(10.dp))
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    Text(
-                                                        text = comment.author,
-                                                        color = CinemaTextWhite,
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontSize = 13.sp
-                                                    )
-                                                    if (comment.date.isNotEmpty()) {
-                                                        Text(
-                                                            text = comment.date,
-                                                            color = CinemaTextGray,
-                                                            fontSize = 11.sp
-                                                        )
-                                                    }
-                                                }
-
-                                                // Бейдж лайков отзыва
-                                                if (comment.likes.isNotEmpty() && comment.likes != "(0)" && comment.likes != "0") {
-                                                    Surface(
-                                                        color = CinemaCard,
-                                                        shape = RoundedCornerShape(12.dp)
-                                                    ) {
-                                                        Row(
-                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                                            verticalAlignment = Alignment.CenterVertically
-                                                        ) {
-                                                            Icon(
-                                                                Icons.Default.ThumbUp,
-                                                                contentDescription = null,
-                                                                tint = CinemaPrimary,
-                                                                modifier = Modifier.size(12.dp)
-                                                            )
-                                                            Spacer(modifier = Modifier.width(4.dp))
-                                                            Text(
-                                                                text = comment.likes.replace("(", "").replace(")", ""),
-                                                                color = CinemaTextWhite,
-                                                                fontSize = 11.sp,
-                                                                fontWeight = FontWeight.Bold
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            Spacer(modifier = Modifier.height(8.dp))
-
+                                        if (commentsState.isLoadingMore) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(16.dp),
+                                                color = CinemaPrimary,
+                                                strokeWidth = 2.dp
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Загрузка...", fontSize = 12.sp, color = CinemaTextWhite)
+                                        } else {
+                                            Icon(
+                                                Icons.Default.ExpandMore,
+                                                contentDescription = null,
+                                                tint = CinemaPrimary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = comment.text,
-                                                color = CinemaTextWhite.copy(alpha = 0.9f),
-                                                fontSize = 13.sp,
-                                                lineHeight = 18.sp
+                                                text = "Загрузить ещё отзывы (Стр. ${commentsState.currentPage + 1})",
+                                                fontSize = 12.sp,
+                                                color = CinemaTextWhite,
+                                                fontWeight = FontWeight.Medium
                                             )
                                         }
                                     }
                                 }
                             }
 
-                            // Пагинация отзывов (Загрузить ещё + Номера страниц с поддержкой ТВ-пульта)
-                            if (totalPages > 1) {
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                Column(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                            // Постраничная панель [←] [1] [2] [3]... [→]
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    // Кнопка "Загрузить ещё отзывы"
-                                    if (commentsState.hasMore || commentsState.currentPage < totalPages) {
-                                        Surface(
-                                            color = CinemaCard,
-                                            shape = RoundedCornerShape(10.dp),
-                                            border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.35f)),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(42.dp)
-                                                .focusProperties { left = trailerButtonFocusRequester }
-                                                .onKeyEvent { event ->
-                                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                                        trailerButtonFocusRequester.requestFocus()
-                                                        true
-                                                    } else false
-                                                }
-                                                .tvFocusableItem(
-                                                    onClick = onAppendNextCommentsPage,
-                                                    scaleFactor = 1.03f,
-                                                    shape = RoundedCornerShape(10.dp)
+                                    // Назад
+                                    Surface(
+                                        color = CinemaCard,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .focusProperties { left = trailerButtonFocusRequester }
+                                            .onKeyEvent { event ->
+                                                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                                    trailerButtonFocusRequester.requestFocus()
+                                                    true
+                                                } else false
+                                            }
+                                            .tvFocusableItem(
+                                                onClick = {
+                                                    if (commentsState.currentPage > 1) {
+                                                        onLoadCommentsPage(commentsState.currentPage - 1)
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.ArrowBack,
+                                            contentDescription = "Предыдущая страница",
+                                            tint = if (commentsState.currentPage > 1) CinemaTextWhite else CinemaTextGray.copy(alpha = 0.3f),
+                                            modifier = Modifier.padding(8.dp).size(18.dp)
+                                        )
+                                    }
+
+                                    // Номера страниц
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        items((1..totalPages).toList()) { pageNum ->
+                                            val isSelected = pageNum == commentsState.currentPage
+                                            Surface(
+                                                color = if (isSelected) CinemaPrimary else CinemaCard,
+                                                shape = RoundedCornerShape(8.dp),
+                                                border = BorderStroke(
+                                                    1.dp,
+                                                    if (isSelected) CinemaPrimary else CinemaSecondary.copy(alpha = 0.3f)
+                                                ),
+                                                modifier = Modifier.tvFocusableItem(
+                                                    onClick = { onLoadCommentsPage(pageNum) },
+                                                    shape = RoundedCornerShape(8.dp)
                                                 )
-                                                .testTag("tv_comments_load_more_button")
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxSize(),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.Center
                                             ) {
-                                                if (commentsState.isLoadingMore) {
-                                                    CircularProgressIndicator(
-                                                        modifier = Modifier.size(16.dp),
-                                                        color = CinemaPrimary,
-                                                        strokeWidth = 2.dp
-                                                    )
-                                                    Spacer(modifier = Modifier.width(8.dp))
-                                                    Text("Загрузка...", fontSize = 12.sp, color = CinemaTextWhite)
-                                                } else {
-                                                    Icon(
-                                                        Icons.Default.ExpandMore,
-                                                        contentDescription = null,
-                                                        tint = CinemaPrimary,
-                                                        modifier = Modifier.size(18.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Text(
-                                                        text = "Загрузить ещё отзывы (Стр. ${commentsState.currentPage + 1})",
-                                                        fontSize = 12.sp,
-                                                        color = CinemaTextWhite,
-                                                        fontWeight = FontWeight.Medium
-                                                    )
-                                                }
+                                                Text(
+                                                    text = pageNum.toString(),
+                                                    color = if (isSelected) CinemaTextWhite else CinemaTextGray,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                                )
                                             }
                                         }
                                     }
 
-                                    // Постраничная панель [←] [1] [2] [3]... [→]
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = CardDefaults.cardColors(containerColor = CinemaDark),
-                                        shape = RoundedCornerShape(12.dp)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            // Назад
-                                            Surface(
-                                                color = CinemaCard,
-                                                shape = RoundedCornerShape(8.dp),
-                                                modifier = Modifier
-                                                    .focusProperties { left = trailerButtonFocusRequester }
-                                                    .onKeyEvent { event ->
-                                                        if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                                            trailerButtonFocusRequester.requestFocus()
-                                                            true
-                                                        } else false
-                                                    }
-                                                    .tvFocusableItem(
-                                                        onClick = {
-                                                            if (commentsState.currentPage > 1) {
-                                                                onLoadCommentsPage(commentsState.currentPage - 1)
-                                                            }
-                                                        },
-                                                        shape = RoundedCornerShape(8.dp)
-                                                    )
-                                            ) {
-                                                Icon(
-                                                    Icons.AutoMirrored.Filled.ArrowBack,
-                                                    contentDescription = "Предыдущая страница",
-                                                    tint = if (commentsState.currentPage > 1) CinemaTextWhite else CinemaTextGray.copy(alpha = 0.3f),
-                                                    modifier = Modifier.padding(8.dp).size(18.dp)
-                                                )
-                                            }
-
-                                            // Номера страниц
-                                            LazyRow(
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                items((1..totalPages).toList()) { pageNum ->
-                                                    val isSelected = pageNum == commentsState.currentPage
-                                                    Surface(
-                                                        color = if (isSelected) CinemaPrimary else CinemaCard,
-                                                        shape = RoundedCornerShape(8.dp),
-                                                        border = BorderStroke(
-                                                            1.dp,
-                                                            if (isSelected) CinemaPrimary else CinemaSecondary.copy(alpha = 0.3f)
-                                                        ),
-                                                        modifier = Modifier.tvFocusableItem(
-                                                            onClick = { onLoadCommentsPage(pageNum) },
-                                                            shape = RoundedCornerShape(8.dp)
-                                                        )
-                                                    ) {
-                                                        Text(
-                                                            text = pageNum.toString(),
-                                                            color = if (isSelected) CinemaTextWhite else CinemaTextGray,
-                                                            fontSize = 12.sp,
-                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                                                        )
-                                                    }
+                                    // Вперёд
+                                    Surface(
+                                        color = CinemaCard,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.tvFocusableItem(
+                                            onClick = {
+                                                if (commentsState.currentPage < totalPages) {
+                                                    onLoadCommentsPage(commentsState.currentPage + 1)
                                                 }
-                                            }
-
-                                            // Вперёд
-                                            Surface(
-                                                color = CinemaCard,
-                                                shape = RoundedCornerShape(8.dp),
-                                                modifier = Modifier.tvFocusableItem(
-                                                    onClick = {
-                                                        if (commentsState.currentPage < totalPages) {
-                                                            onLoadCommentsPage(commentsState.currentPage + 1)
-                                                        }
-                                                    },
-                                                    shape = RoundedCornerShape(8.dp)
-                                                )
-                                            ) {
-                                                Icon(
-                                                    Icons.AutoMirrored.Filled.ArrowForward,
-                                                    contentDescription = "Следующая страница",
-                                                    tint = if (commentsState.currentPage < totalPages) CinemaTextWhite else CinemaTextGray.copy(alpha = 0.3f),
-                                                    modifier = Modifier.padding(8.dp).size(18.dp)
-                                                )
-                                            }
-                                        }
+                                            },
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.ArrowForward,
+                                            contentDescription = "Следующая страница",
+                                            tint = if (commentsState.currentPage < totalPages) CinemaTextWhite else CinemaTextGray.copy(alpha = 0.3f),
+                                            modifier = Modifier.padding(8.dp).size(18.dp)
+                                        )
                                     }
                                 }
                             }
