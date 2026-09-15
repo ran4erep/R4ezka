@@ -80,19 +80,24 @@ fun AuthDialog(
             usePlatformDefaultWidth = false
         )
     ) {
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = CinemaDark),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .testTag("auth_dialog_card")
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
         ) {
-            Column(
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = CinemaDark),
                 modifier = Modifier
+                    .widthIn(max = 440.dp)
                     .fillMaxWidth()
-                    .padding(20.dp)
+                    .padding(horizontal = 16.dp)
+                    .testTag("auth_dialog_card")
             ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp)
+                ) {
                 // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -489,4 +494,5 @@ fun AuthDialog(
             }
         }
     }
+}
 }
