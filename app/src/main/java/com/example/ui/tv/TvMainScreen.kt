@@ -971,9 +971,18 @@ fun TvCompactSearchBar(
     onDown: (() -> Unit)? = null
 ) {
     var isEditing by remember { mutableStateOf(false) }
+    var hasBeenFocused by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+
+    // При выходе из режима редактирования гарантированно восстанавливаем фокус на строке поиска
+    LaunchedEffect(isEditing) {
+        if (!isEditing) {
+            hasBeenFocused = false
+            searchBarFocusRequester?.requestFocusSafe()
+        }
+    }
 
     // При открытой клавиатуре по кнопке Назад пульта скрываем клавиатуру и сохраняем фокус на строке поиска
     BackHandler(enabled = isEditing) {
@@ -1013,14 +1022,19 @@ fun TvCompactSearchBar(
                     }
                 } else false
             }
-            .tvFocusableItem(
-                onClick = {
-                    isEditing = true
-                },
-                scaleFactor = 1.02f,
-                focusedBorderWidth = 2.dp,
-                shape = RoundedCornerShape(10.dp),
-                focusRequester = searchBarFocusRequester
+            .then(
+                if (!isEditing) {
+                    Modifier.tvFocusableItem(
+                        onClick = {
+                            isEditing = true
+                            hasBeenFocused = false
+                        },
+                        scaleFactor = 1.02f,
+                        focusedBorderWidth = 2.dp,
+                        shape = RoundedCornerShape(10.dp),
+                        focusRequester = searchBarFocusRequester
+                    )
+                } else Modifier
             )
             .testTag("tv_search_bar")
     ) {
@@ -1084,7 +1098,9 @@ fun TvCompactSearchBar(
                             .fillMaxWidth()
                             .focusRequester(focusRequester)
                             .onFocusChanged { focusState ->
-                                if (!focusState.isFocused && isEditing) {
+                                if (focusState.isFocused) {
+                                    hasBeenFocused = true
+                                } else if (hasBeenFocused && isEditing) {
                                     isEditing = false
                                     keyboardController?.hide()
                                 }
