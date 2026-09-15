@@ -384,7 +384,8 @@ fun DetailScreen(
                             )
                         },
                         onOpenSchedule = { showScheduleCalendarDialog = true },
-                        onBack = handleBack
+                        onBack = handleBack,
+                        onAppendNextCommentsPage = { viewModel.appendNextCommentsPage() }
                     )
                 } else {
                     // ---- SCROLLABLE MOBILE DETAIL PAGE (with TV/D-Pad support) ----

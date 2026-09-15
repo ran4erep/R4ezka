@@ -184,13 +184,18 @@ fun AvatarPickerDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Card(
-            shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(containerColor = CinemaDark),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
         ) {
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                modifier = Modifier
+                    .widthIn(max = 440.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -329,6 +334,7 @@ fun AvatarPickerDialog(
             }
         }
     }
+}
 }
 
 /**

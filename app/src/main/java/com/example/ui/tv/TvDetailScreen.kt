@@ -1,10 +1,12 @@
 package com.example.ui.tv
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -29,7 +31,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,9 +44,11 @@ import com.example.ui.screens.YouTubeLogoIcon
 import com.example.ui.theme.*
 
 /**
- * Кинематографический двухпанельный интерфейс страницы фильма для телевизоров и пульта D-Pad.
- * Полная поддержка навигации стрелками пульта, автофокус на кнопке "Смотреть"
- * и плавный скроллинг с пульта через dpadScrollable.
+ * Кинематографический экран фильма для ТВ, повторяющий дизайн и структуру мобильной версии:
+ * - Слева: обложка фильма (кинопостер) и строго снизу кнопка трейлера.
+ * - Справа: идентично мобильному приложению: название, оригинальное название, бейджи,
+ *   единый информационный блок с рейтингами (Кинопоиск, IMDb, HDRezka) и метаданными,
+ *   входит в списки, блок актеров, описание, выбор озвучки, сезоны и серии, кнопка "Смотреть" и отзывы.
  */
 @Composable
 fun TvDetailContent(
@@ -67,12 +70,14 @@ fun TvDetailContent(
     onLaunchTrailer: () -> Unit,
     onOpenSchedule: () -> Unit,
     onBack: () -> Unit,
+    onAppendNextCommentsPage: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val playButtonFocusRequester = remember { FocusRequester() }
     val rightScrollState = rememberLazyListState()
+    var isActorsExpanded by remember { mutableStateOf(false) }
 
-    // Автофокус на главной кнопке просмотра фильма при открытии на ТВ
+    // Автофокус на основной кнопке просмотра при старте
     LaunchedEffect(Unit) {
         try {
             playButtonFocusRequester.requestFocus()
@@ -92,10 +97,10 @@ fun TvDetailContent(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer { alpha = 0.22f }
+                    .graphicsLayer { alpha = 0.20f }
             )
 
-            // Градиентная подложка для читаемости на любых телевизорах
+            // Градиентная подложка для читаемости текста на ТВ экранах
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -103,27 +108,32 @@ fun TvDetailContent(
                         Brush.horizontalGradient(
                             colors = listOf(
                                 CinemaBlack.copy(alpha = 0.96f),
-                                CinemaBlack.copy(alpha = 0.88f),
-                                CinemaBlack.copy(alpha = 0.75f)
+                                CinemaBlack.copy(alpha = 0.90f),
+                                CinemaBlack.copy(alpha = 0.80f)
                             )
                         )
                     )
             )
         }
 
-        // 2. Основная рабочая область: Две панели
+        // 2. Основная рабочая область: Двухпанельный ТВ-лейаут
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 28.dp, vertical = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(28.dp)
+                .padding(horizontal = 24.dp, vertical = 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            // === ЛЕВАЯ ПАНЕЛЬ: Постер, кнопки действий с пульта и метаданные ===
+            // =========================================================================
+            // ЛЕВАЯ ПАНЕЛЬ:
+            // В строгом соответствии с запросом:
+            // Кнопка назад -> Обложка (постер) -> Снизу ТОЛЬКО кнопка трейлера.
+            // Никаких рейтингов, кнопок смотреть или метаданных под постером слева нет!
+            // =========================================================================
             Column(
                 modifier = Modifier
-                    .width(290.dp)
+                    .width(260.dp)
                     .fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // Кнопка "Назад"
                 Surface(
@@ -139,7 +149,7 @@ fun TvDetailContent(
                         .testTag("tv_back_button")
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -158,13 +168,13 @@ fun TvDetailContent(
                     }
                 }
 
-                // Постер фильма
+                // Постер фильма (пропорции кинопостера)
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(230.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
+                        .aspectRatio(0.68f),
+                    shape = RoundedCornerShape(12.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
                     colors = CardDefaults.cardColors(containerColor = CinemaDark)
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
@@ -175,228 +185,73 @@ fun TvDetailContent(
                             modifier = Modifier.fillMaxSize()
                         )
 
-                        // Бейджи качества и возраста
-                        Row(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            if (detail.ageRestriction.isNotEmpty()) {
-                                Surface(
-                                    color = CinemaDark.copy(alpha = 0.85f),
-                                    shape = RoundedCornerShape(6.dp),
-                                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f))
-                                ) {
-                                    Text(
-                                        text = detail.ageRestriction,
-                                        color = CinemaPrimary,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
+                        // Бейдж возраста
+                        if (detail.ageRestriction.isNotEmpty()) {
+                            Surface(
+                                color = CinemaDark.copy(alpha = 0.88f),
+                                shape = RoundedCornerShape(6.dp),
+                                border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(8.dp)
+                            ) {
+                                Text(
+                                    text = detail.ageRestriction,
+                                    color = CinemaPrimary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
                             }
                         }
                     }
                 }
 
-                // Плашка рейтингов (Кинопоиск, IMDb, HDRezka)
-                DetailRatingsRow(
-                    ratingInfo = detail.ratingInfo,
-                    fallbackRating = detail.rating
-                )
-
-                // КНОПКА "СМОТРЕТЬ" (Главный фокус)
-                val isSeries = detail.type == RezkaType.SERIES
+                // СНИЗУ ПОД ОБЛОЖКОЙ: ТОЛЬКО КНОПКА ТРЕЙЛЕРА
                 Surface(
-                    color = CinemaPrimary,
-                    shape = RoundedCornerShape(12.dp),
+                    color = CinemaCard,
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, Color(0xFFFF0000).copy(alpha = 0.6f)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .height(46.dp)
                         .tvFocusableItem(
-                            onClick = {
-                                if (isSeries) {
-                                    val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.firstOrNull()
-                                    if (currentSeason != null) {
-                                        val ep = currentSeason.episodes.find { it.id == selectedEpisodeId } ?: currentSeason.episodes.firstOrNull()
-                                        if (ep != null) {
-                                            onPlayEpisode(currentSeason, ep)
-                                        }
-                                    }
-                                } else {
-                                    onPlayMovie()
-                                }
-                            },
+                            onClick = onLaunchTrailer,
                             scaleFactor = 1.05f,
-                            shape = RoundedCornerShape(12.dp),
-                            focusRequester = playButtonFocusRequester
+                            shape = RoundedCornerShape(10.dp)
                         )
-                        .testTag("tv_play_primary_button")
+                        .testTag("tv_trailer_button")
                 ) {
                     Row(
                         modifier = Modifier.fillMaxSize(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            tint = Color.Black,
-                            modifier = Modifier.size(24.dp)
-                        )
+                        YouTubeLogoIcon(width = 22.dp, height = 15.dp, playIconSize = 10.dp)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (isSeries) "СМОТРЕТЬ СЕРИЮ" else "СМОТРЕТЬ ФИЛЬМ",
-                            color = Color.Black,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Black,
-                            letterSpacing = 0.5.sp
+                            text = "Трейлер",
+                            color = CinemaTextWhite,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
                         )
-                    }
-                }
-
-                // Кнопки "Трейлер" и "В закладки" в ряд
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // Трейлер
-                    Surface(
-                        color = CinemaCard,
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, Color(0xFFFF0000).copy(alpha = 0.5f)),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(42.dp)
-                            .tvFocusableItem(
-                                onClick = onLaunchTrailer,
-                                scaleFactor = 1.05f,
-                                shape = RoundedCornerShape(10.dp)
-                            )
-                            .testTag("tv_trailer_button")
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            YouTubeLogoIcon(width = 18.dp, height = 13.dp, playIconSize = 9.dp)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Трейлер",
-                                color = CinemaTextWhite,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    // В закладки
-                    Surface(
-                        color = CinemaCard,
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, if (isFavorite) CinemaPrimary else Color.White.copy(alpha = 0.15f)),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(42.dp)
-                            .tvFocusableItem(
-                                onClick = onToggleFavorite,
-                                scaleFactor = 1.05f,
-                                shape = RoundedCornerShape(10.dp)
-                            )
-                            .testTag("tv_favorite_button")
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = if (isFavorite) Icons.Default.Bookmark else Icons.Outlined.BookmarkBorder,
-                                contentDescription = null,
-                                tint = if (isFavorite) CinemaPrimary else CinemaTextWhite,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isFavorite) "В закладках" else "В закладки",
-                                color = if (isFavorite) CinemaPrimary else CinemaTextWhite,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-
-                // Расписание онгоинга (если есть)
-                if (detail.schedule.isNotEmpty()) {
-                    Surface(
-                        color = CinemaCard,
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(40.dp)
-                            .tvFocusableItem(
-                                onClick = onOpenSchedule,
-                                scaleFactor = 1.05f,
-                                shape = RoundedCornerShape(10.dp)
-                            )
-                            .testTag("tv_schedule_button")
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CalendarMonth,
-                                contentDescription = null,
-                                tint = CinemaPrimary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "График выхода серий",
-                                color = CinemaTextWhite,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                }
-
-                // Краткие метаданные
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = CinemaDark.copy(alpha = 0.7f)),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        val displayDate = detail.releaseDate.ifEmpty { detail.year }
-                        if (displayDate.isNotEmpty()) {
-                            DetailMetaRow(Icons.Default.DateRange, "Дата:", displayDate)
-                        }
-                        val displayCountry = detail.countryFlag.ifEmpty { detail.country }
-                        if (displayCountry.isNotEmpty()) {
-                            DetailMetaRow(Icons.Default.Public, "Страна:", displayCountry)
-                        }
-                        if (detail.director.isNotEmpty()) {
-                            DetailMetaRow(Icons.Default.MovieFilter, "Режиссёр:", detail.director)
-                        }
-                        if (detail.duration.isNotEmpty()) {
-                            DetailMetaRow(Icons.Default.Schedule, "Время:", detail.duration)
-                        }
                     }
                 }
             }
 
-            // === ПРАВАЯ ПАНЕЛЬ: Интерактивный прокручиваемый контент с пульта ===
+            // =========================================================================
+            // ПРАВАЯ ПАНЕЛЬ:
+            // ИДЕНТИЧНО ТЕЛЕФОННОМУ ИНТЕРФЕЙСУ И ДИЗАЙНУ:
+            // 1. Заголовок, оригинальное название и бейджи (Год, Возраст, В закладки)
+            // 2. Тот самый блок с информацией (Рейтинги КП/IMDb/HDRezka, Дата, Страна, Режиссёр, Время, Жанры, Из серии)
+            // 3. Входит в списки
+            // 4. В главных ролях (Актеры)
+            // 5. Описание
+            // 6. Озвучка / Перевод
+            // 7. Кнопка "СМОТРЕТЬ" (для фильмов)
+            // 8. Сезоны и Серии (для сериалов) + График выхода серий
+            // 9. Отзывы зрителей с пагинацией
+            // =========================================================================
             LazyColumn(
                 state = rightScrollState,
                 modifier = Modifier
@@ -404,48 +259,221 @@ fun TvDetailContent(
                     .fillMaxHeight()
                     .dpadScrollable(rightScrollState)
                     .testTag("tv_detail_right_column"),
-                contentPadding = PaddingValues(bottom = 40.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp)
+                contentPadding = PaddingValues(bottom = 36.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // 1. Заголовок и оригинальное название
+                // ---- 1. Заголовок и мета-чипы ----
                 item {
                     Column {
                         Text(
                             text = detail.title,
                             color = CinemaTextWhite,
-                            fontSize = 28.sp,
+                            fontSize = 24.sp,
                             fontWeight = FontWeight.Black,
-                            lineHeight = 34.sp
+                            lineHeight = 30.sp
                         )
+
                         if (detail.originalTitle.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = detail.originalTitle,
                                 color = CinemaTextGray,
-                                fontSize = 15.sp,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium
                             )
                         }
 
-                        // Жанры
-                        if (detail.genres.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Row(
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Чипы: Год, Возраст, Кнопка добавления в закладки
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (detail.year.isNotEmpty()) {
+                                Surface(
+                                    color = CinemaCard,
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        text = detail.year,
+                                        color = CinemaTextWhite,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+
+                            if (detail.ageRestriction.isNotEmpty()) {
+                                Surface(
+                                    color = CinemaPrimary.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.4f))
+                                ) {
+                                    Text(
+                                        text = detail.ageRestriction,
+                                        color = CinemaPrimary,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+
+                            // Кнопка "В закладки" (доступна прямо в панели действий)
+                            Surface(
+                                color = CinemaCard,
+                                shape = RoundedCornerShape(6.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isFavorite) CinemaPrimary else CinemaSecondary.copy(alpha = 0.3f)
+                                ),
+                                modifier = Modifier
+                                    .tvFocusableItem(
+                                        onClick = onToggleFavorite,
+                                        scaleFactor = 1.05f,
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .testTag("tv_favorite_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isFavorite) Icons.Default.Bookmark else Icons.Outlined.BookmarkBorder,
+                                        contentDescription = null,
+                                        tint = if (isFavorite) CinemaPrimary else CinemaTextWhite,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        text = if (isFavorite) "В закладках" else "В закладки",
+                                        color = if (isFavorite) CinemaPrimary else CinemaTextWhite,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---- 2. Тот самый блок с информацией (ИДЕНТИЧНО телефону) ----
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // Оценки в рейтингах: IMDb, Кинопоиск, HDRezka
+                            DetailRatingsRow(
+                                ratingInfo = detail.ratingInfo,
+                                fallbackRating = detail.rating
+                            )
+
+                            val displayDate = detail.releaseDate.ifEmpty { detail.year }
+                            if (displayDate.isNotEmpty()) {
+                                DetailMetaRow(
+                                    icon = Icons.Default.DateRange,
+                                    label = "Дата выхода:",
+                                    value = displayDate
+                                )
+                            }
+
+                            val displayCountry = detail.countryFlag.ifEmpty { detail.country }
+                            if (displayCountry.isNotEmpty()) {
+                                DetailMetaRow(
+                                    icon = Icons.Default.Public,
+                                    label = "Страна:",
+                                    value = displayCountry
+                                )
+                            }
+
+                            if (detail.director.isNotEmpty()) {
+                                DetailMetaRow(
+                                    icon = Icons.Default.MovieFilter,
+                                    label = "Режиссёр:",
+                                    value = detail.director
+                                )
+                            }
+
+                            if (detail.duration.isNotEmpty()) {
+                                DetailMetaRow(
+                                    icon = Icons.Default.Schedule,
+                                    label = "Время:",
+                                    value = detail.duration
+                                )
+                            }
+
+                            if (detail.genres.isNotEmpty()) {
+                                DetailMetaRow(
+                                    icon = Icons.Default.Category,
+                                    label = "Жанры:",
+                                    value = detail.genres.joinToString(", ")
+                                )
+                            }
+
+                            if (detail.seriesCollection.isNotEmpty()) {
+                                DetailMetaRow(
+                                    icon = Icons.Default.CollectionsBookmark,
+                                    label = "Из серии:",
+                                    value = detail.seriesCollection
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // ---- 3. Входит в списки (если есть) ----
+                if (detail.inCollections.isNotEmpty()) {
+                    item {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "Входит в списки",
+                                color = CinemaTextWhite,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            LazyRow(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                detail.genres.forEach { genre ->
+                                items(detail.inCollections) { coll ->
                                     Surface(
                                         color = CinemaCard,
-                                        shape = RoundedCornerShape(6.dp)
-                                    ) {
-                                        Text(
-                                            text = genre,
-                                            color = CinemaTextWhite.copy(alpha = 0.85f),
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.2f)),
+                                        modifier = Modifier.tvFocusableItem(
+                                            onClick = {},
+                                            scaleFactor = 1.05f,
+                                            shape = RoundedCornerShape(8.dp)
                                         )
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                Icons.Default.EmojiEvents,
+                                                contentDescription = null,
+                                                tint = CinemaAmber,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = coll,
+                                                color = CinemaTextWhite,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -453,36 +481,134 @@ fun TvDetailContent(
                     }
                 }
 
-                // 2. Описание фильма
+                // ---- 4. В главных ролях (Актеры, идентично телефону) ----
+                if (detail.actors.isNotEmpty()) {
+                    item {
+                        val initialActorCount = 4
+                        val displayActors = if (isActorsExpanded || detail.actors.size <= initialActorCount) {
+                            detail.actors
+                        } else {
+                            detail.actors.take(initialActorCount)
+                        }
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .padding(14.dp)
+                                    .animateContentSize()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .tvFocusableItem(
+                                            onClick = { isActorsExpanded = !isActorsExpanded },
+                                            shape = RoundedCornerShape(6.dp)
+                                        )
+                                        .clickable(enabled = detail.actors.size > initialActorCount) {
+                                            isActorsExpanded = !isActorsExpanded
+                                        },
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Person,
+                                            contentDescription = null,
+                                            tint = CinemaTextGray,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "В главных ролях (${detail.actors.size})",
+                                            color = CinemaTextWhite,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    if (detail.actors.size > initialActorCount) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = if (isActorsExpanded) "Свернуть" else "Показать всех",
+                                                color = CinemaPrimary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            Icon(
+                                                imageVector = if (isActorsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                                contentDescription = null,
+                                                tint = CinemaPrimary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    displayActors.forEach { actor ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(5.dp)
+                                                    .background(CinemaPrimary, CircleShape)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = actor,
+                                                color = CinemaTextWhite.copy(alpha = 0.9f),
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Normal
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---- 5. Описание ----
                 item {
-                    Column {
+                    Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "О ФИЛЬМЕ",
-                            color = CinemaPrimary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
+                            text = "Описание",
+                            color = CinemaTextWhite,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = detail.description.ifEmpty { "Описание отсутствует." },
-                            color = CinemaTextWhite.copy(alpha = 0.9f),
-                            fontSize = 14.sp,
-                            lineHeight = 22.sp
+                            color = CinemaTextGray,
+                            fontSize = 13.sp,
+                            lineHeight = 20.sp
                         )
                     }
                 }
 
-                // 3. Выбор озвучки / перевода (горизонтальный ряд с фокусом пульта)
+                // ---- 6. Озвучка / Перевод ----
                 if (detail.translators.isNotEmpty()) {
                     item {
-                        Column {
+                        Column(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = "ОЗВУЧКА / ПЕРЕВОД",
-                                color = CinemaPrimary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp
+                                text = "Озвучка / Перевод",
+                                color = CinemaTextWhite,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             val currentTrans = selectedTranslator ?: detail.translators.first()
@@ -494,7 +620,7 @@ fun TvDetailContent(
                                 items(detail.translators) { trans ->
                                     val isSelected = trans.id == currentTrans.id
                                     Surface(
-                                        color = if (isSelected) CinemaPrimary.copy(alpha = 0.25f) else CinemaDark,
+                                        color = if (isSelected) CinemaPrimary.copy(alpha = 0.22f) else CinemaDark,
                                         shape = RoundedCornerShape(8.dp),
                                         border = BorderStroke(
                                             1.dp,
@@ -503,7 +629,7 @@ fun TvDetailContent(
                                         modifier = Modifier
                                             .tvFocusableItem(
                                                 onClick = { onSelectTranslator(trans) },
-                                                scaleFactor = 1.06f,
+                                                scaleFactor = 1.05f,
                                                 shape = RoundedCornerShape(8.dp)
                                             )
                                             .testTag("tv_translator_${trans.id}")
@@ -512,8 +638,8 @@ fun TvDetailContent(
                                             text = trans.name,
                                             color = if (isSelected) CinemaPrimary else CinemaTextWhite,
                                             fontSize = 12.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
                                         )
                                     }
                                 }
@@ -522,17 +648,54 @@ fun TvDetailContent(
                     }
                 }
 
-                // 4. Сезоны и серии (для сериалов)
-                if (detail.type == RezkaType.SERIES && effectiveSeasons.isNotEmpty()) {
-                    // Ряд сезонов
+                // ---- 7. КНОПКА "СМОТРЕТЬ" ДЛЯ ФИЛЬМОВ ----
+                if (detail.type != RezkaType.SERIES) {
                     item {
-                        Column {
+                        Button(
+                            onClick = onPlayMovie,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CinemaPrimary,
+                                contentColor = Color.Black
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .tvFocusableItem(
+                                    onClick = onPlayMovie,
+                                    scaleFactor = 1.03f,
+                                    shape = RoundedCornerShape(10.dp),
+                                    focusRequester = playButtonFocusRequester
+                                )
+                                .testTag("tv_movie_play_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = Color.Black,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "СЕЗОНЫ",
-                                color = CinemaPrimary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp
+                                text = "СМОТРЕТЬ",
+                                color = Color.Black,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                // ---- 8. СЕЗОНЫ И СЕРИИ (для сериалов) ----
+                if (detail.type == RezkaType.SERIES && effectiveSeasons.isNotEmpty()) {
+                    // Сезоны
+                    item {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "Сезоны",
+                                color = CinemaTextWhite,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             LazyRow(
@@ -542,7 +705,7 @@ fun TvDetailContent(
                                 items(effectiveSeasons) { s ->
                                     val isSelected = selectedSeasonId == s.id
                                     Surface(
-                                        color = if (isSelected) CinemaPrimary.copy(alpha = 0.25f) else CinemaDark,
+                                        color = if (isSelected) CinemaPrimary.copy(alpha = 0.22f) else CinemaDark,
                                         shape = RoundedCornerShape(8.dp),
                                         border = BorderStroke(
                                             1.dp,
@@ -551,7 +714,7 @@ fun TvDetailContent(
                                         modifier = Modifier
                                             .tvFocusableItem(
                                                 onClick = { onSelectSeason(s.id) },
-                                                scaleFactor = 1.06f,
+                                                scaleFactor = 1.05f,
                                                 shape = RoundedCornerShape(8.dp)
                                             )
                                             .testTag("tv_season_${s.id}")
@@ -560,8 +723,8 @@ fun TvDetailContent(
                                             text = s.name,
                                             color = if (isSelected) CinemaPrimary else CinemaTextWhite,
                                             fontSize = 12.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
                                         )
                                     }
                                 }
@@ -569,19 +732,69 @@ fun TvDetailContent(
                         }
                     }
 
-                    // Сетка серий текущего сезона
+                    // Серии текущего сезона
                     val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
                     item {
-                        Column {
-                            Text(
-                                text = "СЕРИИ (${currentSeason.episodes.size})",
-                                color = CinemaPrimary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp
-                            )
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Серии (${currentSeason.episodes.size})",
+                                    color = CinemaTextWhite,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                // Кнопка расписания онгоинга (как в телефоне рядом с сериями)
+                                if (detail.schedule.isNotEmpty()) {
+                                    val unreleasedCount = detail.schedule.count { !it.isReleased }
+                                    Surface(
+                                        color = CinemaCard,
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+                                        modifier = Modifier
+                                            .tvFocusableItem(
+                                                onClick = onOpenSchedule,
+                                                scaleFactor = 1.05f,
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                            .testTag("tv_schedule_button")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CalendarMonth,
+                                                contentDescription = null,
+                                                tint = CinemaPrimary,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Text(
+                                                text = "График выхода серий",
+                                                color = CinemaTextWhite,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            if (unreleasedCount > 0) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(6.dp)
+                                                        .background(CinemaAmber, CircleShape)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             Spacer(modifier = Modifier.height(10.dp))
 
+                            // Сетка серий по 3 штуки в строке
                             val chunks = currentSeason.episodes.chunked(3)
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 chunks.forEach { rowEpisodes ->
@@ -596,7 +809,7 @@ fun TvDetailContent(
                                                 shape = RoundedCornerShape(8.dp),
                                                 border = BorderStroke(
                                                     1.dp,
-                                                    if (isSelected) CinemaPrimary else Color.White.copy(alpha = 0.15f)
+                                                    if (isSelected) CinemaPrimary else Color.White.copy(alpha = 0.12f)
                                                 ),
                                                 modifier = Modifier
                                                     .weight(1f)
@@ -605,7 +818,7 @@ fun TvDetailContent(
                                                             onSelectEpisode(ep.id)
                                                             onPlayEpisode(currentSeason, ep)
                                                         },
-                                                        scaleFactor = 1.05f,
+                                                        scaleFactor = 1.04f,
                                                         shape = RoundedCornerShape(8.dp)
                                                     )
                                                     .testTag("tv_episode_${ep.id}")
@@ -613,7 +826,7 @@ fun TvDetailContent(
                                                 Row(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
-                                                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                                                        .padding(horizontal = 12.dp, vertical = 10.dp),
                                                     horizontalArrangement = Arrangement.SpaceBetween,
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
@@ -627,6 +840,7 @@ fun TvDetailContent(
                                                         modifier = Modifier.weight(1f)
                                                     )
                                                     if (isSelected) {
+                                                        Spacer(modifier = Modifier.width(6.dp))
                                                         Icon(
                                                             imageVector = Icons.Default.PlayArrow,
                                                             contentDescription = null,
@@ -649,42 +863,7 @@ fun TvDetailContent(
                     }
                 }
 
-                // 5. В главных ролях (Актеры)
-                if (detail.actors.isNotEmpty()) {
-                    item {
-                        Column {
-                            Text(
-                                text = "В ГЛАВНЫХ РОЛЯХ",
-                                color = CinemaPrimary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                items(detail.actors) { actor ->
-                                    Surface(
-                                        color = CinemaCard,
-                                        shape = RoundedCornerShape(8.dp),
-                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
-                                    ) {
-                                        Text(
-                                            text = actor,
-                                            color = CinemaTextWhite,
-                                            fontSize = 12.sp,
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 6. Отзывы зрителей
+                // ---- 9. ОТЗЫВЫ ЗРИТЕЛЕЙ (ИДЕНТИЧНО ТЕЛЕФОНУ) ----
                 item {
                     val displayComments = if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
                     val totalPages = maxOf(commentsState.totalPages, detail.commentsTotalPages, commentsState.currentPage)
@@ -694,19 +873,31 @@ fun TvDetailContent(
                         else -> displayComments.size
                     }
 
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Заголовок отзывов
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(
-                                text = if (totalReviewsCount > 0) "ОТЗЫВЫ ЗРИТЕЛЕЙ ($totalReviewsCount)" else "ОТЗЫВЫ ЗРИТЕЛЕЙ",
-                                color = CinemaPrimary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.RateReview,
+                                    contentDescription = null,
+                                    tint = CinemaPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (totalReviewsCount > 0) "Отзывы зрителей ($totalReviewsCount)" else "Отзывы зрителей",
+                                    color = CinemaTextWhite,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                             if (totalPages > 1) {
                                 Text(
                                     text = "Стр. ${commentsState.currentPage} из $totalPages",
@@ -732,83 +923,222 @@ fun TvDetailContent(
                                 fontSize = 13.sp
                             )
                         } else {
-                            displayComments.take(6).forEach { comment ->
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(containerColor = CinemaDark.copy(alpha = 0.8f)),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            CommentUserAvatar(
-                                                avatarUrl = comment.avatarUrl,
-                                                authorName = comment.author,
-                                                modifier = Modifier.size(28.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
+                            // Список комментариев в дизайне телефонной версии
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                displayComments.forEach { comment ->
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                CommentUserAvatar(
+                                                    avatarUrl = comment.avatarUrl,
+                                                    authorName = comment.author,
+                                                    modifier = Modifier.size(32.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = comment.author,
+                                                        color = CinemaTextWhite,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 13.sp
+                                                    )
+                                                    if (comment.date.isNotEmpty()) {
+                                                        Text(
+                                                            text = comment.date,
+                                                            color = CinemaTextGray,
+                                                            fontSize = 11.sp
+                                                        )
+                                                    }
+                                                }
+
+                                                // Бейдж лайков отзыва
+                                                if (comment.likes.isNotEmpty() && comment.likes != "(0)" && comment.likes != "0") {
+                                                    Surface(
+                                                        color = CinemaCard,
+                                                        shape = RoundedCornerShape(12.dp)
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Icon(
+                                                                Icons.Default.ThumbUp,
+                                                                contentDescription = null,
+                                                                tint = CinemaPrimary,
+                                                                modifier = Modifier.size(12.dp)
+                                                            )
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                            Text(
+                                                                text = comment.likes.replace("(", "").replace(")", ""),
+                                                                color = CinemaTextWhite,
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.Bold
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(8.dp))
+
                                             Text(
-                                                text = comment.author,
-                                                color = CinemaTextWhite,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 12.sp
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = comment.date,
-                                                color = CinemaTextGray,
-                                                fontSize = 10.sp
+                                                text = comment.text,
+                                                color = CinemaTextWhite.copy(alpha = 0.9f),
+                                                fontSize = 13.sp,
+                                                lineHeight = 18.sp
                                             )
                                         }
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = comment.text,
-                                            color = CinemaTextWhite.copy(alpha = 0.9f),
-                                            fontSize = 12.sp,
-                                            lineHeight = 18.sp
-                                        )
                                     }
                                 }
                             }
 
-                            // Пагинация отзывов с пульта
+                            // Пагинация отзывов (Загрузить ещё + Номера страниц с поддержкой ТВ-пульта)
                             if (totalPages > 1) {
-                                Row(
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Column(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    if (commentsState.currentPage > 1) {
+                                    // Кнопка "Загрузить ещё отзывы"
+                                    if (commentsState.hasMore || commentsState.currentPage < totalPages) {
                                         Surface(
                                             color = CinemaCard,
-                                            shape = RoundedCornerShape(8.dp),
+                                            shape = RoundedCornerShape(10.dp),
+                                            border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.35f)),
                                             modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(42.dp)
                                                 .tvFocusableItem(
-                                                    onClick = { onLoadCommentsPage(commentsState.currentPage - 1) },
-                                                    shape = RoundedCornerShape(8.dp)
+                                                    onClick = onAppendNextCommentsPage,
+                                                    scaleFactor = 1.03f,
+                                                    shape = RoundedCornerShape(10.dp)
                                                 )
-                                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                                .testTag("tv_comments_load_more_button")
                                         ) {
-                                            Text("← Назад", color = CinemaTextWhite, fontSize = 12.sp)
+                                            Row(
+                                                modifier = Modifier.fillMaxSize(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.Center
+                                            ) {
+                                                if (commentsState.isLoadingMore) {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(16.dp),
+                                                        color = CinemaPrimary,
+                                                        strokeWidth = 2.dp
+                                                    )
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Text("Загрузка...", fontSize = 12.sp, color = CinemaTextWhite)
+                                                } else {
+                                                    Icon(
+                                                        Icons.Default.ExpandMore,
+                                                        contentDescription = null,
+                                                        tint = CinemaPrimary,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text(
+                                                        text = "Загрузить ещё отзывы (Стр. ${commentsState.currentPage + 1})",
+                                                        fontSize = 12.sp,
+                                                        color = CinemaTextWhite,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
 
-                                    Spacer(modifier = Modifier.width(12.dp))
-
-                                    if (commentsState.currentPage < totalPages) {
-                                        Surface(
-                                            color = CinemaCard,
-                                            shape = RoundedCornerShape(8.dp),
+                                    // Постраничная панель [←] [1] [2] [3]... [→]
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Row(
                                             modifier = Modifier
-                                                .tvFocusableItem(
-                                                    onClick = { onLoadCommentsPage(commentsState.currentPage + 1) },
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            // Назад
+                                            Surface(
+                                                color = CinemaCard,
+                                                shape = RoundedCornerShape(8.dp),
+                                                modifier = Modifier.tvFocusableItem(
+                                                    onClick = {
+                                                        if (commentsState.currentPage > 1) {
+                                                            onLoadCommentsPage(commentsState.currentPage - 1)
+                                                        }
+                                                    },
                                                     shape = RoundedCornerShape(8.dp)
                                                 )
-                                                .padding(horizontal = 10.dp, vertical = 6.dp)
-                                        ) {
-                                            Text("Вперёд →", color = CinemaTextWhite, fontSize = 12.sp)
+                                            ) {
+                                                Icon(
+                                                    Icons.AutoMirrored.Filled.ArrowBack,
+                                                    contentDescription = "Предыдущая страница",
+                                                    tint = if (commentsState.currentPage > 1) CinemaTextWhite else CinemaTextGray.copy(alpha = 0.3f),
+                                                    modifier = Modifier.padding(8.dp).size(18.dp)
+                                                )
+                                            }
+
+                                            // Номера страниц
+                                            LazyRow(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                items((1..totalPages).toList()) { pageNum ->
+                                                    val isSelected = pageNum == commentsState.currentPage
+                                                    Surface(
+                                                        color = if (isSelected) CinemaPrimary else CinemaCard,
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        border = BorderStroke(
+                                                            1.dp,
+                                                            if (isSelected) CinemaPrimary else CinemaSecondary.copy(alpha = 0.3f)
+                                                        ),
+                                                        modifier = Modifier.tvFocusableItem(
+                                                            onClick = { onLoadCommentsPage(pageNum) },
+                                                            shape = RoundedCornerShape(8.dp)
+                                                        )
+                                                    ) {
+                                                        Text(
+                                                            text = pageNum.toString(),
+                                                            color = if (isSelected) CinemaTextWhite else CinemaTextGray,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+
+                                            // Вперёд
+                                            Surface(
+                                                color = CinemaCard,
+                                                shape = RoundedCornerShape(8.dp),
+                                                modifier = Modifier.tvFocusableItem(
+                                                    onClick = {
+                                                        if (commentsState.currentPage < totalPages) {
+                                                            onLoadCommentsPage(commentsState.currentPage + 1)
+                                                        }
+                                                    },
+                                                    shape = RoundedCornerShape(8.dp)
+                                                )
+                                            ) {
+                                                Icon(
+                                                    Icons.AutoMirrored.Filled.ArrowForward,
+                                                    contentDescription = "Следующая страница",
+                                                    tint = if (commentsState.currentPage < totalPages) CinemaTextWhite else CinemaTextGray.copy(alpha = 0.3f),
+                                                    modifier = Modifier.padding(8.dp).size(18.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }

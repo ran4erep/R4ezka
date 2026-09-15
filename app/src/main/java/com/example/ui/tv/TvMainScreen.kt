@@ -3,6 +3,7 @@ package com.example.ui.tv
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -11,6 +12,7 @@ import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -23,6 +25,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -30,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.PopupProperties
 import coil.compose.AsyncImage
 import com.example.data.*
 import com.example.ui.CatalogState
@@ -37,6 +41,8 @@ import com.example.ui.RezkaViewModel
 import com.example.ui.screens.FavoritesScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.SettingsScreen
+import com.example.ui.components.AuthDialog
+import com.example.ui.components.UserAvatar
 import com.example.ui.theme.*
 
 enum class TvNavDestination(val title: String, val icon: ImageVector) {
@@ -63,9 +69,23 @@ fun TvMainScreen(
     var selectedDestination by remember { mutableStateOf(TvNavDestination.CATALOG) }
     var isSidebarFocused by remember { mutableStateOf(false) }
 
+    val isLoggedIn by viewModel.isLoggedIn.collectAsState()
+    val currentUser by viewModel.currentUser.collectAsState()
+    val currentUserAvatar by viewModel.currentUserAvatar.collectAsState()
+    var showAuthDialog by remember { mutableStateOf(false) }
+
+    if (showAuthDialog) {
+        AuthDialog(
+            viewModel = viewModel,
+            onDismiss = { showAuthDialog = false }
+        )
+    }
+
     val catalogState by viewModel.catalogState.collectAsState()
     val currentType by viewModel.currentType.collectAsState()
     val currentSection by viewModel.currentSection.collectAsState()
+    val currentGenre by viewModel.currentGenre.collectAsState()
+    val genresList by viewModel.genresList.collectAsState()
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val isEndReached by viewModel.isEndReached.collectAsState()
 
@@ -99,40 +119,16 @@ fun TvMainScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // TV Brand Header
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(CinemaPrimary),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Tv,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    if (isSidebarFocused) {
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "R4EZKA TV",
-                            color = CinemaTextWhite,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 15.sp,
-                            maxLines = 1
-                        )
-                    }
-                }
+                // Account / Login Button
+                TvAccountButton(
+                    isLoggedIn = isLoggedIn,
+                    currentUser = currentUser,
+                    currentUserAvatar = currentUserAvatar,
+                    isExpanded = isSidebarFocused,
+                    onClick = { showAuthDialog = true }
+                )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Navigation Destinations
                 TvNavDestination.values().forEach { dest ->
@@ -188,6 +184,8 @@ fun TvMainScreen(
                         catalogState = catalogState,
                         currentType = currentType,
                         currentSection = currentSection,
+                        currentGenre = currentGenre,
+                        genresList = genresList,
                         isLoadingMore = isLoadingMore,
                         isEndReached = isEndReached,
                         focusedItem = focusedItem,
@@ -267,6 +265,88 @@ private fun TvSidebarButton(
 }
 
 /**
+ * Кнопка профиля / входа для ТВ бокового меню.
+ * Поддерживает управление с пульта (D-Pad), отображает аватар пользователя,
+ * логин или кнопку входа в аккаунт с переходом в диалог профиля.
+ */
+@Composable
+private fun TvAccountButton(
+    isLoggedIn: Boolean,
+    currentUser: String?,
+    currentUserAvatar: String?,
+    isExpanded: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (isLoggedIn) CinemaCard.copy(alpha = 0.5f) else Color.Transparent)
+            .tvFocusableItem(
+                onClick = onClick,
+                scaleFactor = 1.04f,
+                focusedBorderWidth = 2.dp,
+                shape = RoundedCornerShape(10.dp)
+            )
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(32.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isLoggedIn) {
+                UserAvatar(
+                    avatar = currentUserAvatar,
+                    size = 32.dp
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(CinemaPrimary.copy(alpha = 0.18f))
+                        .border(1.dp, CinemaPrimary.copy(alpha = 0.6f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AccountCircle,
+                        contentDescription = "Войти в аккаунт",
+                        tint = CinemaPrimary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+        }
+
+        if (isExpanded) {
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(
+                modifier = Modifier.weight(1f, fill = false),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = if (isLoggedIn) (currentUser ?: "Профиль") else "Войти",
+                    color = CinemaTextWhite,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = if (isLoggedIn) "Аккаунт" else "Синхронизация",
+                    color = if (isLoggedIn) CinemaPrimary else CinemaTextGray,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+/**
  * Контент каталога ТВ:
  * - Вверху Hero Preview выбранного с пульта фильма
  * - Полоса категорий (Фильмы, Сериалы, Аниме, Мультфильмы)
@@ -278,6 +358,8 @@ private fun TvCatalogContent(
     catalogState: CatalogState,
     currentType: RezkaType,
     currentSection: SectionType,
+    currentGenre: String,
+    genresList: List<GenreItem>,
     isLoadingMore: Boolean,
     isEndReached: Boolean,
     focusedItem: RezkaItem?,
@@ -304,25 +386,41 @@ private fun TvCatalogContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = 12.dp, start = 16.dp, end = 16.dp)
+            .padding(top = 10.dp, start = 16.dp, end = 16.dp)
     ) {
-        // ---- 1. HERO PREVIEW SECTION ----
-        val previewItem = focusedItem ?: (catalogState as? CatalogState.Success)?.items?.firstOrNull()
-        TvHeroPreview(item = previewItem, onPlayClick = {
-            previewItem?.let { onNavigateToDetail(it) }
-        })
+        var searchInput by remember { mutableStateOf(viewModel.searchQuery) }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        // ---- 1. HERO PREVIEW SECTION (только если не идёт поиск) ----
+        if (viewModel.searchQuery.isEmpty()) {
+            val previewItem = focusedItem ?: (catalogState as? CatalogState.Success)?.items?.firstOrNull()
+            TvHeroPreview(item = previewItem, onPlayClick = {
+                previewItem?.let { onNavigateToDetail(it) }
+            })
+            Spacer(modifier = Modifier.height(10.dp))
+        }
 
-        // ---- 2. TV CATEGORY TABS ROW ----
-        TvCategoryTabsRow(
+        // ---- 2. ВЫПАДАЮЩИЕ СПИСКИ И КОМПАКТНЫЙ ПОИСК ДЛЯ ТВ ----
+        TvCatalogFiltersBar(
             currentType = currentType,
             currentSection = currentSection,
+            currentGenre = currentGenre,
+            genresList = genresList,
+            searchQuery = searchInput,
+            onSearchQueryChanged = {
+                searchInput = it
+                viewModel.onSearchQueryChanged(it)
+            },
             onTypeSelected = { type ->
+                searchInput = ""
                 viewModel.loadCatalog(type = type, genre = "", forceRefresh = true)
             },
             onSectionSelected = { section ->
+                searchInput = ""
                 viewModel.loadCatalog(section = section, forceRefresh = true)
+            },
+            onGenreSelected = { genreSlug ->
+                searchInput = ""
+                viewModel.loadCatalog(genre = genreSlug, forceRefresh = true)
             }
         )
 
@@ -533,92 +631,289 @@ private fun TvHeroPreview(
 }
 
 /**
- * Строка переключения категорий и разделов, адаптированная под D-Pad стрелки.
+ * Панель фильтров каталога для ТВ:
+ * 3 выпадающих списка (Категория, Раздел, Жанр) + компактное окно поиска.
  */
 @Composable
-private fun TvCategoryTabsRow(
+private fun TvCatalogFiltersBar(
     currentType: RezkaType,
     currentSection: SectionType,
+    currentGenre: String,
+    genresList: List<GenreItem>,
+    searchQuery: String,
+    onSearchQueryChanged: (String) -> Unit,
     onTypeSelected: (RezkaType) -> Unit,
-    onSectionSelected: (SectionType) -> Unit
+    onSectionSelected: (SectionType) -> Unit,
+    onGenreSelected: (String) -> Unit
 ) {
-    val categories = remember {
-        listOf(
-            RezkaType.MOVIE to "Фильмы",
-            RezkaType.SERIES to "Сериалы",
-            RezkaType.ANIME to "Аниме",
-            RezkaType.CARTOON to "Мультфильмы"
-        )
-    }
-
-    val sections = remember {
-        listOf(
-            SectionType.LATEST to "Новинки",
-            SectionType.POPULAR to "Популярные",
-            SectionType.WATCHING to "Смотрят сейчас"
-        )
-    }
-
-    LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxWidth()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(categories) { (type, title) ->
-            val isSelected = currentType == type
-            val bg = if (isSelected) CinemaPrimary else CinemaDark
-            val fg = if (isSelected) Color.White else CinemaTextWhite
+        // 1. Поиск (сверху) - оптимизированная и аккуратная строка поиска для ТВ
+        TvCompactSearchBar(
+            query = searchQuery,
+            onQueryChanged = onSearchQueryChanged,
+            modifier = Modifier.fillMaxWidth()
+        )
 
-            Box(
+        // 2. Выпадающие списки (снизу) - Категория, Раздел, Жанр
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Dropdown 1: Категория
+            val categories = remember {
+                listOf(
+                    RezkaType.MOVIE to "Фильмы",
+                    RezkaType.SERIES to "Сериалы",
+                    RezkaType.ANIME to "Аниме",
+                    RezkaType.CARTOON to "Мультики"
+                )
+            }
+            val currentCategoryPair = categories.find { it.first == currentType } ?: categories[0]
+
+            TvRezkaDropdown(
+                label = "Категория",
+                options = categories,
+                selectedOption = currentCategoryPair,
+                onOptionSelected = { pair -> onTypeSelected(pair.first) },
+                getLabel = { it.second },
+                modifier = Modifier.weight(1f)
+            )
+
+            // Dropdown 2: Раздел
+            val sections = remember {
+                listOf(
+                    SectionType.LATEST,
+                    SectionType.POPULAR,
+                    SectionType.WATCHING,
+                    SectionType.AWAITING
+                )
+            }
+
+            TvRezkaDropdown(
+                label = "Раздел",
+                options = sections,
+                selectedOption = currentSection,
+                onOptionSelected = onSectionSelected,
+                getLabel = { it.getDisplayName() },
+                modifier = Modifier.weight(1f)
+            )
+
+            // Dropdown 3: Жанр
+            val currentGenreItem = genresList.find { it.slug == currentGenre }
+                ?: genresList.firstOrNull()
+                ?: GenreItem("Все жанры", "")
+
+            TvRezkaDropdown(
+                label = "Жанр",
+                options = genresList,
+                selectedOption = currentGenreItem,
+                onOptionSelected = { genreItem -> onGenreSelected(genreItem.slug) },
+                getLabel = { it.name },
+                modifier = Modifier.weight(1.1f)
+            )
+        }
+    }
+}
+
+/**
+ * Выпадающий список (Dropdown) для ТВ-интерфейса.
+ * Поддерживает D-Pad навигацию, подсветку курсора пульта и выбор вариантов в меню.
+ */
+@Composable
+fun <T> TvRezkaDropdown(
+    label: String,
+    options: List<T>,
+    selectedOption: T,
+    onOptionSelected: (T) -> Unit,
+    getLabel: (T) -> String,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(modifier = modifier) {
+        Surface(
+            color = CinemaDark,
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(
+                1.dp,
+                if (expanded) CinemaPrimary else Color.White.copy(alpha = 0.15f)
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(42.dp)
+                .tvFocusableItem(
+                    onClick = { expanded = !expanded },
+                    scaleFactor = 1.04f,
+                    shape = RoundedCornerShape(10.dp)
+                )
+        ) {
+            Row(
                 modifier = Modifier
-                    .tvFocusableItem(
-                        onClick = { onTypeSelected(type) },
-                        scaleFactor = 1.05f,
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(bg)
-                    .padding(horizontal = 14.dp, vertical = 7.dp)
+                    .fillMaxSize()
+                    .padding(horizontal = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = title,
-                    color = fg,
-                    fontSize = 12.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                Column(
+                    modifier = Modifier.weight(1f, fill = false),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = label,
+                        color = CinemaTextGray,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = getLabel(selectedOption),
+                        color = CinemaTextWhite,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                    contentDescription = null,
+                    tint = CinemaPrimary,
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
 
-        item {
-            Box(
-                modifier = Modifier
-                    .width(1.dp)
-                    .height(26.dp)
-                    .background(CinemaMuted.copy(alpha = 0.4f))
-            )
-        }
-
-        items(sections) { (section, title) ->
-            val isSelected = currentSection == section
-            val bg = if (isSelected) CinemaSecondary else CinemaDark
-            val fg = if (isSelected) Color.White else CinemaTextGray
-
-            Box(
-                modifier = Modifier
-                    .tvFocusableItem(
-                        onClick = { onSectionSelected(section) },
-                        scaleFactor = 1.05f,
-                        shape = RoundedCornerShape(8.dp)
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            properties = PopupProperties(focusable = true),
+            modifier = Modifier
+                .background(CinemaDark)
+                .border(1.dp, CinemaPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                .widthIn(min = 180.dp, max = 280.dp)
+                .heightIn(max = 340.dp)
+        ) {
+            options.forEach { option ->
+                val isSelected = option == selectedOption
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = getLabel(option),
+                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    },
+                    trailingIcon = if (isSelected) {
+                        {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = CinemaPrimary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    } else null,
+                    onClick = {
+                        onOptionSelected(option)
+                        expanded = false
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .tvFocusableItem(
+                            onClick = {
+                                onOptionSelected(option)
+                                expanded = false
+                            },
+                            scaleFactor = 1.02f,
+                            shape = RoundedCornerShape(6.dp)
+                        ),
+                    colors = MenuDefaults.itemColors(
+                        textColor = CinemaTextWhite
                     )
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(bg)
-                    .padding(horizontal = 12.dp, vertical = 7.dp)
-            ) {
-                Text(
-                    text = title,
-                    color = fg,
-                    fontSize = 11.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Компактная поисковая строка для ТВ-интерфейса.
+ * Не занимает лишнего места по высоте и ширине, адаптирована под ТВ-пульт.
+ */
+@Composable
+fun TvCompactSearchBar(
+    query: String,
+    onQueryChanged: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var isFocused by remember { mutableStateOf(false) }
+
+    Surface(
+        color = if (isFocused) CinemaCard else CinemaDark,
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(
+            1.dp,
+            if (isFocused || query.isNotEmpty()) CinemaPrimary else Color.White.copy(alpha = 0.15f)
+        ),
+        modifier = modifier
+            .height(42.dp)
+            .onFocusChanged { isFocused = it.hasFocus }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Search,
+                contentDescription = "Поиск",
+                tint = if (isFocused || query.isNotEmpty()) CinemaPrimary else CinemaTextGray,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChanged,
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    color = CinemaTextWhite,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                ),
+                cursorBrush = SolidColor(CinemaPrimary),
+                modifier = Modifier.weight(1f),
+                decorationBox = { innerTextField ->
+                    if (query.isEmpty()) {
+                        Text(
+                            text = "Поиск фильмов, сериалов, аниме...",
+                            color = CinemaMuted,
+                            fontSize = 13.sp
+                        )
+                    }
+                    innerTextField()
+                }
+            )
+            if (query.isNotEmpty()) {
+                IconButton(
+                    onClick = { onQueryChanged("") },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Очистить",
+                        tint = CinemaTextGray,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
         }
     }
