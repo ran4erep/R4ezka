@@ -11,6 +11,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -82,6 +83,13 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     val navigationStack = remember { mutableStateListOf<ScreenState>() }
     var isSettingsOpen by remember { mutableStateOf(false) }
 
+    // Безопасный метод извлечения экрана из стека (защита от дребезга кнопок, двойных кликов и гонок состояний)
+    val popBackStack = {
+        if (navigationStack.isNotEmpty()) {
+            navigationStack.removeAt(navigationStack.lastIndex)
+        }
+    }
+
     val pendingDeepLink by viewModel.pendingDeepLink.collectAsState()
 
     LaunchedEffect(pendingDeepLink) {
@@ -89,7 +97,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
         val top = navigationStack.lastOrNull() as? ScreenState.Detail
         if (top?.item?.id == link.item.id) {
             if (top.initialTranslatorId != link.translatorId) {
-                navigationStack.removeLast()
+                popBackStack()
                 navigationStack.add(ScreenState.Detail(item = link.item, initialTranslatorId = link.translatorId))
             }
         } else {
@@ -124,7 +132,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     // System Back Press Handler inside Compose
     BackHandler(enabled = isSettingsOpen || navigationStack.isNotEmpty()) {
         if (navigationStack.isNotEmpty()) {
-            navigationStack.removeLast()
+            popBackStack()
         } else if (isSettingsOpen) {
             isSettingsOpen = false
         }
@@ -146,7 +154,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 viewModel = viewModel,
                                 item = topState.item,
                                 initialTranslatorId = topState.initialTranslatorId,
-                                onBack = { navigationStack.removeLast() },
+                                onBack = { popBackStack() },
                                 onNavigateToThematic = { name, url ->
                                     if (url.contains("/person/")) {
                                         navigationStack.add(ScreenState.PersonProfile(name, url))
@@ -161,7 +169,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                             ThematicListScreen(
                                 title = topState.title,
                                 url = topState.url,
-                                onBack = { navigationStack.removeLast() },
+                                onBack = { popBackStack() },
                                 onNavigateToDetail = { item ->
                                     navigationStack.add(ScreenState.Detail(item))
                                 },
@@ -173,7 +181,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                             PersonProfileScreen(
                                 name = topState.name,
                                 url = topState.url,
-                                onBack = { navigationStack.removeLast() },
+                                onBack = { popBackStack() },
                                 onNavigateToDetail = { item ->
                                     navigationStack.add(ScreenState.Detail(item))
                                 },
@@ -345,14 +353,17 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                 targetState = navigationStack.lastOrNull(),
                 transitionSpec = {
                     if (targetState != null && initialState == null) {
-                        // Push first screen (slide from right)
-                        slideInHorizontally { it } togetherWith slideOutHorizontally { -it }
+                        // Первый экран поверх каталога: только slideIn справа, без slideOut старого экрана (его нет)
+                        slideInHorizontally(animationSpec = tween(300)) { it } togetherWith ExitTransition.None
                     } else if (targetState == null && initialState != null) {
-                        // Pop last screen (slide to right)
-                        slideInHorizontally { -it } togetherWith slideOutHorizontally { it }
+                        // Возврат на каталог (стек пуст): только slideOut вправо, без slideIn нового экрана (его нет)
+                        EnterTransition.None togetherWith slideOutHorizontally(animationSpec = tween(300)) { it }
+                    } else if (targetState != null && initialState != null) {
+                        // Переход между экранами внутри стека (например, Detail -> PersonProfile)
+                        // Слайд нового экрана справа налево, уход старого влево
+                        slideInHorizontally(animationSpec = tween(300)) { it } togetherWith slideOutHorizontally(animationSpec = tween(300)) { -it }
                     } else {
-                        // Stack transition
-                        slideInHorizontally { it } togetherWith slideOutHorizontally { -it }
+                        EnterTransition.None togetherWith ExitTransition.None
                     }
                 },
                 label = "stack_transition",
@@ -365,7 +376,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 viewModel = viewModel,
                                 item = topState.item,
                                 initialTranslatorId = topState.initialTranslatorId,
-                                onBack = { navigationStack.removeLast() },
+                                onBack = { popBackStack() },
                                 onNavigateToThematic = { name, url ->
                                     if (url.contains("/person/")) {
                                         navigationStack.add(ScreenState.PersonProfile(name, url))
@@ -379,7 +390,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                             ThematicListScreen(
                                 title = topState.title,
                                 url = topState.url,
-                                onBack = { navigationStack.removeLast() },
+                                onBack = { popBackStack() },
                                 onNavigateToDetail = { item ->
                                     navigationStack.add(ScreenState.Detail(item))
                                 }
@@ -389,7 +400,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                             PersonProfileScreen(
                                 name = topState.name,
                                 url = topState.url,
-                                onBack = { navigationStack.removeLast() },
+                                onBack = { popBackStack() },
                                 onNavigateToDetail = { item ->
                                     navigationStack.add(ScreenState.Detail(item))
                                 }

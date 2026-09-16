@@ -755,6 +755,26 @@ fun RezkaPlayer(
         }
     }
 
+    // Динамическое скрытие статус-бара и навигационной панели при изменении состояния диалогов или контролов.
+    // Это гарантирует, что системные панели скроются сразу после закрытия диалогов (например, выбора озвучки),
+    // так как показ диалога заставляет систему временно отобразить статус-бар.
+    LaunchedEffect(
+        isFloating,
+        showControls,
+        showSpeedDialog,
+        showQualityDialog,
+        showTranslatorDialog,
+        showSubtitlesDialog,
+        isScreenLocked
+    ) {
+        if (!isFloating && window != null) {
+            val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+            insetsController.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            insetsController.hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
     // Root layout using BoxWithConstraints for responsive screen bounding
     BoxWithConstraints(
         modifier = modifier

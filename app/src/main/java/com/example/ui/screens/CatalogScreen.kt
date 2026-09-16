@@ -45,8 +45,11 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.input.key.*
 import android.view.KeyEvent as AndroidKeyEvent
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun CatalogScreen(
     viewModel: RezkaViewModel,
@@ -71,9 +74,21 @@ fun CatalogScreen(
 
     val isSyncing by viewModel.isSyncing.collectAsState()
 
-    BackHandler(enabled = searchInput.isNotEmpty()) {
-        searchInput = ""
-        viewModel.onSearchQueryChanged("")
+    val isKeyboardVisible = WindowInsets.isImeVisible
+    LaunchedEffect(isKeyboardVisible) {
+        if (!isKeyboardVisible && isSearchFocused) {
+            focusManager.clearFocus()
+        }
+    }
+
+    BackHandler(enabled = isSearchFocused || searchInput.isNotEmpty()) {
+        if (isSearchFocused) {
+            focusManager.clearFocus()
+            keyboardController?.hide()
+        } else {
+            searchInput = ""
+            viewModel.onSearchQueryChanged("")
+        }
     }
 
     Column(
