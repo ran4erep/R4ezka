@@ -116,6 +116,7 @@ fun DetailScreen(
     initialTranslatorId: String? = null,
     onBack: () -> Unit,
     onNavigateToThematic: (String, String) -> Unit = { _, _ -> },
+    onNavigateToDetail: (RezkaItem) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -279,12 +280,21 @@ fun DetailScreen(
         startPlayback(translator, seasonId, episodeId, null)
     }
 
+    val displayState = remember(detailState, item.id) {
+        val state = detailState
+        if (state is DetailState.Success && state.detail.id != item.id) {
+            DetailState.Loading
+        } else {
+            state
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(CinemaBlack)
     ) {
-        when (val state = detailState) {
+        when (val state = displayState) {
             is DetailState.Loading -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
@@ -488,7 +498,7 @@ fun DetailScreen(
                         onOpenSchedule = { showScheduleCalendarDialog = true },
                         onBack = handleBack,
                         onAppendNextCommentsPage = { viewModel.appendNextCommentsPage() },
-                        onNavigateToMovieUrl = { url -> viewModel.loadDetail(url) }
+                        onNavigateToMovie = { targetItem -> onNavigateToDetail(targetItem) }
                     )
                 } else {
                     // ---- SCROLLABLE MOBILE DETAIL PAGE (with TV/D-Pad support) ----
@@ -912,7 +922,16 @@ fun DetailScreen(
                                                         .clip(RoundedCornerShape(8.dp))
                                                         .background(if (isCurrent) CinemaPrimary.copy(alpha = 0.15f) else Color.Transparent)
                                                         .clickable(enabled = !isCurrent && franchiseItem.url.isNotEmpty()) {
-                                                            viewModel.loadDetail(franchiseItem.url)
+                                                            val targetItem = RezkaItem(
+                                                                id = franchiseItem.id.ifEmpty { franchiseItem.url.hashCode().toString() },
+                                                                title = franchiseItem.title,
+                                                                subtitle = franchiseItem.year,
+                                                                imageUrl = "",
+                                                                rating = "",
+                                                                url = franchiseItem.url,
+                                                                type = detail.type
+                                                            )
+                                                            onNavigateToDetail(targetItem)
                                                         }
                                                         .padding(horizontal = 12.dp, vertical = 10.dp),
                                                     verticalAlignment = Alignment.CenterVertically
