@@ -4,6 +4,8 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import java.io.Serializable
 
+data class LinkItem(val name: String, val url: String) : Serializable
+
 enum class RezkaType {
     MOVIE, SERIES, ANIME, CARTOON
 }
@@ -82,14 +84,18 @@ data class RezkaDetail(
     val rating: String = "",
     val ratingInfo: RatingInfo = RatingInfo(),
     val director: String = "",          // Режиссёр
+    val directorsList: List<LinkItem> = emptyList(),
     val ageRestriction: String = "",    // 18+, 16+, 12+
     val duration: String = "",          // Хронометраж / Длительность
     val slogan: String = "",            // Слоган фильма
     val inCollections: List<String> = emptyList(), // Входит в списки
+    val collectionsList: List<LinkItem> = emptyList(),
     val seriesCollection: String = "",  // Из серии (франшиза)
+    val seriesCollectionList: List<LinkItem> = emptyList(),
     val franchiseTitle: String = "",    // Название франшизы/саги
     val franchiseItems: List<FranchiseItem> = emptyList(), // Части франшизы/саги
     val actors: List<String> = emptyList(), // В главных ролях
+    val actorsList: List<LinkItem> = emptyList(),
     val trailerUrl: String = "",        // Ссылка на YouTube трейлер
     val comments: List<CommentItem> = emptyList(), // Отзывы
     val commentsTotalPages: Int = 1,    // Количество страниц отзывов
@@ -195,4 +201,34 @@ data class AggregatedHistoryItem(
     val totalEpisodesCount: Int,
     val latestHistoryId: String,
     val timestamp: Long
+) : Serializable
+
+sealed interface ScreenState : Serializable {
+    data class Detail(
+        val item: RezkaItem,
+        val initialTranslatorId: String? = null
+    ) : ScreenState
+    data class ThematicList(val title: String, val url: String) : ScreenState
+    data class PersonProfile(val name: String, val url: String) : ScreenState
+}
+
+data class ParsedRezkaLink(
+    val item: RezkaItem,
+    val translatorId: String? = null
+) : Serializable
+
+data class RezkaCareerSection(
+    val title: String,
+    val stats: String = "",
+    val items: List<RezkaItem> = emptyList()
+) : Serializable
+
+data class RezkaPerson(
+    val id: String,
+    val name: String,
+    val originalName: String = "",
+    val photoUrl: String = "",
+    val info: Map<String, String> = emptyMap(),
+    val filmography: List<RezkaItem> = emptyList(),
+    val careerSections: List<RezkaCareerSection> = emptyList()
 ) : Serializable

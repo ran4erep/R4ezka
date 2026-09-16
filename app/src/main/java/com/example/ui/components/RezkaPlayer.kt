@@ -222,18 +222,31 @@ fun RezkaPlayer(
     // Lock orientation & fullscreen in full mode; return to normal in floating mode
     DisposableEffect(activity, window, isFloating) {
         val originalOrientation = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        
+        val originalCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window?.attributes?.layoutInDisplayCutoutMode
+        } else null
+
         if (isFloating) {
-            // Floating mini-player mode: allow normal orientation and show status/nav bars
+            // Floating mini-player mode: allow normal orientation and show system bars (status bar + nav bar)
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             if (window != null) {
                 val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-                insetsController.show(WindowInsetsCompat.Type.navigationBars())
+                insetsController.show(WindowInsetsCompat.Type.systemBars())
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && originalCutoutMode != null) {
+                    val attrs = window.attributes
+                    attrs.layoutInDisplayCutoutMode = originalCutoutMode
+                    window.attributes = attrs
+                }
             }
         } else {
-            // Fullscreen player: lock to sensor landscape & hide bars
+            // Fullscreen player: lock to sensor landscape & hide all system bars (status bar + nav bar) for 100% immersive video
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             if (window != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val attrs = window.attributes
+                    attrs.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                    window.attributes = attrs
+                }
                 val insetsController = WindowCompat.getInsetsController(window, window.decorView)
                 insetsController.systemBarsBehavior =
                     WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -248,7 +261,12 @@ fun RezkaPlayer(
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             if (window != null) {
                 val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-                insetsController.show(WindowInsetsCompat.Type.navigationBars())
+                insetsController.show(WindowInsetsCompat.Type.systemBars())
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && originalCutoutMode != null) {
+                    val attrs = window.attributes
+                    attrs.layoutInDisplayCutoutMode = originalCutoutMode
+                    window.attributes = attrs
+                }
             }
         }
     }
