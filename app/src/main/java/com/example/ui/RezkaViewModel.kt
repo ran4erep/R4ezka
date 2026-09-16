@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.RezkaApplication
@@ -132,6 +133,22 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     }
     private val _searchHistory = MutableStateFlow<List<String>>(emptyList())
     val searchHistory: StateFlow<List<String>> = _searchHistory.asStateFlow()
+
+    // Deep Link & Share URL navigation state
+    private val _pendingDeepLink = MutableStateFlow<ParsedRezkaLink?>(null)
+    val pendingDeepLink: StateFlow<ParsedRezkaLink?> = _pendingDeepLink.asStateFlow()
+
+    fun handleIncomingIntent(intent: Intent?) {
+        if (intent == null) return
+        val parsed = RezkaService.parseIntent(intent)
+        if (parsed != null) {
+            _pendingDeepLink.value = parsed
+        }
+    }
+
+    fun consumePendingDeepLink() {
+        _pendingDeepLink.value = null
+    }
 
     var currentCatalogPage = 1
         private set

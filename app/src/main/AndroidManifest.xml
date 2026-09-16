@@ -30,6 +30,7 @@
             android:banner="@drawable/tv_banner"
             android:label="@string/app_name"
             android:supportsPictureInPicture="true"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
             android:theme="@style/Theme.MyApplication">
             <intent-filter>
@@ -37,6 +38,56 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+
+            <!-- Перехват прямых ссылок со всех предустановленных зеркал Rezka -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="rezka-tv.org" />
+                <data android:host="*.rezka-tv.org" />
+                <data android:host="hdrezka.club" />
+                <data android:host="*.hdrezka.club" />
+                <data android:host="hdrezka.ag" />
+                <data android:host="*.hdrezka.ag" />
+                <data android:host="rezka.ag" />
+                <data android:host="*.rezka.ag" />
+                <data android:host="hdrezka.cm" />
+                <data android:host="*.hdrezka.cm" />
+                <data android:host="hdrezka.me" />
+                <data android:host="*.hdrezka.me" />
+                <data android:host="hdrezka.tv" />
+                <data android:host="*.hdrezka.tv" />
+                <data android:host="hdrezka.pro" />
+                <data android:host="*.hdrezka.pro" />
+                <data android:host="rezka.live" />
+                <data android:host="*.rezka.live" />
+                <data android:host="hdrezka.world" />
+                <data android:host="*.hdrezka.world" />
+            </intent-filter>
+
+            <!-- Перехват ссылок на фильмы Rezka с пользовательских кастомных зеркал по путям контента -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="*" />
+                <data android:pathPrefix="/films/" />
+                <data android:pathPrefix="/series/" />
+                <data android:pathPrefix="/animation/" />
+                <data android:pathPrefix="/cartoons/" />
+            </intent-filter>
+
+            <!-- Перехват через системное меню «Поделиться» (ACTION_SEND) для любых текстовых ссылок -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
     </application>

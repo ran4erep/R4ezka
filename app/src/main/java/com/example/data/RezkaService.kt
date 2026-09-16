@@ -1,7 +1,9 @@
 package com.example.data
 
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
 import android.util.Log
 import androidx.collection.LruCache
 import kotlinx.coroutines.CoroutineScope
@@ -423,6 +425,176 @@ object RezkaService {
         }
 
         return "$currentBase/$clean"
+    }
+
+    private val URL_IN_TEXT_REGEX = Regex("""https?://[^\s<>"]+""")
+
+    /**
+     * Формирует ссылку для отправки («Поделиться») с аргументом текущей выбранной озвучки
+     * и актуальным рабочим зеркалом.
+     */
+    fun buildShareUrl(itemUrl: String, translatorId: String?): String {
+        val baseUrl = currentBaseUrl.trimEnd('/')
+        val cleanPath = when {
+            itemUrl.startsWith("http://") || itemUrl.startsWith("https://") -> {
+                val schemeEnd = itemUrl.indexOf("://")
+                val pathStart = itemUrl.indexOf('/', schemeEnd + 3)
+                if (pathStart != -1) itemUrl.substring(pathStart) else "/"
+            }
+            itemUrl.startsWith("/") -> itemUrl
+            else -> "/$itemUrl"
+        }.substringBefore("?").substringBefore("#")
+
+        val fullUrl = "$baseUrl$cleanPath"
+        val cleanTranslatorId = translatorId?.trim()
+        return if (!cleanTranslatorId.isNullOrEmpty() && cleanTranslatorId != "0") {
+            "$fullUrl?translator_id=$cleanTranslatorId"
+        } else {
+            fullUrl
+        }
+    }
+
+    /**
+     * Проверяет, принадлежит ли хост предустановленным зеркалам, кастомному зеркалу
+     * либо характерным доменным именам Rezka.
+     */
+    fun isRecognizedMirrorHost(rawHost: String): Boolean {
+        if (rawHost.isBlank()) return false
+        val cleanHost = rawHost.lowercase().trim().removePrefix("www.")
+
+        // 1. Проверяем текущее активное зеркало
+        val currentHost = currentBaseUrl.toHttpUrlOrNull()?.host?.lowercase()?.removePrefix("www.")
+        if (currentHost != null && (cleanHost == currentHost || cleanHost.endsWith(".$currentHost"))) {
+            return true
+        }
+
+        // 2. Проверяем сохраненное зеркало в SharedPreferences (кастомное зеркало)
+        val saved = prefs?.getString("saved_mirror", null)
+        if (!saved.isNullOrBlank()) {
+            val savedHost = saved.toHttpUrlOrNull()?.host?.lowercase()?.removePrefix("www.")
+            if (savedHost != null && (cleanHost == savedHost || cleanHost.endsWith(".$savedHost"))) {
+                return true
+            }
+        }
+
+        // 3. Проверяем все предустановленные зеркала
+        for (m in PRESET_MIRRORS) {
+            val mHost = m.toHttpUrlOrNull()?.host?.lowercase()?.removePrefix("www.") ?: continue
+            if (cleanHost == mHost || cleanHost.endsWith(".$mHost")) {
+                return true
+            }
+        }
+
+        // 4. Паттерны доменов rezka / hdrezka
+        if (cleanHost.contains("rezka") || cleanHost.contains("hdrezka")) {
+            return true
+        }
+
+        return false
+    }
+
+    /**
+     * Высокопроизводительный разбор ссылок Rezka / HDRezka с извлечением фильма и озвучки.
+     * Поддерживает все предустановленные зеркала, пользовательские кастомные зеркала,
+     * относительные пути, а также ссылки, извлеченные из текста сообщений.
+     */
+    fun parseRezkaUrl(rawInput: String): ParsedRezkaLink? {
+        if (rawInput.isBlank()) return null
+        val trimmed = rawInput.trim()
+
+        val urlStr = URL_IN_TEXT_REGEX.find(trimmed)?.value ?: trimmed
+
+        return try {
+            val uri = Uri.parse(urlStr)
+            val scheme = uri.scheme?.lowercase() ?: ""
+            if (scheme.isNotEmpty() && scheme != "http" && scheme != "https") {
+                return null
+            }
+
+            val path = uri.path ?: ""
+            if (path.isEmpty()) return null
+
+            // Сигнатура контента Rezka в путях
+            val isRezkaContentPath = path.contains("/films/") ||
+                    path.contains("/series/") ||
+                    path.contains("/animation/") ||
+                    path.contains("/cartoons/")
+
+            val host = uri.host?.lowercase() ?: ""
+            val isKnownHost = isRecognizedMirrorHost(host)
+
+            // Если хост неизвестен И путь не является путем Rezka — не наш URL
+            if (!isKnownHost && !isRezkaContentPath) {
+                return null
+            }
+
+            val type = when {
+                path.contains("/series/") -> RezkaType.SERIES
+                path.contains("/animation/") -> RezkaType.ANIME
+                path.contains("/cartoons/") -> RezkaType.CARTOON
+                else -> RezkaType.MOVIE
+            }
+
+            val id = extractIdFromUrl(path)
+            if (id.isEmpty()) return null
+
+            // Извлечение аргумента озвучки (query или fragment)
+            val rawTranslator = uri.getQueryParameter("translator_id")
+                ?: uri.getQueryParameter("t")
+                ?: uri.getQueryParameter("translator")
+                ?: uri.getQueryParameter("translation")
+                ?: uri.getQueryParameter("voice")
+                ?: uri.fragment?.let { frag ->
+                    when {
+                        frag.startsWith("t:") -> frag.substringAfter("t:")
+                        frag.startsWith("translator:") -> frag.substringAfter("translator:")
+                        frag.startsWith("translator_id=") -> frag.substringAfter("translator_id=")
+                        else -> null
+                    }
+                }
+
+            val cleanTranslator = rawTranslator?.trim()?.takeIf { it.isNotEmpty() && it != "0" }
+
+            val adjustedUrl = adjustUrlToCurrentMirror(path, type, id)
+
+            val titleFromSlug = id.substringAfter("-", "").ifEmpty { id }
+                .replace("-", " ")
+                .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+
+            val item = RezkaItem(
+                id = id,
+                title = titleFromSlug.ifEmpty { "Загрузка..." },
+                subtitle = "",
+                imageUrl = "",
+                rating = "",
+                url = adjustedUrl,
+                type = type
+            )
+
+            ParsedRezkaLink(
+                item = item,
+                translatorId = cleanTranslator
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Ошибка разбора URL Rezka: $rawInput", e)
+            null
+        }
+    }
+
+    /**
+     * Извлечение и парсинг ссылки Rezka из переданного системного Intent (ACTION_VIEW или ACTION_SEND)
+     */
+    fun parseIntent(intent: Intent?): ParsedRezkaLink? {
+        if (intent == null) return null
+        val action = intent.action
+        if (action == Intent.ACTION_VIEW) {
+            val dataStr = intent.dataString ?: return null
+            return parseRezkaUrl(dataStr)
+        } else if (action == Intent.ACTION_SEND) {
+            val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return null
+            return parseRezkaUrl(text)
+        }
+        return null
     }
 
     // LRU кэш для страниц каталога и фильмов (минимизация нагрузки на CPU и сеть)
@@ -1151,6 +1323,380 @@ object RezkaService {
     }
 
     /**
+     * Получение каталога фильмов/сериалов по произвольной ссылке (например, режиссер, актер, список)
+     */
+    suspend fun getCustomCatalog(url: String, page: Int = 1): List<RezkaItem> = withContext(Dispatchers.IO) {
+        val cleanUrl = url.trim()
+        if (cleanUrl.isEmpty()) return@withContext emptyList()
+
+        val adjustedUrl = adjustUrlToCurrentMirror(cleanUrl)
+        val targetUrl = if (page > 1) {
+            val separator = if (adjustedUrl.contains("?")) "&" else "?"
+            val baseUrlWithoutParams = adjustedUrl.substringBefore("?")
+            val params = if (adjustedUrl.contains("?")) adjustedUrl.substringAfter("?") else ""
+            
+            val urlWithPage = if (baseUrlWithoutParams.endsWith("/")) {
+                "${baseUrlWithoutParams}page/$page/"
+            } else {
+                "${baseUrlWithoutParams}/page/$page/"
+            }
+            
+            if (params.isNotEmpty()) {
+                "$urlWithPage?$params"
+            } else {
+                urlWithPage
+            }
+        } else {
+            adjustedUrl
+        }
+
+        val cacheKey = "custom-$targetUrl"
+        catalogCache.get(cacheKey)?.let { return@withContext it }
+
+        val maxAttempts = 3
+        var lastException: Exception? = null
+
+        for (attempt in 1..maxAttempts) {
+            try {
+                val request = Request.Builder()
+                    .url(targetUrl)
+                    .header("User-Agent", USER_AGENT)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                    .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+                    .header("Referer", "$currentBaseUrl/")
+                    .build()
+
+                val (html, isSuccess) = client.newCall(request).execute().use { response ->
+                    Pair(response.body?.string().orEmpty(), response.isSuccessful)
+                }
+
+                if (!isSuccess || html.isBlank()) {
+                    if (attempt < maxAttempts) {
+                        kotlinx.coroutines.delay(500L * attempt)
+                        continue
+                    } else {
+                        throw Exception("Не удалось загрузить данные")
+                    }
+                }
+
+                val doc = Jsoup.parse(html)
+                if (isAntiBotPage(html, doc)) {
+                    Log.w(TAG, "Обнаружена страница проверки при загрузке кастомного каталога (попытка $attempt/$maxAttempts), повторный запрос...")
+                    if (attempt < maxAttempts) {
+                        kotlinx.coroutines.delay(500L * attempt)
+                        continue
+                    } else {
+                        throw Exception("Не удалось загрузить данные")
+                    }
+                }
+
+                val items = parseCatalogHtml(html, RezkaType.MOVIE)
+                if (items.isNotEmpty()) {
+                    catalogCache.put(cacheKey, items)
+                    return@withContext items
+                } else if (page > 1) {
+                    return@withContext emptyList()
+                } else {
+                    if (attempt < maxAttempts) {
+                        kotlinx.coroutines.delay(500L * attempt)
+                        continue
+                    } else {
+                        throw Exception("Фильмы не найдены")
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                lastException = e
+                Log.w(TAG, "Ошибка загрузки кастомного каталога (попытка $attempt/$maxAttempts): ${e.message}")
+                if (attempt < maxAttempts) {
+                    kotlinx.coroutines.delay(500L * attempt)
+                }
+            }
+        }
+        throw lastException ?: Exception("Не удалось загрузить данные")
+    }
+
+    /**
+     * Получение информации об актере/режиссере и его фильмографии
+     */
+    suspend fun getPersonProfile(url: String): RezkaPerson = withContext(Dispatchers.IO) {
+        val cleanUrl = url.trim()
+        val adjustedUrl = adjustUrlToCurrentMirror(cleanUrl)
+        
+        val maxAttempts = 3
+        var lastException: Exception? = null
+
+        for (attempt in 1..maxAttempts) {
+            try {
+                val request = Request.Builder()
+                    .url(adjustedUrl)
+                    .header("User-Agent", USER_AGENT)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                    .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+                    .header("Referer", "$currentBaseUrl/")
+                    .build()
+
+                val (html, isSuccess) = client.newCall(request).execute().use { response ->
+                    Pair(response.body?.string().orEmpty(), response.isSuccessful)
+                }
+
+                if (!isSuccess || html.isBlank()) {
+                    if (attempt < maxAttempts) {
+                        kotlinx.coroutines.delay(500L * attempt)
+                        continue
+                    } else {
+                        throw Exception("Не удалось загрузить профиль")
+                    }
+                }
+
+                val doc = Jsoup.parse(html)
+                if (isAntiBotPage(html, doc)) {
+                    if (attempt < maxAttempts) {
+                        kotlinx.coroutines.delay(500L * attempt)
+                        continue
+                    } else {
+                        throw Exception("Не удалось загрузить профиль (бот-фильтр)")
+                    }
+                }
+
+                // 1. Извлечение русского и оригинального (английского) имени
+                val h1El = doc.selectFirst(".b-post__title h1, h1")
+                var name = h1El?.selectFirst("span.t1, span[itemprop='name']")?.text()?.trim() ?: ""
+                var originalName = h1El?.selectFirst("span.t2, span[itemprop='alternativeHeadline']")?.text()?.trim() ?: ""
+
+                if (name.isEmpty() && h1El != null) {
+                    val fullH1 = h1El.text().trim()
+                    // Если h1 содержит и русское, и английское имя без отдельных span (например "Мэтт Джонсон Matt Johnson")
+                    val latinMatch = Regex("([A-Za-z].*)").find(fullH1)
+                    if (latinMatch != null && latinMatch.range.first > 0) {
+                        name = fullH1.substring(0, latinMatch.range.first).trim()
+                        if (originalName.isEmpty()) {
+                            originalName = latinMatch.value.trim()
+                        }
+                    } else {
+                        name = fullH1
+                    }
+                }
+
+                // 2. Фотография персоны (с поддержкой lazy loading data-src и заглушек)
+                val imgEl = doc.selectFirst(".b-sidecover img, .b-post__infotable_left img, .b-person img, [itemprop='image']")
+                var photoUrl = imgEl?.attr("data-src")?.ifEmpty { imgEl.attr("src") } ?: ""
+                if (photoUrl.startsWith("//")) {
+                    photoUrl = "https:$photoUrl"
+                }
+
+                // 3. Таблица метаданных персоны (Карьера, Дата рождения, Место рождения, Рост и др.)
+                val infoMap = LinkedHashMap<String, String>()
+                val infoRows = doc.select("table.b-post__info tr, .b-post__infotable tr, .b-person__info tr")
+                for (row in infoRows) {
+                    val label = row.selectFirst("td.l, td:nth-child(1), .l, .label")?.text()?.trim()?.removeSuffix(":")?.trim() ?: ""
+                    val value = row.selectFirst("td:nth-child(2), .value")?.text()?.trim() ?: ""
+                    if (label.isNotEmpty() && value.isNotEmpty()) {
+                        infoMap[label] = value
+                    }
+                }
+
+                // 4. Фильмография персоны по разделам (Актёр, Режиссёр, Сценарист, Продюсер и др.)
+                val careerSections = ArrayList<RezkaCareerSection>()
+                val allFilmography = ArrayList<RezkaItem>()
+                val seenAllIds = HashSet<String>()
+
+                val careerDivs = doc.select(".b-person__career")
+                for (careerDiv in careerDivs) {
+                    val h2El = careerDiv.selectFirst("h2")
+                    val roleTitle = h2El?.text()?.trim() ?: "Работы"
+                    val statsEl = careerDiv.selectFirst(".b-person__career_stats")
+                    val roleStats = statsEl?.text()?.trim() ?: ""
+
+                    // Выбираем ВСЕ элементы, включая скрытые классом .is_hidden (которые открываются кнопкой "Показать все")
+                    val itemElements = careerDiv.select(".b-content__inline_item")
+                    val sectionItems = ArrayList<RezkaItem>()
+                    val seenSectionIds = HashSet<String>()
+
+                    for (el in itemElements) {
+                        val linkEl = el.selectFirst(".b-content__inline_item-link a")
+                            ?: el.selectFirst(".b-content__inline_item-cover a")
+                            ?: el.selectFirst("a")
+                            ?: continue
+
+                        val rawUrl = linkEl.attr("href")
+                        if (rawUrl.isEmpty() || rawUrl.startsWith("javascript:")) continue
+                        val itemUrl = if (rawUrl.startsWith("/")) "$currentBaseUrl$rawUrl" else rawUrl
+
+                        var title = linkEl.text().trim()
+                        if (title.isEmpty()) {
+                            title = el.selectFirst(".b-content__inline_item-link")?.text()?.trim() ?: ""
+                        }
+                        if (title.isEmpty()) continue
+
+                        val itemImgEl = el.selectFirst(".b-content__inline_item-cover img") ?: el.selectFirst("img")
+                        var imageUrl = itemImgEl?.attr("data-src")?.ifEmpty { itemImgEl.attr("src") } ?: ""
+                        if (imageUrl.startsWith("//")) {
+                            imageUrl = "https:$imageUrl"
+                        }
+
+                        val subtitleEl = el.selectFirst(".b-content__inline_item-link .misc, .b-content__inline_item-link div, .misc")
+                        val rawSubtitle = subtitleEl?.text()?.trim() ?: ""
+                        val formattedSubtitle = CountryFlags.formatWithFlags(rawSubtitle)
+
+                        val ratingEl = el.selectFirst(".b-category-bestrating, .rating, .num, .b-content__inline_item-cover .info, i.imdb, i.kp, .info")
+                        val rating = ratingEl?.text()?.trim()?.removeSurrounding("(", ")") ?: ""
+
+                        val id = el.attr("data-id").ifEmpty { extractIdFromUrl(itemUrl) }
+
+                        val itemType = when {
+                            itemUrl.contains("/series/") -> RezkaType.SERIES
+                            itemUrl.contains("/animation/") -> RezkaType.ANIME
+                            itemUrl.contains("/cartoons/") -> RezkaType.CARTOON
+                            else -> RezkaType.MOVIE
+                        }
+
+                        val item = RezkaItem(id, title, formattedSubtitle, imageUrl, rating, itemUrl, itemType)
+                        if (seenSectionIds.add(id)) {
+                            sectionItems.add(item)
+                        }
+                        if (seenAllIds.add(id)) {
+                            allFilmography.add(item)
+                        }
+                    }
+
+                    if (sectionItems.isNotEmpty()) {
+                        careerSections.add(
+                            RezkaCareerSection(
+                                title = roleTitle,
+                                stats = roleStats,
+                                items = sectionItems
+                            )
+                        )
+                    }
+                }
+
+                // Резервный поиск если секции .b-person__career не найдены или пусты
+                if (allFilmography.isEmpty()) {
+                    val fallbackElements = doc.select(".b-content__main .b-content__inline_item, .b-content__inline_item")
+                        .filter { el -> !isSidebarElement(el) }
+
+                    for (el in fallbackElements) {
+                        val linkEl = el.selectFirst(".b-content__inline_item-link a")
+                            ?: el.selectFirst(".b-content__inline_item-cover a")
+                            ?: el.selectFirst("a")
+                            ?: continue
+
+                        val rawUrl = linkEl.attr("href")
+                        if (rawUrl.isEmpty() || rawUrl.startsWith("javascript:")) continue
+                        val itemUrl = if (rawUrl.startsWith("/")) "$currentBaseUrl$rawUrl" else rawUrl
+
+                        var title = linkEl.text().trim()
+                        if (title.isEmpty()) {
+                            title = el.selectFirst(".b-content__inline_item-link")?.text()?.trim() ?: ""
+                        }
+                        if (title.isEmpty()) continue
+
+                        val itemImgEl = el.selectFirst(".b-content__inline_item-cover img") ?: el.selectFirst("img")
+                        var imageUrl = itemImgEl?.attr("data-src")?.ifEmpty { itemImgEl.attr("src") } ?: ""
+                        if (imageUrl.startsWith("//")) {
+                            imageUrl = "https:$imageUrl"
+                        }
+
+                        val subtitleEl = el.selectFirst(".b-content__inline_item-link .misc, .b-content__inline_item-link div, .misc")
+                        val rawSubtitle = subtitleEl?.text()?.trim() ?: ""
+                        val formattedSubtitle = CountryFlags.formatWithFlags(rawSubtitle)
+
+                        val ratingEl = el.selectFirst(".b-category-bestrating, .rating, .num, .b-content__inline_item-cover .info, i.imdb, i.kp, .info")
+                        val rating = ratingEl?.text()?.trim()?.removeSurrounding("(", ")") ?: ""
+
+                        val id = el.attr("data-id").ifEmpty { extractIdFromUrl(itemUrl) }
+
+                        val itemType = when {
+                            itemUrl.contains("/series/") -> RezkaType.SERIES
+                            itemUrl.contains("/animation/") -> RezkaType.ANIME
+                            itemUrl.contains("/cartoons/") -> RezkaType.CARTOON
+                            else -> RezkaType.MOVIE
+                        }
+
+                        val item = RezkaItem(id, title, formattedSubtitle, imageUrl, rating, itemUrl, itemType)
+                        if (seenAllIds.add(id)) {
+                            allFilmography.add(item)
+                        }
+                    }
+
+                    if (allFilmography.isNotEmpty()) {
+                        careerSections.add(
+                            RezkaCareerSection(
+                                title = "Работы",
+                                stats = "",
+                                items = allFilmography
+                            )
+                        )
+                    }
+                }
+
+                // Дополнительный резервный поиск по ссылкам карьеры если inline_items вообще отсутствуют
+                if (allFilmography.isEmpty()) {
+                    val careerLinks = doc.select(".b-person__career-item a, .b-person__works a, .b-person__career a, a[href*='/films/'], a[href*='/series/']")
+                    for (linkEl in careerLinks) {
+                        val href = linkEl.attr("href") ?: continue
+                        if (!href.contains("/films/") && !href.contains("/series/") && !href.contains("/animation/") && !href.contains("/cartoons/")) continue
+                        val itemTitle = linkEl.text().trim()
+                        if (itemTitle.isEmpty()) continue
+                        val itemUrl = if (href.startsWith("/")) "$currentBaseUrl$href" else href
+                        val itemId = extractIdFromUrl(itemUrl)
+                        val itemType = when {
+                            itemUrl.contains("/series/") -> RezkaType.SERIES
+                            itemUrl.contains("/animation/") -> RezkaType.ANIME
+                            itemUrl.contains("/cartoons/") -> RezkaType.CARTOON
+                            else -> RezkaType.MOVIE
+                        }
+                        if (seenAllIds.add(itemId)) {
+                            allFilmography.add(
+                                RezkaItem(
+                                    id = itemId,
+                                    title = itemTitle,
+                                    subtitle = "",
+                                    imageUrl = "",
+                                    url = itemUrl,
+                                    type = itemType
+                                )
+                            )
+                        }
+                    }
+                    if (allFilmography.isNotEmpty()) {
+                        careerSections.add(
+                            RezkaCareerSection(
+                                title = "Работы",
+                                stats = "",
+                                items = allFilmography
+                            )
+                        )
+                    }
+                }
+
+                // Информация о карьере формируется непосредственно по разделам карьеры ниже,
+                // поэтому дублирующие строчки "В базе HDRezka" и "По категориям" не засоряют карточку персоны.
+
+                return@withContext RezkaPerson(
+                    id = extractIdFromUrl(adjustedUrl),
+                    name = name,
+                    originalName = originalName,
+                    photoUrl = photoUrl,
+                    info = infoMap,
+                    filmography = allFilmography,
+                    careerSections = careerSections
+                )
+
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                lastException = e
+                Log.w(TAG, "Ошибка загрузки профиля (попытка $attempt/$maxAttempts): ${e.message}")
+                if (attempt < maxAttempts) {
+                    kotlinx.coroutines.delay(500L * attempt)
+                }
+            }
+        }
+        throw lastException ?: Exception("Не удалось загрузить профиль")
+    }
+
+    /**
      * Быстрая проверка O(1) страницы поиска на наличие ответа HDRezka об отсутствии результатов
      */
     fun isNoResultsPage(html: String): Boolean {
@@ -1173,13 +1719,16 @@ object RezkaService {
         while (parent != null) {
             val className = parent.className()
             val id = parent.id()
+            // Элементы страницы персоны и списков контента в b-sidelist не являются сайдбаром
+            if (className.contains("b-person") || className.contains("b-sidelist") || id == "dle-content") {
+                return false
+            }
             if (className.contains("b-sidebar") ||
                 className.contains("b-seriesupdate") ||
                 className.contains("b-news") ||
                 className.contains("b-container__side") ||
-                className.contains("b-side") ||
-                className.contains("b-topitems") ||
                 className.contains("b-widget") ||
+                className.contains("b-topitems") ||
                 className.contains("b-post__similar") ||
                 id == "sidebar"
             ) {
@@ -1458,6 +2007,11 @@ object RezkaService {
                         var seriesCollection = ""
                         val actors = LinkedHashSet<String>()
 
+                        val directorsList = ArrayList<LinkItem>()
+                        val actorsList = ArrayList<LinkItem>()
+                        val collectionsList = ArrayList<LinkItem>()
+                        val seriesCollectionList = ArrayList<LinkItem>()
+
                         val infoRows = doc.select(".b-post__info tr")
                         for (row in infoRows) {
                             val label = row.selectFirst("td.l, th, td:first-child")?.text()?.trim()?.lowercase() ?: ""
@@ -1472,6 +2026,8 @@ object RezkaService {
                                     } else if (value.isNotEmpty()) {
                                         inCollections.add(value)
                                     }
+                                    val rawCollections = tdVal?.select("a")?.map { LinkItem(it.text().trim(), normalizeUrl(it.attr("href"), currentBaseUrl)) }?.filter { it.name.isNotEmpty() } ?: emptyList()
+                                    collectionsList.addAll(rawCollections)
                                 }
                                 label.contains("дата выхода") || label.contains("премьера") -> {
                                     releaseDate = value
@@ -1488,6 +2044,11 @@ object RezkaService {
                                 }
                                 label.contains("режиссер") || label.contains("режиссёр") -> {
                                     director = value
+                                    val rawDirectors = tdVal?.select("a")
+                                        ?.map { LinkItem(it.text().trim(), normalizeUrl(it.attr("href"), currentBaseUrl)) }
+                                        ?.filter { it.name.isNotEmpty() && !it.url.startsWith("javascript:") && !it.name.all { c -> c.isDigit() } }
+                                        ?: emptyList()
+                                    directorsList.addAll(rawDirectors)
                                 }
                                 label.contains("жанр") -> {
                                     genres.addAll(value.split(",").map { it.trim() }.filter { it.isNotEmpty() })
@@ -1504,14 +2065,29 @@ object RezkaService {
                                 }
                                 label.contains("из серии") || label.contains("франшиз") || label.contains("серия") || label.contains("серии") -> {
                                     seriesCollection = value
+                                    val rawSeries = tdVal?.select("a")
+                                        ?.map { LinkItem(it.text().trim(), normalizeUrl(it.attr("href"), currentBaseUrl)) }
+                                        ?.filter { it.name.isNotEmpty() && !it.url.startsWith("javascript:") }
+                                        ?: emptyList()
+                                    seriesCollectionList.addAll(rawSeries)
                                 }
                                 label.contains("в ролях") || label.contains("актеры") || label.contains("актёры") -> {
-                                    val actorLinks = tdVal?.select("a, span[itemprop='actor']")?.map { it.text().trim() }?.filter { it.isNotEmpty() } ?: emptyList()
-                                    if (actorLinks.isNotEmpty()) {
-                                        actors.addAll(actorLinks)
+                                    val actorSpans = tdVal?.select(".person-name-item a, a[href*='/person/'], span[itemprop='actor']")
+                                    val actorNames = if (!actorSpans.isNullOrEmpty()) {
+                                        actorSpans.map { it.text().trim() }.filter { it.isNotEmpty() }
+                                    } else {
+                                        tdVal?.select("a")?.map { it.text().trim() }?.filter { it.isNotEmpty() && !it.all { c -> c.isDigit() } } ?: emptyList()
+                                    }
+                                    if (actorNames.isNotEmpty()) {
+                                        actors.addAll(actorNames)
                                     } else if (value.isNotEmpty()) {
                                         actors.addAll(value.split(",").map { it.trim() }.filter { it.isNotEmpty() })
                                     }
+                                    val rawActors = (tdVal?.select(".person-name-item a, a[href*='/person/']")?.takeIf { it.isNotEmpty() } ?: tdVal?.select("a"))
+                                        ?.map { LinkItem(it.text().trim(), normalizeUrl(it.attr("href"), currentBaseUrl)) }
+                                        ?.filter { it.name.isNotEmpty() && !it.url.startsWith("javascript:") && !it.name.all { c -> c.isDigit() } }
+                                        ?: emptyList()
+                                    actorsList.addAll(rawActors)
                                 }
                             }
                         }
@@ -1620,6 +2196,14 @@ object RezkaService {
                                 val aName = aEl.text().trim()
                                 if (aName.isNotEmpty() && !actors.contains(aName)) {
                                     actors.add(aName)
+                                    val aUrl = if (aEl.tagName() == "a" || aEl.hasAttr("href")) {
+                                        val hrefAttr = aEl.attr("href")
+                                        if (hrefAttr.isNotEmpty()) normalizeUrl(hrefAttr, currentBaseUrl) else ""
+                                    } else {
+                                        val nestedLink = aEl.selectFirst("a")
+                                        if (nestedLink != null) normalizeUrl(nestedLink.attr("href"), currentBaseUrl) else ""
+                                    }
+                                    actorsList.add(LinkItem(aName, aUrl))
                                 }
                             }
                         }
@@ -1928,14 +2512,18 @@ object RezkaService {
                             rating = mainRating,
                             ratingInfo = ratingInfo,
                             director = director,
+                            directorsList = directorsList,
                             ageRestriction = ageRestriction,
                             duration = duration,
                             slogan = slogan,
                             inCollections = inCollections,
+                            collectionsList = collectionsList,
                             seriesCollection = seriesCollection,
+                            seriesCollectionList = seriesCollectionList,
                             franchiseTitle = franchiseTitle,
                             franchiseItems = franchiseItems,
                             actors = actors.toList(),
+                            actorsList = actorsList,
                             trailerUrl = trailerUrl,
                             comments = comments,
                             commentsTotalPages = commentsTotalPages,

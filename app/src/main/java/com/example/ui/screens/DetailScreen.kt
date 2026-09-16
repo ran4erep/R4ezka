@@ -30,6 +30,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -49,6 +51,8 @@ import com.example.ui.RezkaViewModel
 import com.example.ui.components.RezkaPlayer
 import com.example.ui.components.ScheduleCalendarDialog
 import com.example.ui.theme.*
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import com.example.ui.tv.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -109,7 +113,9 @@ private fun findMatchingEpisode(currentEpisodeName: String, targetEpisodes: List
 fun DetailScreen(
     viewModel: RezkaViewModel,
     item: RezkaItem,
+    initialTranslatorId: String? = null,
     onBack: () -> Unit,
+    onNavigateToThematic: (String, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -327,11 +333,39 @@ fun DetailScreen(
             is DetailState.Success -> {
                 val detail = state.detail
 
-                // Automatically restore user's saved selection (translator, season, episode) from Room DB
+                // Автоматически поднимаем список наверх при смене ID фильма (переход по франшизе)
+                LaunchedEffect(detail.id) {
+                    lazyListState.scrollToItem(0)
+                }
+
+                // Automatically restore user's saved selection (translator, season, episode) or deep linked translator
                 LaunchedEffect(detail) {
                     if (selectedTranslator == null) {
-                        val savedHistory = viewModel.getSavedProgress(item.id)
-                        if (savedHistory != null) {
+                        // 1. Наивысший приоритет — озвучка из входящей ссылки (deep link / share)
+                        val deepLinkedTranslator = if (!initialTranslatorId.isNullOrEmpty()) {
+                            detail.translators.find { it.id == initialTranslatorId }
+                        } else null
+
+                        if (deepLinkedTranslator != null) {
+                            selectedTranslator = deepLinkedTranslator
+                            if (!deepLinkedTranslator.isDefault && detail.type == RezkaType.SERIES && detail.numericPostId.isNotEmpty()) {
+                                try {
+                                    val fetchedSeasons = viewModel.getEpisodesForTranslator(detail.numericPostId, deepLinkedTranslator.id, deepLinkedTranslator.url)
+                                    if (fetchedSeasons.isNotEmpty()) {
+                                        dynamicSeasons = fetchedSeasons
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e("DetailScreen", "Error loading seasons for deep linked translator", e)
+                                }
+                            }
+                            val effectiveSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else detail.seasons
+                            if (selectedSeasonId == null && effectiveSeasons.isNotEmpty()) {
+                                selectedSeasonId = effectiveSeasons.firstOrNull()?.id
+                                selectedEpisodeId = effectiveSeasons.firstOrNull()?.episodes?.firstOrNull()?.id
+                            }
+                        } else {
+                            val savedHistory = viewModel.getSavedProgress(item.id)
+                            if (savedHistory != null) {
                             // 1. Restore Translator
                             val restoredTranslator = if (savedHistory.translatorId.isNotEmpty()) {
                                 detail.translators.find { it.id == savedHistory.translatorId }
@@ -382,6 +416,7 @@ fun DetailScreen(
                         }
                     }
                 }
+            }
 
                 val effectiveSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else detail.seasons
 
@@ -628,7 +663,16 @@ fun DetailScreen(
                                         )
                                     }
 
-                                    if (detail.director.isNotEmpty()) {
+                                    if (detail.directorsList.isNotEmpty()) {
+                                        DetailMetaRowWithLinks(
+                                            icon = Icons.Default.MovieFilter,
+                                            label = "Режиссёр:",
+                                            links = detail.directorsList,
+                                            onLinkClick = { link ->
+                                                onNavigateToThematic(link.name, link.url)
+                                            }
+                                        )
+                                    } else if (detail.director.isNotEmpty()) {
                                         DetailMetaRow(
                                             icon = Icons.Default.MovieFilter,
                                             label = "Режиссёр:",
@@ -652,11 +696,32 @@ fun DetailScreen(
                                         )
                                     }
 
-                                    if (detail.seriesCollection.isNotEmpty()) {
+                                    if (detail.seriesCollectionList.isNotEmpty()) {
+                                        DetailMetaRowWithLinks(
+                                            icon = Icons.Default.CollectionsBookmark,
+                                            label = "Из серии:",
+                                            links = detail.seriesCollectionList,
+                                            onLinkClick = { link ->
+                                                onNavigateToThematic(link.name, link.url)
+                                            }
+                                        )
+                                    } else if (detail.seriesCollection.isNotEmpty()) {
                                         DetailMetaRow(
                                             icon = Icons.Default.CollectionsBookmark,
                                             label = "Из серии:",
                                             value = detail.seriesCollection
+                                        )
+                                    }
+
+                                    val collectionsToShow = if (detail.collectionsList.isNotEmpty()) detail.collectionsList else detail.inCollections.map { LinkItem(it, "") }
+                                    if (collectionsToShow.isNotEmpty()) {
+                                        DetailMetaRowWithLinks(
+                                            icon = Icons.Default.FormatListBulleted,
+                                            label = "Входит в списки:",
+                                            links = collectionsToShow,
+                                            onLinkClick = { link ->
+                                                onNavigateToThematic(link.name, link.url)
+                                            }
                                         )
                                     }
 
@@ -666,55 +731,6 @@ fun DetailScreen(
                                             label = "Слоган:",
                                             value = detail.slogan
                                         )
-                                    }
-                                }
-                            }
-
-                            // 6. Collections ("Входит в списки")
-                            if (detail.inCollections.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(14.dp))
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 16.dp)
-                                ) {
-                                    Text(
-                                        text = "Входит в списки",
-                                        color = CinemaTextWhite,
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    LazyRow(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        items(detail.inCollections) { coll ->
-                                            Surface(
-                                                color = CinemaCard,
-                                                shape = RoundedCornerShape(8.dp),
-                                                border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.2f))
-                                            ) {
-                                                Row(
-                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Icon(
-                                                        Icons.Default.EmojiEvents,
-                                                        contentDescription = null,
-                                                        tint = CinemaAmber,
-                                                        modifier = Modifier.size(14.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Text(
-                                                        text = coll,
-                                                        color = CinemaTextWhite,
-                                                        fontSize = 12.sp,
-                                                        fontWeight = FontWeight.Medium
-                                                    )
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                             }
@@ -792,25 +808,49 @@ fun DetailScreen(
                                         Column(
                                             verticalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
-                                            displayActors.forEach { actor ->
+                                            val effectiveActors = if (detail.actorsList.isNotEmpty()) {
+                                                detail.actorsList
+                                            } else {
+                                                detail.actors.map { LinkItem(it, "") }
+                                            }
+                                            val displayActorsList = if (isActorsExpanded || effectiveActors.size <= initialActorCount) {
+                                                effectiveActors
+                                            } else {
+                                                effectiveActors.take(initialActorCount)
+                                            }
+                                            displayActorsList.forEach { actorLink ->
+                                                val isClickable = actorLink.url.isNotEmpty()
                                                 Row(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
-                                                        .padding(vertical = 2.dp),
+                                                        .clip(RoundedCornerShape(4.dp))
+                                                        .clickable(enabled = isClickable) {
+                                                            onNavigateToThematic(actorLink.name, actorLink.url)
+                                                        }
+                                                        .padding(vertical = 4.dp, horizontal = 4.dp),
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
                                                     Box(
                                                         modifier = Modifier
-                                                            .size(5.dp)
-                                                            .background(CinemaPrimary, CircleShape)
+                                                            .size(6.dp)
+                                                            .background(if (isClickable) CinemaPrimary else CinemaTextGray, CircleShape)
                                                     )
                                                     Spacer(modifier = Modifier.width(8.dp))
                                                     Text(
-                                                        text = actor,
-                                                        color = CinemaTextWhite.copy(alpha = 0.9f),
+                                                        text = actorLink.name,
+                                                        color = CinemaTextWhite,
                                                         fontSize = 13.sp,
-                                                        fontWeight = FontWeight.Normal
+                                                        fontWeight = if (isClickable) FontWeight.Medium else FontWeight.Normal
                                                     )
+                                                    if (isClickable) {
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Icon(
+                                                            imageVector = Icons.Default.OpenInNew,
+                                                            contentDescription = null,
+                                                            tint = CinemaPrimary.copy(alpha = 0.7f),
+                                                            modifier = Modifier.size(12.dp)
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -1759,51 +1799,85 @@ fun DetailScreen(
         is DetailState.Idle -> {}
     }
 
-        // Floating Top Bar: Кнопки "Назад" и "В избранное" для мобильного режима
+        // Floating Top Buttons: Кнопки "Назад" и "В избранное" для мобильного режима (плавающие в верхних углах)
         if (activePlayerStreams == null && !isTvMode) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Black.copy(alpha = 0.75f),
-                                Color.Black.copy(alpha = 0.35f),
-                                Color.Transparent
-                            )
-                        )
-                    )
                     .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
+                // Плавающая кнопка Назад (слева)
+                IconButton(
+                    onClick = handleBack,
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .size(46.dp)
+                        .background(Color.Black.copy(alpha = 0.65f), CircleShape)
+                        .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
+                        .testTag("floating_back_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Назад",
+                        tint = CinemaTextWhite,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
+                // Кнопки действий справа (Поделиться и В избранное)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Плавающая кнопка "Поделиться"
                     IconButton(
-                        onClick = handleBack,
+                        onClick = {
+                            val shareUrl = RezkaService.buildShareUrl(
+                                itemUrl = item.url,
+                                translatorId = selectedTranslator?.id
+                            )
+                            val movieTitle = (detailState as? DetailState.Success)?.detail?.title?.ifEmpty { item.title } ?: item.title
+                            val shareText = if (movieTitle.isNotEmpty()) {
+                                val translatorSuffix = selectedTranslator?.name?.let { " ($it)" } ?: ""
+                                "$movieTitle$translatorSuffix\n$shareUrl"
+                            } else {
+                                shareUrl
+                            }
+                            try {
+                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_SUBJECT, movieTitle)
+                                    putExtra(Intent.EXTRA_TEXT, shareText)
+                                }
+                                val chooserIntent = Intent.createChooser(sendIntent, "Поделиться фильмом")
+                                context.startActivity(chooserIntent)
+                            } catch (e: Exception) {
+                                Log.e("DetailScreen", "Error sharing movie link", e)
+                                Toast.makeText(context, "Не удалось открыть меню отправки", Toast.LENGTH_SHORT).show()
+                            }
+                        },
                         modifier = Modifier
-                            .size(42.dp)
-                            .tvFocusableItem(onClick = handleBack, shape = CircleShape)
+                            .size(46.dp)
                             .background(Color.Black.copy(alpha = 0.65f), CircleShape)
                             .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
-                            .testTag("floating_back_button")
+                            .testTag("share_button")
                     ) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Назад",
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Поделиться",
                             tint = CinemaTextWhite,
                             modifier = Modifier.size(20.dp)
                         )
                     }
 
+                    // Плавающая кнопка В избранное (справа)
                     IconButton(
                         onClick = { viewModel.toggleFavorite(item, isFavorite) },
                         modifier = Modifier
-                            .size(42.dp)
-                            .tvFocusableItem(onClick = { viewModel.toggleFavorite(item, isFavorite) }, shape = CircleShape)
+                            .size(46.dp)
                             .background(Color.Black.copy(alpha = 0.65f), CircleShape)
                             .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape)
                             .testTag("favorite_toggle_button")
@@ -1812,7 +1886,7 @@ fun DetailScreen(
                             imageVector = if (isFavorite) Icons.Default.Bookmark else Icons.Outlined.BookmarkBorder,
                             contentDescription = "Избранное",
                             tint = if (isFavorite) CinemaPrimary else CinemaTextWhite,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                 }
@@ -2156,6 +2230,62 @@ fun DetailScreen(
                     contentDescription = "Вверх к началу отзывов",
                     modifier = Modifier.size(22.dp)
                 )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun DetailMetaRowWithLinks(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    links: List<LinkItem>,
+    onLinkClick: (LinkItem) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = CinemaTextGray,
+            modifier = Modifier
+                .padding(top = 2.dp)
+                .size(15.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = label,
+            color = CinemaTextGray,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.width(90.dp)
+        )
+        FlowRow(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            links.forEach { link ->
+                Surface(
+                    color = CinemaDark,
+                    shape = RoundedCornerShape(6.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CinemaBorder),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { onLinkClick(link) }
+                ) {
+                    Text(
+                        text = link.name,
+                        color = CinemaTextWhite,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
             }
         }
     }

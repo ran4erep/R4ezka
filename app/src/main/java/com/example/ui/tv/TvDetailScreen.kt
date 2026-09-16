@@ -1,5 +1,8 @@
 package com.example.ui.tv
 
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
@@ -30,6 +33,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -83,9 +87,11 @@ fun TvDetailContent(
     onNavigateToMovieUrl: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val backButtonFocusRequester = remember { FocusRequester() }
     val trailerButtonFocusRequester = remember { FocusRequester() }
     val favoriteButtonFocusRequester = remember { FocusRequester() }
+    val shareButtonFocusRequester = remember { FocusRequester() }
     val mainActionFocusRequester = remember { FocusRequester() }
     val rightScrollState = rememberLazyListState()
     var isActorsExpanded by remember { mutableStateOf(false) }
@@ -94,9 +100,10 @@ fun TvDetailContent(
         if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
     }
 
-    // Автофокус на кнопке "В закладки" при входе на экран фильма на ТВ
-    LaunchedEffect(Unit) {
+    // Автофокус на кнопке "В закладки" и сброс скролла наверх при входе на экран или смене фильма на ТВ
+    LaunchedEffect(detail.id) {
         favoriteButtonFocusRequester.requestFocusSafe()
+        rightScrollState.scrollToItem(0)
     }
 
     BoxWithConstraints(
@@ -465,6 +472,71 @@ fun TvDetailContent(
                                     Text(
                                         text = if (isFavorite) "В закладках" else "В закладки",
                                         color = if (isFavorite) CinemaPrimary else CinemaTextWhite,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            // Кнопка "Поделиться" (с аргументом текущей озвучки)
+                            Surface(
+                                color = CinemaCard,
+                                shape = RoundedCornerShape(6.dp),
+                                border = BorderStroke(1.dp, CinemaSecondary.copy(alpha = 0.3f)),
+                                modifier = Modifier
+                                    .focusProperties {
+                                        up = FocusRequester.Cancel
+                                    }
+                                    .tvFocusableItem(
+                                        onClick = {
+                                            val shareUrl = com.example.data.RezkaService.buildShareUrl(
+                                                itemUrl = item.url,
+                                                translatorId = selectedTranslator?.id
+                                            )
+                                            val shareText = if (detail.title.isNotEmpty()) {
+                                                val translatorSuffix = selectedTranslator?.name?.let { " ($it)" } ?: ""
+                                                "${detail.title}$translatorSuffix\n$shareUrl"
+                                            } else {
+                                                shareUrl
+                                            }
+                                            try {
+                                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                                    type = "text/plain"
+                                                    putExtra(Intent.EXTRA_SUBJECT, detail.title)
+                                                    putExtra(Intent.EXTRA_TEXT, shareText)
+                                                }
+                                                context.startActivity(Intent.createChooser(sendIntent, "Поделиться фильмом"))
+                                            } catch (e: Exception) {
+                                                try {
+                                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                                    clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Rezka Link", shareUrl))
+                                                    Toast.makeText(context, "Ссылка скопирована в буфер обмена", Toast.LENGTH_SHORT).show()
+                                                } catch (ce: Exception) {
+                                                    Toast.makeText(context, shareUrl, Toast.LENGTH_LONG).show()
+                                                }
+                                            }
+                                        },
+                                        scaleFactor = 1.05f,
+                                        shape = RoundedCornerShape(6.dp),
+                                        focusRequester = shareButtonFocusRequester,
+                                        lazyListState = rightScrollState
+                                    )
+                                    .testTag("tv_share_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = "Поделиться",
+                                        tint = CinemaTextWhite,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        text = "Поделиться",
+                                        color = CinemaTextWhite,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
                                     )

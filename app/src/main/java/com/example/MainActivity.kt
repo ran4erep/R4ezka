@@ -1,10 +1,12 @@
 package com.example
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -27,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.RezkaItem
+import com.example.data.ScreenState
 import com.example.ui.RezkaViewModel
 import com.example.ui.components.AppHeader
 import com.example.ui.components.AuthDialog
@@ -35,6 +38,8 @@ import com.example.ui.screens.FavoritesScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.DetailScreen
 import com.example.ui.screens.SettingsScreen
+import com.example.ui.screens.ThematicListScreen
+import com.example.ui.screens.PersonProfileScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.CinemaBlack
 import com.example.ui.theme.CinemaDark
@@ -50,29 +55,48 @@ enum class NavTab {
 }
 
 class MainActivity : ComponentActivity() {
+    private val viewModel: RezkaViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        
-        // Скрываем статус-бар с иконками телефона (время, батарея, уведомления и др.)
-        val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
-        windowInsetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        windowInsetsController.hide(WindowInsetsCompat.Type.statusBars())
+        viewModel.handleIncomingIntent(intent)
 
         setContent {
             MyApplicationTheme {
-                MainContent()
+                MainContent(viewModel)
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        viewModel.handleIncomingIntent(intent)
     }
 }
 
 @Composable
-fun MainContent() {
-    val viewModel: RezkaViewModel = viewModel()
+fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     var currentTab by remember { mutableStateOf(NavTab.FEED) }
-    var selectedItem by remember { mutableStateOf<RezkaItem?>(null) }
+    val navigationStack = remember { mutableStateListOf<ScreenState>() }
     var isSettingsOpen by remember { mutableStateOf(false) }
+
+    val pendingDeepLink by viewModel.pendingDeepLink.collectAsState()
+
+    LaunchedEffect(pendingDeepLink) {
+        val link = pendingDeepLink ?: return@LaunchedEffect
+        val top = navigationStack.lastOrNull() as? ScreenState.Detail
+        if (top?.item?.id == link.item.id) {
+            if (top.initialTranslatorId != link.translatorId) {
+                navigationStack.removeLast()
+                navigationStack.add(ScreenState.Detail(item = link.item, initialTranslatorId = link.translatorId))
+            }
+        } else {
+            navigationStack.add(ScreenState.Detail(item = link.item, initialTranslatorId = link.translatorId))
+        }
+        viewModel.consumePendingDeepLink()
+    }
 
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
@@ -98,9 +122,9 @@ fun MainContent() {
     }
 
     // System Back Press Handler inside Compose
-    BackHandler(enabled = isSettingsOpen || selectedItem != null) {
-        if (selectedItem != null) {
-            selectedItem = null
+    BackHandler(enabled = isSettingsOpen || navigationStack.isNotEmpty()) {
+        if (navigationStack.isNotEmpty()) {
+            navigationStack.removeLast()
         } else if (isSettingsOpen) {
             isSettingsOpen = false
         }
@@ -115,13 +139,49 @@ fun MainContent() {
             // Режим Android TV: строго изолированный рендеринг активного экрана
             // Никаких скрытых мобильных Scaffold, фоновых сеток каталога или полей ввода!
             when {
-                selectedItem != null -> {
-                    DetailScreen(
-                        viewModel = viewModel,
-                        item = selectedItem!!,
-                        onBack = { selectedItem = null },
-                        modifier = Modifier.fillMaxSize()
-                    )
+                navigationStack.isNotEmpty() -> {
+                    when (val topState = navigationStack.last()) {
+                        is ScreenState.Detail -> {
+                            DetailScreen(
+                                viewModel = viewModel,
+                                item = topState.item,
+                                initialTranslatorId = topState.initialTranslatorId,
+                                onBack = { navigationStack.removeLast() },
+                                onNavigateToThematic = { name, url ->
+                                    if (url.contains("/person/")) {
+                                        navigationStack.add(ScreenState.PersonProfile(name, url))
+                                    } else {
+                                        navigationStack.add(ScreenState.ThematicList(name, url))
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                        is ScreenState.ThematicList -> {
+                            ThematicListScreen(
+                                title = topState.title,
+                                url = topState.url,
+                                onBack = { navigationStack.removeLast() },
+                                onNavigateToDetail = { item ->
+                                    navigationStack.add(ScreenState.Detail(item))
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                                isTvMode = true
+                            )
+                        }
+                        is ScreenState.PersonProfile -> {
+                            PersonProfileScreen(
+                                name = topState.name,
+                                url = topState.url,
+                                onBack = { navigationStack.removeLast() },
+                                onNavigateToDetail = { item ->
+                                    navigationStack.add(ScreenState.Detail(item))
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                                isTvMode = true
+                            )
+                        }
+                    }
                 }
                 isSettingsOpen -> {
                     SettingsScreen(
@@ -133,7 +193,9 @@ fun MainContent() {
                 else -> {
                     TvMainScreen(
                         viewModel = viewModel,
-                        onNavigateToDetail = { selectedItem = it },
+                        onNavigateToDetail = { item ->
+                            navigationStack.add(ScreenState.Detail(item))
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -144,7 +206,7 @@ fun MainContent() {
                 topBar = {
                     // Header bar (R4ezka, account/login, settings) persistent on every tab
                     AnimatedVisibility(
-                        visible = selectedItem == null && !isSettingsOpen,
+                        visible = navigationStack.isEmpty() && !isSettingsOpen,
                         enter = slideInVertically { -it },
                         exit = slideOutVertically { -it }
                     ) {
@@ -160,7 +222,7 @@ fun MainContent() {
                 bottomBar = {
                     // Hide bottom bar when viewing movie details/player or settings to give 100% immersive focus
                     AnimatedVisibility(
-                        visible = selectedItem == null && !isSettingsOpen,
+                        visible = navigationStack.isEmpty() && !isSettingsOpen,
                         enter = slideInVertically { it },
                         exit = slideOutVertically { it }
                     ) {
@@ -239,20 +301,26 @@ fun MainContent() {
                         NavTab.FEED -> {
                             CatalogScreen(
                                 viewModel = viewModel,
-                                onNavigateToDetail = { selectedItem = it },
+                                onNavigateToDetail = { item ->
+                                    navigationStack.add(ScreenState.Detail(item))
+                                },
                                 onNavigateToSettings = { isSettingsOpen = true }
                             )
                         }
                         NavTab.FAVORITES -> {
                             FavoritesScreen(
                                 viewModel = viewModel,
-                                onNavigateToDetail = { selectedItem = it }
+                                onNavigateToDetail = { item ->
+                                    navigationStack.add(ScreenState.Detail(item))
+                                }
                             )
                         }
                         NavTab.HISTORY -> {
                             HistoryScreen(
                                 viewModel = viewModel,
-                                onNavigateToDetail = { selectedItem = it }
+                                onNavigateToDetail = { item ->
+                                    navigationStack.add(ScreenState.Detail(item))
+                                }
                             )
                         }
                     }
@@ -261,7 +329,7 @@ fun MainContent() {
 
             // Animated Fullscreen Settings Screen overlay for Mobile
             AnimatedVisibility(
-                visible = isSettingsOpen && selectedItem == null,
+                visible = isSettingsOpen && navigationStack.isEmpty(),
                 enter = slideInHorizontally(initialOffsetX = { it }),
                 exit = slideOutHorizontally(targetOffsetX = { it }),
                 modifier = Modifier.fillMaxSize()
@@ -272,19 +340,62 @@ fun MainContent() {
                 )
             }
 
-            // Animated Fullscreen Details Screen overlay for Mobile
-            AnimatedVisibility(
-                visible = selectedItem != null,
-                enter = slideInHorizontally(initialOffsetX = { it }),
-                exit = slideOutHorizontally(targetOffsetX = { it }),
+            // Animated Fullscreen stack screens overlay for Mobile
+            AnimatedContent(
+                targetState = navigationStack.lastOrNull(),
+                transitionSpec = {
+                    if (targetState != null && initialState == null) {
+                        // Push first screen (slide from right)
+                        slideInHorizontally { it } togetherWith slideOutHorizontally { -it }
+                    } else if (targetState == null && initialState != null) {
+                        // Pop last screen (slide to right)
+                        slideInHorizontally { -it } togetherWith slideOutHorizontally { it }
+                    } else {
+                        // Stack transition
+                        slideInHorizontally { it } togetherWith slideOutHorizontally { -it }
+                    }
+                },
+                label = "stack_transition",
                 modifier = Modifier.fillMaxSize()
-            ) {
-                selectedItem?.let { item ->
-                    DetailScreen(
-                        viewModel = viewModel,
-                        item = item,
-                        onBack = { selectedItem = null }
-                    )
+            ) { topState ->
+                if (topState != null) {
+                    when (topState) {
+                        is ScreenState.Detail -> {
+                            DetailScreen(
+                                viewModel = viewModel,
+                                item = topState.item,
+                                initialTranslatorId = topState.initialTranslatorId,
+                                onBack = { navigationStack.removeLast() },
+                                onNavigateToThematic = { name, url ->
+                                    if (url.contains("/person/")) {
+                                        navigationStack.add(ScreenState.PersonProfile(name, url))
+                                    } else {
+                                        navigationStack.add(ScreenState.ThematicList(name, url))
+                                    }
+                                }
+                            )
+                        }
+                        is ScreenState.ThematicList -> {
+                            ThematicListScreen(
+                                title = topState.title,
+                                url = topState.url,
+                                onBack = { navigationStack.removeLast() },
+                                onNavigateToDetail = { item ->
+                                    navigationStack.add(ScreenState.Detail(item))
+                                }
+                            )
+                        }
+                        is ScreenState.PersonProfile -> {
+                            PersonProfileScreen(
+                                name = topState.name,
+                                url = topState.url,
+                                onBack = { navigationStack.removeLast() },
+                                onNavigateToDetail = { item ->
+                                    navigationStack.add(ScreenState.Detail(item))
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }
