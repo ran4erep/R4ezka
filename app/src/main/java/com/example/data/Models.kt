@@ -84,8 +84,11 @@ data class RezkaDetail(
     val director: String = "",          // Режиссёр
     val ageRestriction: String = "",    // 18+, 16+, 12+
     val duration: String = "",          // Хронометраж / Длительность
+    val slogan: String = "",            // Слоган фильма
     val inCollections: List<String> = emptyList(), // Входит в списки
     val seriesCollection: String = "",  // Из серии (франшиза)
+    val franchiseTitle: String = "",    // Название франшизы/саги
+    val franchiseItems: List<FranchiseItem> = emptyList(), // Части франшизы/саги
     val actors: List<String> = emptyList(), // В главных ролях
     val trailerUrl: String = "",        // Ссылка на YouTube трейлер
     val comments: List<CommentItem> = emptyList(), // Отзывы
@@ -99,13 +102,22 @@ data class RezkaDetail(
     val numericPostId: String = ""
 ) : Serializable
 
+data class FranchiseItem(
+    val id: String,
+    val title: String,
+    val url: String,
+    val isCurrent: Boolean = false,
+    val year: String = ""
+) : Serializable
+
 data class Translator(
     val id: String,
     val name: String,
     val isDefault: Boolean = false,
     val flagUrl: String = "",
     val isPremium: Boolean = false,
-    val premiumUrl: String = ""
+    val premiumUrl: String = "",
+    val url: String = ""
 ) : Serializable
 
 data class Season(

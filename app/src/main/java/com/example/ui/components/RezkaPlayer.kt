@@ -228,7 +228,7 @@ fun RezkaPlayer(
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             if (window != null) {
                 val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-                insetsController.show(WindowInsetsCompat.Type.systemBars())
+                insetsController.show(WindowInsetsCompat.Type.navigationBars())
             }
         } else {
             // Fullscreen player: lock to sensor landscape & hide bars
@@ -248,7 +248,7 @@ fun RezkaPlayer(
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             if (window != null) {
                 val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-                insetsController.show(WindowInsetsCompat.Type.systemBars())
+                insetsController.show(WindowInsetsCompat.Type.navigationBars())
             }
         }
     }
@@ -1155,12 +1155,8 @@ fun RezkaPlayer(
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_BACK -> {
-                                    if (showControls) {
-                                        showControls = false
-                                        true
-                                    } else {
-                                        false
-                                    }
+                                    onBack()
+                                    true
                                 }
                                 else -> false
                             }
@@ -1218,8 +1214,7 @@ fun RezkaPlayer(
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_BACK -> {
-                                    currentFocusArea = PlayerFocusArea.MAIN
-                                    showControls = false
+                                    onBack()
                                     true
                                 }
                                 else -> false
@@ -1290,8 +1285,7 @@ fun RezkaPlayer(
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_BACK -> {
-                                    currentFocusArea = PlayerFocusArea.MAIN
-                                    showControls = false
+                                    onBack()
                                     true
                                 }
                                 else -> false
@@ -2191,23 +2185,14 @@ fun RezkaPlayer(
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.widthIn(max = 120.dp)
                                         )
-                                        if (currentTranslator != null && currentTranslator.isPremium) {
+                                        if (currentTranslator != null && currentTranslator.isPremium && currentTranslator.premiumUrl.isNotEmpty()) {
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            if (currentTranslator.premiumUrl.isNotEmpty()) {
-                                                AsyncImage(
-                                                    model = currentTranslator.premiumUrl,
-                                                    contentDescription = "Премиум",
-                                                    contentScale = ContentScale.Fit,
-                                                    modifier = Modifier.height(12.dp).widthIn(max = 18.dp)
-                                                )
-                                            } else {
-                                                Icon(
-                                                    imageVector = Icons.Default.Star,
-                                                    contentDescription = "Премиум",
-                                                    tint = CinemaAmber,
-                                                    modifier = Modifier.size(12.dp)
-                                                )
-                                            }
+                                            AsyncImage(
+                                                model = currentTranslator.premiumUrl,
+                                                contentDescription = "Премиум",
+                                                contentScale = ContentScale.Fit,
+                                                modifier = Modifier.height(12.dp).widthIn(max = 18.dp)
+                                            )
                                         }
                                     }
                                 }
@@ -2807,25 +2792,16 @@ fun RezkaPlayer(
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                         fontSize = 14.sp
                                     )
-                                    if (trans.isPremium) {
+                                    if (trans.isPremium && trans.premiumUrl.isNotEmpty()) {
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        if (trans.premiumUrl.isNotEmpty()) {
-                                            AsyncImage(
-                                                model = trans.premiumUrl,
-                                                contentDescription = "Премиум",
-                                                contentScale = ContentScale.Fit,
-                                                modifier = Modifier
-                                                    .height(14.dp)
-                                                    .widthIn(max = 22.dp)
-                                            )
-                                        } else {
-                                            Icon(
-                                                imageVector = Icons.Default.Star,
-                                                contentDescription = "Премиум",
-                                                tint = CinemaAmber,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                        }
+                                        AsyncImage(
+                                            model = trans.premiumUrl,
+                                            contentDescription = "Премиум",
+                                            contentScale = ContentScale.Fit,
+                                            modifier = Modifier
+                                                .height(14.dp)
+                                                .widthIn(max = 22.dp)
+                                        )
                                     }
                                 }
                                 if (isSelected) {

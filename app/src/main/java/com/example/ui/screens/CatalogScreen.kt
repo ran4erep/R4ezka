@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -37,6 +38,13 @@ import androidx.compose.ui.text.input.VisualTransformation
 import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.input.key.*
+import android.view.KeyEvent as AndroidKeyEvent
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,7 +66,15 @@ fun CatalogScreen(
     val searchHistory by viewModel.searchHistory.collectAsState()
     var isSearchFocused by remember { mutableStateOf(false) }
 
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+
     val isSyncing by viewModel.isSyncing.collectAsState()
+
+    BackHandler(enabled = searchInput.isNotEmpty()) {
+        searchInput = ""
+        viewModel.onSearchQueryChanged("")
+    }
 
     Column(
         modifier = modifier
@@ -85,6 +101,14 @@ fun CatalogScreen(
                 }
             },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(
+                onSearch = {
+                    viewModel.commitSearchQuery(searchInput)
+                    keyboardController?.hide()
+                    focusManager.clearFocus()
+                }
+            ),
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = CinemaDark,
                 unfocusedContainerColor = CinemaDark,
@@ -100,6 +124,17 @@ fun CatalogScreen(
                 .padding(horizontal = 16.dp)
                 .height(52.dp)
                 .onFocusChanged { isSearchFocused = it.isFocused }
+                .onKeyEvent { keyEvent ->
+                    if (keyEvent.type == KeyEventType.KeyDown &&
+                        (keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
+                         keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER)
+                    ) {
+                        viewModel.commitSearchQuery(searchInput)
+                        keyboardController?.hide()
+                        focusManager.clearFocus()
+                        true
+                    } else false
+                }
                 .testTag("catalog_search_bar")
         )
 
@@ -160,7 +195,9 @@ fun CatalogScreen(
                                 .clickable {
                                     searchInput = query
                                     viewModel.onSearchQueryChanged(query)
-                                    viewModel.addSearchQueryToHistory(query)
+                                    viewModel.commitSearchQuery(query)
+                                    focusManager.clearFocus()
+                                    keyboardController?.hide()
                                 }
                                 .padding(horizontal = 12.dp, vertical = 8.dp)
                                 .testTag("search_history_item_$query"),
@@ -333,6 +370,13 @@ fun CatalogScreen(
                             }
                         }
 
+                        // Засчитываем запрос в историю поиска при начале скролла результатов
+                        LaunchedEffect(gridState.isScrollInProgress) {
+                            if (gridState.isScrollInProgress && searchInput.isNotBlank()) {
+                                viewModel.commitSearchQuery(searchInput)
+                            }
+                        }
+
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(2),
                             state = gridState,
@@ -348,7 +392,15 @@ fun CatalogScreen(
                                 items = state.items,
                                 key = { it.id }
                             ) { item ->
-                                RezkaItemCard(item = item, onClick = { onNavigateToDetail(item) })
+                                RezkaItemCard(
+                                    item = item,
+                                    onClick = {
+                                        viewModel.commitSearchQuery(searchInput)
+                                        keyboardController?.hide()
+                                        focusManager.clearFocus()
+                                        onNavigateToDetail(item)
+                                    }
+                                )
                             }
 
                             if (isLoadingMore) {

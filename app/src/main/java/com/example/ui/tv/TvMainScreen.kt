@@ -439,6 +439,11 @@ private fun TvCatalogContent(
         ) {
             var searchInput by remember { mutableStateOf(viewModel.searchQuery) }
 
+            BackHandler(enabled = searchInput.isNotEmpty()) {
+                searchInput = ""
+                viewModel.onSearchQueryChanged("")
+            }
+
             val searchHistory by viewModel.searchHistory.collectAsState()
 
             // ---- 2. ВЫПАДАЮЩИЕ СПИСКИ И КОМПАКТНЫЙ ПОИСК ДЛЯ ТВ ----
@@ -459,6 +464,9 @@ private fun TvCatalogContent(
                     searchInput = it
                     viewModel.onSearchQueryChanged(it)
                 },
+                onSearchCommit = {
+                    viewModel.commitSearchQuery(searchInput)
+                },
                 onTypeSelected = { type ->
                     searchInput = ""
                     viewModel.loadCatalog(type = type, genre = "", forceRefresh = true)
@@ -474,6 +482,13 @@ private fun TvCatalogContent(
             )
 
             Spacer(modifier = Modifier.height(10.dp))
+
+            // Засчитываем запрос в историю поиска при начале скролла результатов на ТВ
+            LaunchedEffect(gridState.isScrollInProgress) {
+                if (gridState.isScrollInProgress && searchInput.isNotBlank()) {
+                    viewModel.commitSearchQuery(searchInput)
+                }
+            }
 
             // ---- 3. TV MOVIES GRID ----
             when (catalogState) {
@@ -518,9 +533,15 @@ private fun TvCatalogContent(
 
                             TvMovieCard(
                                 item = item,
-                                onClick = { onNavigateToDetail(item) },
+                                onClick = {
+                                    viewModel.commitSearchQuery(searchInput)
+                                    onNavigateToDetail(item)
+                                },
                                 onFocused = {
                                     lastFocusedIndex = index
+                                    if (searchInput.isNotBlank()) {
+                                        viewModel.commitSearchQuery(searchInput)
+                                    }
                                 },
                                 focusRequester = getFocusRequesterForIndex(index),
                                 isFirstRow = isFirstRow,
@@ -670,6 +691,7 @@ private fun TvCatalogFiltersBar(
     searchQuery: String,
     searchHistory: List<String> = emptyList(),
     onSearchQueryChanged: (String) -> Unit,
+    onSearchCommit: (() -> Unit)? = null,
     onTypeSelected: (RezkaType) -> Unit,
     onSectionSelected: (SectionType) -> Unit,
     onGenreSelected: (String) -> Unit,
@@ -693,6 +715,7 @@ private fun TvCatalogFiltersBar(
             searchBarFocusRequester = searchBarFocusRequester,
             onLeft = { sidebarFocusRequester.requestFocusSafe() },
             onDown = { categoryFocusRequester.requestFocusSafe() },
+            onSearchCommit = onSearchCommit,
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -722,7 +745,10 @@ private fun TvCatalogFiltersBar(
                         border = BorderStroke(1.dp, CinemaBorder),
                         modifier = Modifier
                             .tvFocusableItem(
-                                onClick = { onSearchQueryChanged(histItem) },
+                                onClick = {
+                                    onSearchQueryChanged(histItem)
+                                    onSearchCommit?.invoke()
+                                },
                                 scaleFactor = 1.05f,
                                 shape = RoundedCornerShape(6.dp)
                             )
@@ -923,24 +949,16 @@ fun <T> TvRezkaDropdown(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
-                    if (selTrans != null && selTrans.isPremium) {
-                        if (selTrans.premiumUrl.isNotEmpty()) {
-                            AsyncImage(
-                                model = selTrans.premiumUrl,
-                                contentDescription = "Премиум",
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier
-                                    .height(12.dp)
-                                    .widthIn(max = 20.dp)
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.Star,
-                                contentDescription = "Премиум",
-                                tint = CinemaAmber,
-                                modifier = Modifier.size(12.dp)
-                            )
-                        }
+                    if (selTrans != null && selTrans.isPremium && selTrans.premiumUrl.isNotEmpty()) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        AsyncImage(
+                            model = selTrans.premiumUrl,
+                            contentDescription = "Премиум",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .height(12.dp)
+                                .widthIn(max = 20.dp)
+                        )
                     }
                 }
                 Spacer(modifier = Modifier.width(4.dp))
@@ -996,25 +1014,16 @@ fun <T> TvRezkaDropdown(
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                 modifier = Modifier.weight(1f, fill = false)
                             )
-                            if (optTrans != null && optTrans.isPremium) {
+                            if (optTrans != null && optTrans.isPremium && optTrans.premiumUrl.isNotEmpty()) {
                                 Spacer(modifier = Modifier.width(6.dp))
-                                if (optTrans.premiumUrl.isNotEmpty()) {
-                                    AsyncImage(
-                                        model = optTrans.premiumUrl,
-                                        contentDescription = "Премиум",
-                                        contentScale = ContentScale.Fit,
-                                        modifier = Modifier
-                                            .height(12.dp)
-                                            .widthIn(max = 20.dp)
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Default.Star,
-                                        contentDescription = "Премиум",
-                                        tint = CinemaAmber,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                }
+                                AsyncImage(
+                                    model = optTrans.premiumUrl,
+                                    contentDescription = "Премиум",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .height(12.dp)
+                                        .widthIn(max = 20.dp)
+                                )
                             }
                         }
                     },
@@ -1069,7 +1078,8 @@ fun TvCompactSearchBar(
     modifier: Modifier = Modifier,
     searchBarFocusRequester: FocusRequester? = null,
     onLeft: (() -> Unit)? = null,
-    onDown: (() -> Unit)? = null
+    onDown: (() -> Unit)? = null,
+    onSearchCommit: (() -> Unit)? = null
 ) {
     var isEditing by remember { mutableStateOf(false) }
     var hasBeenFocused by remember { mutableStateOf(false) }
@@ -1190,6 +1200,7 @@ fun TvCompactSearchBar(
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(
                             onSearch = {
+                                onSearchCommit?.invoke()
                                 isEditing = false
                                 keyboardController?.hide()
                                 focusManager.clearFocus()
@@ -1198,6 +1209,19 @@ fun TvCompactSearchBar(
                         modifier = Modifier
                             .fillMaxWidth()
                             .focusRequester(focusRequester)
+                            .onKeyEvent { keyEvent ->
+                                if (keyEvent.type == KeyEventType.KeyDown &&
+                                    (keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
+                                     keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
+                                     keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER)
+                                ) {
+                                    onSearchCommit?.invoke()
+                                    isEditing = false
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
+                                    true
+                                } else false
+                            }
                             .onFocusChanged { focusState ->
                                 if (focusState.isFocused) {
                                     hasBeenFocused = true

@@ -80,6 +80,7 @@ fun TvDetailContent(
     onOpenSchedule: () -> Unit,
     onBack: () -> Unit,
     onAppendNextCommentsPage: () -> Unit = {},
+    onNavigateToMovieUrl: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val backButtonFocusRequester = remember { FocusRequester() }
@@ -540,6 +541,14 @@ fun TvDetailContent(
                                 )
                             }
 
+                            if (detail.slogan.isNotEmpty()) {
+                                DetailMetaRow(
+                                    icon = Icons.Default.FormatQuote,
+                                    label = "Слоган:",
+                                    value = detail.slogan
+                                )
+                            }
+
                             if (effectiveAgeRestriction.isNotEmpty()) {
                                 DetailMetaRow(
                                     icon = Icons.Default.Explicit,
@@ -746,6 +755,100 @@ fun TvDetailContent(
                                 fontSize = 12.sp,
                                 lineHeight = 18.sp
                             )
+                        }
+                    }
+                }
+
+                // ---- Франшиза / Сага (Все части) ----
+                if (detail.franchiseItems.isNotEmpty()) {
+                    item {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = detail.franchiseTitle.ifEmpty { "Все части франшизы" },
+                                color = CinemaTextWhite,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    detail.franchiseItems.forEach { franchiseItem ->
+                                        val isCurrent = franchiseItem.isCurrent
+                                        Surface(
+                                            color = if (isCurrent) CinemaPrimary.copy(alpha = 0.12f) else Color.Transparent,
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .focusProperties { left = backButtonFocusRequester }
+                                                .onKeyEvent { event ->
+                                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                                        backButtonFocusRequester.requestFocusSafe()
+                                                        true
+                                                    } else false
+                                                }
+                                                .tvFocusableItem(
+                                                    onClick = {
+                                                        if (!isCurrent && franchiseItem.url.isNotEmpty()) {
+                                                            onNavigateToMovieUrl(franchiseItem.url)
+                                                        }
+                                                    },
+                                                    scaleFactor = 1.02f,
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    lazyListState = rightScrollState
+                                                )
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (isCurrent) Icons.Default.PlayArrow else Icons.Default.Movie,
+                                                    contentDescription = null,
+                                                    tint = if (isCurrent) CinemaPrimary else CinemaTextGray,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Text(
+                                                    text = franchiseItem.title,
+                                                    color = if (isCurrent) CinemaPrimary else CinemaTextWhite,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                if (franchiseItem.year.isNotEmpty()) {
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Text(
+                                                        text = franchiseItem.year,
+                                                        color = if (isCurrent) CinemaPrimary.copy(alpha = 0.8f) else CinemaTextGray,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal
+                                                    )
+                                                }
+                                                if (!isCurrent && franchiseItem.url.isNotEmpty()) {
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Icon(
+                                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                                        contentDescription = null,
+                                                        tint = CinemaTextGray.copy(alpha = 0.5f),
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
