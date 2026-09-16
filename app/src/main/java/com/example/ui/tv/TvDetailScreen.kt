@@ -759,7 +759,7 @@ fun TvDetailContent(
                             options = detail.translators,
                             selectedOption = currentTrans,
                             onOptionSelected = { trans -> onSelectTranslator(trans) },
-                            getLabel = { if (it.isPremium) "${it.name} (Premium 👑)" else it.name },
+                            getLabel = { it.name },
                             modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f),
                             lazyListState = rightScrollState,
                             surfaceModifier = Modifier

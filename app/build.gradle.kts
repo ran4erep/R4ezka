@@ -14,7 +14,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.ran4erep.r4ezka.bnssfk"
+    applicationId = "com.ran4erep.r4ezka.xqcjge"
     minSdk = 24
     targetSdk = 36
     versionCode = 1

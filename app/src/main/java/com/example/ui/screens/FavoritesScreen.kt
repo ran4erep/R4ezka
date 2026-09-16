@@ -1,21 +1,25 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import com.example.ui.tv.dpadScrollable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -25,6 +29,7 @@ import com.example.data.RezkaService
 import com.example.data.RezkaType
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
+import com.example.ui.tv.dpadScrollable
 
 @Composable
 fun FavoritesScreen(
@@ -118,7 +123,34 @@ fun FavoritesScreen(
                             url = RezkaService.adjustUrlToCurrentMirror(fav.url, itemType, fav.id),
                             type = itemType
                         )
-                        RezkaItemCard(item = item, onClick = { onNavigateToDetail(item) })
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            RezkaItemCard(item = item, onClick = { onNavigateToDetail(item) })
+
+                            // Кнопка для быстрого удаления из избранного
+                            Surface(
+                                onClick = { viewModel.removeFavorite(fav.id) },
+                                color = Color.Black.copy(alpha = 0.75f),
+                                shape = CircleShape,
+                                border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.7f)),
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .padding(8.dp)
+                                    .size(34.dp)
+                                    .testTag("remove_favorite_${fav.id}")
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DeleteOutline,
+                                        contentDescription = "Убрать из избранного",
+                                        tint = CinemaPrimary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

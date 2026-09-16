@@ -103,7 +103,9 @@ data class Translator(
     val id: String,
     val name: String,
     val isDefault: Boolean = false,
-    val isPremium: Boolean = false
+    val flagUrl: String = "",
+    val isPremium: Boolean = false,
+    val premiumUrl: String = ""
 ) : Serializable
 
 data class Season(

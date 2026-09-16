@@ -87,6 +87,10 @@ import com.example.data.FirebaseSyncManager
 import com.example.data.RezkaService
 import com.example.data.StreamUrl
 import com.example.data.SubtitleTrack
+import com.example.data.Translator
+import coil.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
 import com.example.ui.theme.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
@@ -124,6 +128,9 @@ fun RezkaPlayer(
     subtitle: String,
     streams: List<StreamUrl>,
     subtitleTracks: List<SubtitleTrack> = streams.firstOrNull()?.subtitles ?: emptyList(),
+    translators: List<Translator> = emptyList(),
+    currentTranslator: Translator? = null,
+    onSelectTranslator: ((Translator, Long) -> Unit)? = null,
     initialQualityIndex: Int = 0,
     startPositionMs: Long = 0L,
     isSeries: Boolean = false,
@@ -210,6 +217,7 @@ fun RezkaPlayer(
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var showSpeedDialog by remember { mutableStateOf(false) }
     var showQualityDialog by remember { mutableStateOf(false) }
+    var showTranslatorDialog by remember { mutableStateOf(false) }
 
     // Lock orientation & fullscreen in full mode; return to normal in floating mode
     DisposableEffect(activity, window, isFloating) {
@@ -1054,6 +1062,21 @@ fun RezkaPlayer(
                         }
                     }
 
+                    // Handle navigation inside Translator Selection Dialog
+                    if (showTranslatorDialog) {
+                        when (keyEvent.nativeKeyEvent.keyCode) {
+                            android.view.KeyEvent.KEYCODE_BACK,
+                            android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                            android.view.KeyEvent.KEYCODE_ENTER,
+                            android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                                showTranslatorDialog = false
+                                currentFocusArea = PlayerFocusArea.BOTTOM
+                                return@onKeyEvent true
+                            }
+                            else -> return@onKeyEvent false
+                        }
+                    }
+
                     // Main 3-tier remote D-pad navigation logic
                     when (currentFocusArea) {
                         PlayerFocusArea.MAIN -> {
@@ -1206,13 +1229,15 @@ fun RezkaPlayer(
                         PlayerFocusArea.BOTTOM -> {
                             showControls = true
                             controlsInteractionKey++
+                            val hasTranslators = translators.isNotEmpty()
+                            val maxBottomIndex = if (hasTranslators) 4 else 3
                             when (keyEvent.nativeKeyEvent.keyCode) {
                                 android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
                                     selectedBottomIndex = (selectedBottomIndex - 1).coerceAtLeast(0)
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                    selectedBottomIndex = (selectedBottomIndex + 1).coerceAtMost(3)
+                                    selectedBottomIndex = (selectedBottomIndex + 1).coerceAtMost(maxBottomIndex)
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_DPAD_UP -> {
@@ -1226,20 +1251,40 @@ fun RezkaPlayer(
                                 android.view.KeyEvent.KEYCODE_DPAD_CENTER,
                                 android.view.KeyEvent.KEYCODE_ENTER,
                                 android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                                    when (selectedBottomIndex) {
-                                        0 -> showQualityDialog = true
-                                        1 -> showSpeedDialog = true
-                                        2 -> showSubtitlesDialog = true
-                                        3 -> {
-                                            currentResizeMode = when (currentResizeMode) {
-                                                VideoResizeMode.FIT -> VideoResizeMode.ZOOM
-                                                VideoResizeMode.ZOOM -> VideoResizeMode.FILL
-                                                VideoResizeMode.FILL -> VideoResizeMode.FIT
+                                    if (hasTranslators) {
+                                        when (selectedBottomIndex) {
+                                            0 -> showQualityDialog = true
+                                            1 -> showSpeedDialog = true
+                                            2 -> showTranslatorDialog = true
+                                            3 -> showSubtitlesDialog = true
+                                            4 -> {
+                                                currentResizeMode = when (currentResizeMode) {
+                                                    VideoResizeMode.FIT -> VideoResizeMode.ZOOM
+                                                    VideoResizeMode.ZOOM -> VideoResizeMode.FILL
+                                                    VideoResizeMode.FILL -> VideoResizeMode.FIT
+                                                }
+                                                RezkaService.setDefaultResizeMode(currentResizeMode.name)
+                                                FirebaseSyncManager.onSettingsUpdated(resizeMode = currentResizeMode.name)
+                                                screenNotificationMessage = "Масштаб: ${currentResizeMode.title}"
+                                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                             }
-                                            RezkaService.setDefaultResizeMode(currentResizeMode.name)
-                                            FirebaseSyncManager.onSettingsUpdated(resizeMode = currentResizeMode.name)
-                                            screenNotificationMessage = "Масштаб: ${currentResizeMode.title}"
-                                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                        }
+                                    } else {
+                                        when (selectedBottomIndex) {
+                                            0 -> showQualityDialog = true
+                                            1 -> showSpeedDialog = true
+                                            2 -> showSubtitlesDialog = true
+                                            3 -> {
+                                                currentResizeMode = when (currentResizeMode) {
+                                                    VideoResizeMode.FIT -> VideoResizeMode.ZOOM
+                                                    VideoResizeMode.ZOOM -> VideoResizeMode.FILL
+                                                    VideoResizeMode.FILL -> VideoResizeMode.FIT
+                                                }
+                                                RezkaService.setDefaultResizeMode(currentResizeMode.name)
+                                                FirebaseSyncManager.onSettingsUpdated(resizeMode = currentResizeMode.name)
+                                                screenNotificationMessage = "Масштаб: ${currentResizeMode.title}"
+                                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                            }
                                         }
                                     }
                                     true
@@ -1438,6 +1483,8 @@ fun RezkaPlayer(
                                             }
                                             exoPlayer.seekTo(newPos)
                                             currentPosition = newPos
+                                            showControls = true
+                                            controlsInteractionKey++
 
                                             lastTapTime = now
                                             lastTapIsLeft = isLeft
@@ -1468,6 +1515,8 @@ fun RezkaPlayer(
                                             }
                                             exoPlayer.seekTo(newPos)
                                             currentPosition = newPos
+                                            showControls = true
+                                            controlsInteractionKey++
 
                                             lastTapTime = now
                                             lastTapIsLeft = isLeft
@@ -1875,6 +1924,29 @@ fun RezkaPlayer(
                             }
                         }
 
+                        // Rewind 10s button
+                        IconButton(
+                            onClick = {
+                                showControls = true
+                                controlsInteractionKey++
+                                val cur = exoPlayer.currentPosition
+                                val target = (cur - 10_000L).coerceAtLeast(0L)
+                                exoPlayer.seekTo(target)
+                                currentPosition = target
+                            },
+                            modifier = Modifier
+                                .size(50.dp)
+                                .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                .testTag("player_rewind_10_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Replay10,
+                                contentDescription = "Перемотка на 10 секунд назад",
+                                tint = CinemaTextWhite,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+
                         // Play / Pause Button
                         IconButton(
                             onClick = {
@@ -1895,6 +1967,30 @@ fun RezkaPlayer(
                                 contentDescription = "Воспроизведение/Пауза",
                                 tint = CinemaTextWhite,
                                 modifier = Modifier.size(40.dp)
+                            )
+                        }
+
+                        // Forward 10s button
+                        IconButton(
+                            onClick = {
+                                showControls = true
+                                controlsInteractionKey++
+                                val cur = exoPlayer.currentPosition
+                                val dur = exoPlayer.duration.coerceAtLeast(0L)
+                                val target = if (dur > 0) (cur + 10_000L).coerceAtMost(dur) else (cur + 10_000L)
+                                exoPlayer.seekTo(target)
+                                currentPosition = target
+                            },
+                            modifier = Modifier
+                                .size(50.dp)
+                                .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                .testTag("player_forward_10_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Forward10,
+                                contentDescription = "Перемотка на 10 секунд вперед",
+                                tint = CinemaTextWhite,
+                                modifier = Modifier.size(28.dp)
                             )
                         }
 
@@ -1952,6 +2048,7 @@ fun RezkaPlayer(
                         Slider(
                             value = currentPosition.toFloat(),
                             onValueChange = {
+                                showControls = true
                                 controlsInteractionKey++
                                 currentPosition = it.toLong()
                                 exoPlayer.seekTo(currentPosition)
@@ -1969,10 +2066,12 @@ fun RezkaPlayer(
                         )
 
                         // Secondary Bottom Controls
+                        val hasTranslators = translators.isNotEmpty()
                         val isQualityRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == 0
                         val isSpeedRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == 1
-                        val isSubtitlesRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == 2
-                        val isResizeRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == 3
+                        val isTranslatorRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && hasTranslators && selectedBottomIndex == 2
+                        val isSubtitlesRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == (if (hasTranslators) 3 else 2)
+                        val isResizeRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == (if (hasTranslators) 4 else 3)
 
                         Row(
                             modifier = Modifier
@@ -1981,7 +2080,7 @@ fun RezkaPlayer(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Left side: Quality, Speed and Subtitles buttons
+                            // Left side: Quality, Speed, Translator and Subtitles buttons
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 // Quality button
                                 Button(
@@ -2046,6 +2145,73 @@ fun RezkaPlayer(
                                     )
                                 }
 
+                                // Translator (Dubbing) button
+                                if (hasTranslators) {
+                                    Button(
+                                        onClick = {
+                                            controlsInteractionKey++
+                                            selectedBottomIndex = 2
+                                            showTranslatorDialog = true
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isTranslatorRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
+                                        ),
+                                        border = if (isTranslatorRemoteFocused) BorderStroke(2.dp, CinemaPrimary) else null,
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        modifier = Modifier
+                                            .scale(if (isTranslatorRemoteFocused) 1.08f else 1.0f)
+                                            .height(32.dp)
+                                            .testTag("player_translator_button")
+                                    ) {
+                                        if (currentTranslator != null && currentTranslator.flagUrl.isNotEmpty()) {
+                                            AsyncImage(
+                                                model = currentTranslator.flagUrl,
+                                                contentDescription = null,
+                                                contentScale = ContentScale.Fit,
+                                                modifier = Modifier
+                                                    .height(13.dp)
+                                                    .widthIn(max = 20.dp)
+                                                    .clip(RoundedCornerShape(2.dp))
+                                            )
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.RecordVoiceOver,
+                                                contentDescription = "Озвучка",
+                                                tint = CinemaPrimary,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                        }
+                                        Text(
+                                            text = currentTranslator?.name ?: "Озвучка",
+                                            color = CinemaTextWhite,
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.widthIn(max = 120.dp)
+                                        )
+                                        if (currentTranslator != null && currentTranslator.isPremium) {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            if (currentTranslator.premiumUrl.isNotEmpty()) {
+                                                AsyncImage(
+                                                    model = currentTranslator.premiumUrl,
+                                                    contentDescription = "Премиум",
+                                                    contentScale = ContentScale.Fit,
+                                                    modifier = Modifier.height(12.dp).widthIn(max = 18.dp)
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Default.Star,
+                                                    contentDescription = "Премиум",
+                                                    tint = CinemaAmber,
+                                                    modifier = Modifier.size(12.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
                                 // Subtitles (CC) button
                                 val subBtnTitle = when {
                                     !isSubtitlesEnabled || selectedSubtitleTrack == null -> "Субтитры: Выкл"
@@ -2054,7 +2220,7 @@ fun RezkaPlayer(
                                 Button(
                                     onClick = {
                                         controlsInteractionKey++
-                                        selectedBottomIndex = 2
+                                        selectedBottomIndex = if (hasTranslators) 3 else 2
                                         showSubtitlesDialog = true
                                     },
                                     colors = ButtonDefaults.buttonColors(
@@ -2095,7 +2261,7 @@ fun RezkaPlayer(
                             Button(
                                 onClick = {
                                     controlsInteractionKey++
-                                    selectedBottomIndex = 3
+                                    selectedBottomIndex = if (hasTranslators) 4 else 3
                                     currentResizeMode = when (currentResizeMode) {
                                         VideoResizeMode.FIT -> VideoResizeMode.ZOOM
                                         VideoResizeMode.ZOOM -> VideoResizeMode.FILL
@@ -2562,6 +2728,121 @@ fun RezkaPlayer(
             },
             confirmButton = {
                 TextButton(onClick = { showSubtitlesDialog = false }) {
+                    Text("Закрыть", color = CinemaPrimary)
+                }
+            }
+        )
+    }
+
+    // Translator (Dubbing) Selection Dialog
+    if (showTranslatorDialog) {
+        AlertDialog(
+            onDismissRequest = { showTranslatorDialog = false },
+            containerColor = CinemaDark,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.RecordVoiceOver,
+                        contentDescription = null,
+                        tint = CinemaPrimary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Выбор озвучки",
+                        color = CinemaTextWhite,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 380.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    translators.forEach { trans ->
+                        val isSelected = trans.id == currentTranslator?.id
+                        Surface(
+                            color = if (isSelected) CinemaPrimary.copy(alpha = 0.2f) else Color.Transparent,
+                            shape = RoundedCornerShape(8.dp),
+                            border = if (isSelected) BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)) else BorderStroke(0.5.dp, CinemaBorder.copy(alpha = 0.3f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showTranslatorDialog = false
+                                    val currentPos = exoPlayer.currentPosition
+                                    onSelectTranslator?.invoke(trans, currentPos)
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 10.dp, horizontal = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f, fill = false),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (trans.flagUrl.isNotEmpty()) {
+                                        AsyncImage(
+                                            model = trans.flagUrl,
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Fit,
+                                            modifier = Modifier
+                                                .padding(end = 8.dp)
+                                                .height(14.dp)
+                                                .widthIn(max = 22.dp)
+                                                .clip(RoundedCornerShape(2.dp))
+                                        )
+                                    }
+                                    Text(
+                                        text = trans.name,
+                                        color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        fontSize = 14.sp
+                                    )
+                                    if (trans.isPremium) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        if (trans.premiumUrl.isNotEmpty()) {
+                                            AsyncImage(
+                                                model = trans.premiumUrl,
+                                                contentDescription = "Премиум",
+                                                contentScale = ContentScale.Fit,
+                                                modifier = Modifier
+                                                    .height(14.dp)
+                                                    .widthIn(max = 22.dp)
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.Star,
+                                                contentDescription = "Премиум",
+                                                tint = CinemaAmber,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = CinemaPrimary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showTranslatorDialog = false }) {
                     Text("Закрыть", color = CinemaPrimary)
                 }
             }
