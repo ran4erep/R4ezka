@@ -161,11 +161,23 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         val trimmed = query.trim()
         if (trimmed.length < 2) return
         val current = _searchHistory.value.toMutableList()
-        current.removeAll { it.equals(trimmed, ignoreCase = true) }
+        // Удаляем точные совпадения, а также элементы, которые являются префиксом к новому запросу или наоборот (для очистки промежуточного мусора)
+        current.removeAll { 
+            it.equals(trimmed, ignoreCase = true) || 
+            trimmed.startsWith(it, ignoreCase = true) || 
+            it.startsWith(trimmed, ignoreCase = true) 
+        }
         current.add(0, trimmed)
         val updated = current.take(5)
         _searchHistory.value = updated
         searchHistoryPrefs.edit().putString("recent_queries", updated.joinToString("\u0000")).apply()
+    }
+
+    fun commitSearchQuery() {
+        val query = searchQuery
+        if (query.isNotBlank()) {
+            addSearchQueryToHistory(query)
+        }
     }
 
     fun removeSearchQueryFromHistory(query: String) {
@@ -285,9 +297,6 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             _catalogState.value = CatalogState.Loading
             try {
                 val results = RezkaService.search(query).distinctBy { it.id }
-                if (results.isNotEmpty()) {
-                    addSearchQueryToHistory(query)
-                }
                 _catalogState.value = CatalogState.Success(results)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -303,6 +312,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
      * Loads detailed info of selected item
      */
     fun loadDetail(url: String) {
+        commitSearchQuery()
         _detailState.value = DetailState.Loading
         _commentsState.value = MovieCommentsState(isLoading = true)
         commentsPageCache.clear()

@@ -54,6 +54,28 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private fun findMatchingEpisode(currentEpisodeName: String, targetEpisodes: List<Episode>): Episode? {
+    if (targetEpisodes.isEmpty()) return null
+    
+    // 1. Попробуем найти точное совпадение по названию (без учета регистра и пробелов)
+    val cleanCurrent = currentEpisodeName.trim().lowercase()
+    targetEpisodes.find { it.name.trim().lowercase() == cleanCurrent }?.let { return it }
+    
+    // 2. Извлечем все числа из названия текущей серии
+    val currentNumbers = Regex("""\d+""").findAll(currentEpisodeName).map { it.value.toInt() }.toList()
+    if (currentNumbers.isEmpty()) return null
+    
+    // 3. Ищем серию, в названии которой есть хотя бы одно из этих чисел
+    for (ep in targetEpisodes) {
+        val epNumbers = Regex("""\d+""").findAll(ep.name).map { it.value.toInt() }.toList()
+        if (epNumbers.any { currentNumbers.contains(it) }) {
+            return ep
+        }
+    }
+    
+    return null
+}
+
 @Composable
 fun DetailScreen(
     viewModel: RezkaViewModel,
@@ -347,14 +369,22 @@ fun DetailScreen(
                                 scope.launch {
                                     val eps = viewModel.getEpisodesForTranslator(detail.numericPostId, trans.id)
                                     if (eps.isNotEmpty()) {
+                                        val currentSeasonName = effectiveSeasons.find { it.id == selectedSeasonId }?.name ?: ""
+                                        val currentEpisodeName = effectiveSeasons.find { it.id == selectedSeasonId }?.episodes?.find { it.id == selectedEpisodeId }?.name ?: ""
+
                                         dynamicSeasons = eps
-                                        if (selectedSeasonId == null || eps.none { it.id == selectedSeasonId }) {
-                                            selectedSeasonId = eps.first().id
-                                        }
-                                        val curS = eps.find { it.id == selectedSeasonId } ?: eps.first()
-                                        if (selectedEpisodeId == null || curS.episodes.none { it.id == selectedEpisodeId }) {
-                                            selectedEpisodeId = curS.episodes.firstOrNull()?.id
-                                        }
+
+                                        val matchedSeason = eps.find { s ->
+                                            s.name.trim().lowercase() == currentSeasonName.trim().lowercase() ||
+                                            Regex("""\d+""").find(s.name)?.value == Regex("""\d+""").find(currentSeasonName)?.value
+                                        } ?: eps.first()
+
+                                        selectedSeasonId = matchedSeason.id
+
+                                        val matchedEpisode = findMatchingEpisode(currentEpisodeName, matchedSeason.episodes)
+                                            ?: matchedSeason.episodes.firstOrNull()
+
+                                        selectedEpisodeId = matchedEpisode?.id
                                     }
                                 }
                             }
@@ -923,14 +953,22 @@ fun DetailScreen(
                                                             scope.launch {
                                                                 val eps = viewModel.getEpisodesForTranslator(detail.numericPostId, trans.id)
                                                                 if (eps.isNotEmpty()) {
+                                                                    val currentSeasonName = effectiveSeasons.find { it.id == selectedSeasonId }?.name ?: ""
+                                                                    val currentEpisodeName = effectiveSeasons.find { it.id == selectedSeasonId }?.episodes?.find { it.id == selectedEpisodeId }?.name ?: ""
+
                                                                     dynamicSeasons = eps
-                                                                    if (selectedSeasonId == null || eps.none { it.id == selectedSeasonId }) {
-                                                                        selectedSeasonId = eps.first().id
-                                                                    }
-                                                                    val curS = eps.find { it.id == selectedSeasonId } ?: eps.first()
-                                                                    if (selectedEpisodeId == null || curS.episodes.none { it.id == selectedEpisodeId }) {
-                                                                        selectedEpisodeId = curS.episodes.firstOrNull()?.id
-                                                                    }
+
+                                                                    val matchedSeason = eps.find { s ->
+                                                                        s.name.trim().lowercase() == currentSeasonName.trim().lowercase() ||
+                                                                        Regex("""\d+""").find(s.name)?.value == Regex("""\d+""").find(currentSeasonName)?.value
+                                                                    } ?: eps.first()
+
+                                                                    selectedSeasonId = matchedSeason.id
+
+                                                                    val matchedEpisode = findMatchingEpisode(currentEpisodeName, matchedSeason.episodes)
+                                                                        ?: matchedSeason.episodes.firstOrNull()
+
+                                                                    selectedEpisodeId = matchedEpisode?.id
                                                                 }
                                                             }
                                                         }
@@ -1829,14 +1867,23 @@ fun DetailScreen(
                                 } else {
                                     seasonsList
                                 }
-                                val targetSeason = effectiveSeasonsList.find { it.id == curSeason?.id }
-                                    ?: effectiveSeasonsList.getOrNull(seasonsList.indexOfFirst { it.id == curSeason?.id })
-                                    ?: effectiveSeasonsList.firstOrNull()
+
+                                val currentSeasonName = curSeason?.name ?: ""
+                                val currentEpisodeName = curEpisodes.getOrNull(curEpisodeIndex)?.name ?: ""
+
+                                val targetSeason = effectiveSeasonsList.find { s ->
+                                    s.name.trim().lowercase() == currentSeasonName.trim().lowercase() ||
+                                    Regex("""\d+""").find(s.name)?.value == Regex("""\d+""").find(currentSeasonName)?.value
+                                } ?: effectiveSeasonsList.firstOrNull()
+
                                 val targetSeasonId = targetSeason?.id ?: curSeason?.id ?: 1
-                                val targetEpisode = targetSeason?.episodes?.find { it.id == curEpisodes.getOrNull(curEpisodeIndex)?.id }
-                                    ?: targetSeason?.episodes?.getOrNull(curEpisodeIndex)
-                                    ?: targetSeason?.episodes?.firstOrNull()
+
+                                val targetEpisode = if (targetSeason != null) {
+                                    findMatchingEpisode(currentEpisodeName, targetSeason.episodes) ?: targetSeason.episodes.firstOrNull()
+                                } else null
+
                                 val targetEpisodeId = targetEpisode?.id ?: curEpisodes.getOrNull(curEpisodeIndex)?.id ?: "1"
+
                                 selectedSeasonId = targetSeasonId
                                 selectedEpisodeId = targetEpisodeId
                                 startPlayback(newTrans, targetSeasonId, targetEpisodeId, currentPosMs)

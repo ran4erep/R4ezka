@@ -1509,7 +1509,10 @@ object RezkaService {
                                 val isPremImg = rawSrc.contains("premium", ignoreCase = true) ||
                                         className.contains("premium", ignoreCase = true) ||
                                         alt.contains("premium", ignoreCase = true) ||
-                                        title.contains("premium", ignoreCase = true)
+                                        title.contains("premium", ignoreCase = true) ||
+                                        rawSrc.contains("crown", ignoreCase = true) ||
+                                        rawSrc.contains("vip", ignoreCase = true) ||
+                                        rawSrc.contains("star", ignoreCase = true)
 
                                 if (isPremImg) {
                                     isPremium = true
@@ -1526,7 +1529,7 @@ object RezkaService {
                                             className.contains("flag", ignoreCase = true) ||
                                             alt.contains("flag", ignoreCase = true) ||
                                             title.contains("flag", ignoreCase = true) ||
-                                            imgElements.size == 1
+                                            (imgElements.size == 1 && !rawSrc.contains("premium", ignoreCase = true) && !rawSrc.contains("crown", ignoreCase = true) && !rawSrc.contains("vip", ignoreCase = true))
 
                                     if (isFlagImg && flagUrl.isEmpty()) {
                                         flagUrl = when {
@@ -1541,8 +1544,16 @@ object RezkaService {
                             }
 
                             if (!isPremium) {
-                                val premiumElem = tEl.selectFirst(".premium, [class*='premium'], .b-translator__item__premium, .ico-premium")
-                                if (premiumElem != null || tEl.hasClass("premium") || tEl.hasAttr("data-premium") || tEl.className().contains("premium", ignoreCase = true)) {
+                                val premiumElem = tEl.selectFirst(".premium, [class*='premium'], .b-translator__item__premium, .ico-premium, .crown, .vip")
+                                if (premiumElem != null || 
+                                    tEl.hasClass("premium") || 
+                                    tEl.hasClass("vip") ||
+                                    tEl.hasAttr("data-premium") || 
+                                    tEl.className().contains("premium", ignoreCase = true) ||
+                                    tName.contains("premium", ignoreCase = true) ||
+                                    tName.contains("премиум", ignoreCase = true) ||
+                                    tName.contains("hdrezka", ignoreCase = true)
+                                ) {
                                     isPremium = true
                                 }
                             }
