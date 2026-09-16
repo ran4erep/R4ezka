@@ -162,6 +162,9 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                         navigationStack.add(ScreenState.ThematicList(name, url))
                                     }
                                 },
+                                onNavigateToDetail = { targetItem ->
+                                    navigationStack.add(ScreenState.Detail(targetItem))
+                                },
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
@@ -383,6 +386,9 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                     } else {
                                         navigationStack.add(ScreenState.ThematicList(name, url))
                                     }
+                                },
+                                onNavigateToDetail = { targetItem ->
+                                    navigationStack.add(ScreenState.Detail(targetItem))
                                 }
                             )
                         }

@@ -84,7 +84,7 @@ fun TvDetailContent(
     onOpenSchedule: () -> Unit,
     onBack: () -> Unit,
     onAppendNextCommentsPage: () -> Unit = {},
-    onNavigateToMovieUrl: (String) -> Unit = {},
+    onNavigateToMovie: (RezkaItem) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -868,7 +868,16 @@ fun TvDetailContent(
                                                 .tvFocusableItem(
                                                     onClick = {
                                                         if (!isCurrent && franchiseItem.url.isNotEmpty()) {
-                                                            onNavigateToMovieUrl(franchiseItem.url)
+                                                            val targetItem = RezkaItem(
+                                                                id = franchiseItem.id.ifEmpty { franchiseItem.url.hashCode().toString() },
+                                                                title = franchiseItem.title,
+                                                                subtitle = franchiseItem.year,
+                                                                imageUrl = "",
+                                                                rating = "",
+                                                                url = franchiseItem.url,
+                                                                type = detail.type
+                                                            )
+                                                            onNavigateToMovie(targetItem)
                                                         }
                                                     },
                                                     scaleFactor = 1.02f,
