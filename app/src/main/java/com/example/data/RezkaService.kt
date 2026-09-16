@@ -1543,79 +1543,69 @@ object RezkaService {
                             }
 
                             val rawFranchiseItems = ArrayList<FranchiseItem>()
-                            val items = partContent.select(".b-post__partcontent_item")
-                            if (items.isNotEmpty()) {
-                                for (item in items) {
-                                    val linkEl = item.selectFirst("a")
-                                    val url = if (linkEl != null) normalizeUrl(linkEl.attr("href"), currentBaseUrl) else ""
-                                    val isCurrent = item.hasClass("current") || item.hasClass("active") || linkEl == null
-                                    val itemId = if (url.isNotEmpty()) extractIdFromUrl(url) else ""
+                            val elements = partContent.select(".b-post__partcontent_item")
+                            val finalElements = if (elements.isNotEmpty()) elements else partContent.children()
 
-                                    // Получаем .td_year и оставляем только цифры
-                                    val yearEl = item.selectFirst(".td_year")
-                                    val itemYear = if (yearEl != null) {
-                                        yearEl.text().replace(Regex("[^0-9]"), "")
-                                    } else ""
+                            for (item in finalElements) {
+                                val linkEl = if (item.tagName().equals("a", ignoreCase = true)) item else item.selectFirst("a")
+                                val url = if (linkEl != null) normalizeUrl(linkEl.attr("href"), currentBaseUrl) else ""
+                                val isCurrent = item.hasClass("current") || item.hasClass("active") || linkEl == null
+                                val itemId = if (url.isNotEmpty()) extractIdFromUrl(url) else ""
 
-                                    // Получаем название фильма: убираем .td_rating и .td_year
-                                    val titleClone = item.clone()
-                                    titleClone.select(".td_rating").remove()
-                                    titleClone.select(".td_year").remove()
-                                    
-                                    var cleanedTitle = titleClone.text().trim()
-                                    cleanedTitle = cleanedTitle.replace(Regex("""\s+"""), " ")
-                                    if (cleanedTitle.endsWith(",") || cleanedTitle.endsWith(";") || cleanedTitle.endsWith("-")) {
-                                        cleanedTitle = cleanedTitle.substring(0, cleanedTitle.length - 1).trim()
-                                    }
+                                // Находим год в элементе с классом .td_year
+                                val yearEl = item.selectFirst(".td_year")
+                                var itemYear = ""
+                                if (yearEl != null) {
+                                    // Из td_year выбрасываем всё кроме цифр
+                                    itemYear = yearEl.text().replace(Regex("[^0-9]"), "").trim()
+                                }
 
-                                    if (cleanedTitle.isNotEmpty()) {
-                                        rawFranchiseItems.add(FranchiseItem(
-                                            id = itemId,
-                                            title = cleanedTitle,
-                                            url = url,
-                                            isCurrent = isCurrent,
-                                            year = itemYear
-                                        ))
+                                // Название фильма получаем путем клонирования элемента и удаления лишних частей (.td_rating, .td_year и т.д.)
+                                val titleClone = item.clone()
+                                titleClone.select(".td_rating, .td-rating, .rating, .kp, .imdb, .td_year, .td-year, .year").remove()
+                                
+                                var cleanedTitle = titleClone.text().trim()
+                                
+                                // Если год не был найден в .td_year, попробуем извлечь его регулярным выражением из названия
+                                if (itemYear.isEmpty()) {
+                                    val yearRegex = Regex("""\((19\d{2}|20\d{2})\)""")
+                                    val yearMatch = yearRegex.find(cleanedTitle)
+                                    if (yearMatch != null) {
+                                        itemYear = yearMatch.groupValues[1]
+                                        cleanedTitle = cleanedTitle.replace(yearMatch.value, "")
+                                    } else {
+                                        // Также ищем год без скобок в конце, если есть слово "год"
+                                        val yearWordRegex = Regex("""\b(19\d{2}|20\d{2})\s*год\b""", RegexOption.IGNORE_CASE)
+                                        val yearWordMatch = yearWordRegex.find(cleanedTitle)
+                                        if (yearWordMatch != null) {
+                                            itemYear = yearWordMatch.groupValues[1]
+                                            cleanedTitle = cleanedTitle.replace(yearWordMatch.value, "")
+                                        }
                                     }
                                 }
-                            } else {
-                                // Резервный вариант, если разметки b-post__partcontent_item нет
-                                val childElements = partContent.children()
-                                if (childElements.isNotEmpty()) {
-                                    for (child in childElements) {
-                                        val titleText = child.text().trim()
-                                        if (titleText.isEmpty()) continue
+                                
+                                // Тщательно вырезаем любые остаточные упоминания рейтингов (например, "КП: 7.5", "IMDb 8.0" или в скобках)
+                                val ratingCleanRegex = Regex("""\b(?:КП|IMDb|kp|imdb|Кинопоиск|kinopoisk)\s*:?\s*\d+(?:\.\d+)?\b|\((?:КП|IMDb|kp|imdb|Кинопоиск|kinopoisk)?\s*:?\s*\d+(?:\.\d+)?\)|\(\d\.\d\)""", RegexOption.IGNORE_CASE)
+                                cleanedTitle = cleanedTitle.replace(ratingCleanRegex, "")
+                                
+                                // Вырезаем остаточную оценку, если она указана в конце строки просто числом с точкой или запятой (например, "7.5" или "7,5")
+                                cleanedTitle = cleanedTitle.replace(Regex("""\b\d[.,]\d\b\s*$"""), "")
+                                
+                                // Чистим лишние пробелы и разделители на концах названия
+                                cleanedTitle = cleanedTitle.replace(Regex("""\s+"""), " ").trim()
+                                if (cleanedTitle.endsWith(",") || cleanedTitle.endsWith(";") || cleanedTitle.endsWith("-")) {
+                                    cleanedTitle = cleanedTitle.substring(0, cleanedTitle.length - 1).trim()
+                                }
+                                cleanedTitle = cleanedTitle.replace(Regex("""\s+"""), " ").trim()
 
-                                        val linkEl = if (child.tagName().equals("a", ignoreCase = true)) child else child.selectFirst("a")
-                                        val url = if (linkEl != null) normalizeUrl(linkEl.attr("href"), currentBaseUrl) else ""
-                                        val isCurrent = child.hasClass("current") || child.hasClass("active") || linkEl == null
-                                        val itemId = if (url.isNotEmpty()) extractIdFromUrl(url) else ""
-
-                                        val (cleanedTitle, itemYear) = run {
-                                            var text = titleText
-                                            val yearRegex = Regex("""\((19\d{2}|20\d{2})\)""")
-                                            val yearMatch = yearRegex.find(text)
-                                            val extractedYear = yearMatch?.groupValues?.get(1) ?: ""
-                                            if (yearMatch != null) {
-                                                text = text.replace(yearMatch.value, "")
-                                            }
-                                            val ratingRegex = Regex("""\((?:\d+(?:\.\d+)?|КП:?\s*\d+(?:\.\d+)?|IMDb:?\s*\d+(?:\.\d+)?)\)""")
-                                            text = text.replace(ratingRegex, "")
-                                            text = text.replace(Regex("""\s+"""), " ").trim()
-                                            if (text.endsWith(",") || text.endsWith(";") || text.endsWith("-")) {
-                                                text = text.substring(0, text.length - 1).trim()
-                                            }
-                                            Pair(text, extractedYear)
-                                        }
-
-                                        rawFranchiseItems.add(FranchiseItem(
-                                            id = itemId,
-                                            title = cleanedTitle,
-                                            url = url,
-                                            isCurrent = isCurrent,
-                                            year = itemYear
-                                        ))
-                                    }
+                                if (cleanedTitle.isNotEmpty()) {
+                                    rawFranchiseItems.add(FranchiseItem(
+                                        id = itemId,
+                                        title = cleanedTitle,
+                                        url = url,
+                                        isCurrent = isCurrent,
+                                        year = itemYear
+                                    ))
                                 }
                             }
 
