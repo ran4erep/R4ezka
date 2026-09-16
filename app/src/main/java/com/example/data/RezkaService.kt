@@ -5,9 +5,6 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.collection.LruCache
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -1225,64 +1222,6 @@ object RezkaService {
     }
 
     /**
-     * Проверяет, является ли конкретная озвучка премиумной.
-     * Делает GET-запрос на страницу фильма с параметром озвучки (?t= или ?translator_id=)
-     * и ищет на ней фразу "Перевод доступен только для Premium".
-     */
-    suspend fun checkIsPremium(normalizedUrl: String, translatorId: String): Boolean = withContext(Dispatchers.IO) {
-        if (translatorId.isEmpty() || translatorId == "0") return@withContext false
-        val separator = if (normalizedUrl.contains("?")) "&" else "?"
-        
-        // 1. Попытка с ?t=
-        val tUrl = "$normalizedUrl${separator}t=$translatorId"
-        try {
-            val request = Request.Builder()
-                .url(tUrl)
-                .header("User-Agent", USER_AGENT)
-                .header("Referer", "$currentBaseUrl/")
-                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-                .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val html = response.body?.string().orEmpty()
-                    if (html.contains("Перевод доступен только для Premium")) {
-                        return@withContext true
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Ошибка проверки премиумности озвучки $translatorId на $tUrl: ${e.message}")
-        }
-
-        // 2. Попытка с ?translator_id=
-        val altUrl = "$normalizedUrl${separator}translator_id=$translatorId"
-        try {
-            val request = Request.Builder()
-                .url(altUrl)
-                .header("User-Agent", USER_AGENT)
-                .header("Referer", "$currentBaseUrl/")
-                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-                .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val html = response.body?.string().orEmpty()
-                    if (html.contains("Перевод доступен только для Premium")) {
-                        return@withContext true
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Ошибка проверки премиумности озвучки $translatorId на $altUrl: ${e.message}")
-        }
-
-        return@withContext false
-    }
-
-    /**
      * Получение страницы деталей фильма/сериала с rezka-tv.org
      */
     suspend fun getDetail(url: String): RezkaDetail = withContext(Dispatchers.IO) {
@@ -1548,19 +1487,73 @@ object RezkaService {
                         }
 
                         // Извлекаем озвучки/переводы
-                        val rawTranslators = ArrayList<Translator>()
+                        val translators = ArrayList<Translator>()
                         val translatorItems = doc.select(".b-translator__item, #translators-list li, .b-translators__list li")
+                        val mirrorUrl = currentBaseUrl.trimEnd('/')
                         for (tEl in translatorItems) {
                             val tId = tEl.attr("data-translator_id").ifEmpty { tEl.attr("data-id") }
-                            val tName = tEl.text().trim()
+                            val tName = tEl.ownText().trim().ifEmpty { tEl.text().trim() }
                             val isDefault = tEl.hasClass("active") || tEl.hasClass("current")
+
+                            var flagUrl = ""
+                            var isPremium = false
+                            var premiumUrl = ""
+
+                            val imgElements = tEl.select("img")
+                            for (img in imgElements) {
+                                val rawSrc = img.attr("src").ifEmpty { img.attr("data-src") }
+                                val title = img.attr("title").lowercase()
+                                val alt = img.attr("alt").lowercase()
+                                val className = img.className().lowercase()
+
+                                val isPremImg = rawSrc.contains("premium", ignoreCase = true) ||
+                                        className.contains("premium", ignoreCase = true) ||
+                                        alt.contains("premium", ignoreCase = true) ||
+                                        title.contains("premium", ignoreCase = true)
+
+                                if (isPremImg) {
+                                    isPremium = true
+                                    premiumUrl = when {
+                                        rawSrc.startsWith("//") -> "https:$rawSrc"
+                                        rawSrc.startsWith("/") -> "$mirrorUrl$rawSrc"
+                                        rawSrc.startsWith("http") -> rawSrc
+                                        rawSrc.isNotEmpty() -> "$mirrorUrl/$rawSrc"
+                                        else -> ""
+                                    }
+                                } else {
+                                    val isFlagImg = rawSrc.contains("flag", ignoreCase = true) ||
+                                            rawSrc.contains("/flags/", ignoreCase = true) ||
+                                            className.contains("flag", ignoreCase = true) ||
+                                            alt.contains("flag", ignoreCase = true) ||
+                                            title.contains("flag", ignoreCase = true) ||
+                                            imgElements.size == 1
+
+                                    if (isFlagImg && flagUrl.isEmpty()) {
+                                        flagUrl = when {
+                                            rawSrc.startsWith("//") -> "https:$rawSrc"
+                                            rawSrc.startsWith("/") -> "$mirrorUrl$rawSrc"
+                                            rawSrc.startsWith("http") -> rawSrc
+                                            rawSrc.isNotEmpty() -> "$mirrorUrl/$rawSrc"
+                                            else -> ""
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!isPremium) {
+                                val premiumElem = tEl.selectFirst(".premium, [class*='premium'], .b-translator__item__premium, .ico-premium")
+                                if (premiumElem != null || tEl.hasClass("premium") || tEl.hasAttr("data-premium") || tEl.className().contains("premium", ignoreCase = true)) {
+                                    isPremium = true
+                                }
+                            }
+
                             if (tId.isNotEmpty() && tName.isNotEmpty()) {
-                                rawTranslators.add(Translator(tId, tName, isDefault))
+                                translators.add(Translator(tId, tName, isDefault, flagUrl, isPremium, premiumUrl))
                             }
                         }
 
                         // Если список озвучек пуст, ищем в JS-вызовах страницы
-                        if (rawTranslators.isEmpty()) {
+                        if (translators.isEmpty()) {
                             var foundId = ""
                             val jsEventMatch = Regex("""sof\.tv\.initCDN(?:Movies|Series)Events\s*\(\s*['"]?(\d+)['"]?\s*,\s*['"]?(\d+)['"]?""", RegexOption.IGNORE_CASE).find(html)
                                 ?: Regex("""initCDN(?:Movies|Series)Events\s*\(\s*['"]?(\d+)['"]?\s*,\s*['"]?(\d+)['"]?""", RegexOption.IGNORE_CASE).find(html)
@@ -1571,22 +1564,7 @@ object RezkaService {
                                 foundId = if (jsEventMatch.groupValues.size > 2) jsEventMatch.groupValues[2] else jsEventMatch.groupValues[1]
                             }
                             // Для фильмов без выбора перевода дефолт "238" (Дубляж) гораздо надежнее "0"
-                            rawTranslators.add(Translator(foundId.ifEmpty { "238" }, "Оригинал / HDRezka", true))
-                        }
-
-                        // Проверяем каждую озвучку на премиумность в параллели
-                        val translators = try {
-                            coroutineScope {
-                                rawTranslators.map { translator ->
-                                    async {
-                                        val isPremium = checkIsPremium(normalizedUrl, translator.id)
-                                        translator.copy(isPremium = isPremium)
-                                    }
-                                }.awaitAll()
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Ошибка параллельной проверки озвучек на премиумность: ${e.message}", e)
-                            rawTranslators
+                            translators.add(Translator(foundId.ifEmpty { "238" }, "Оригинал / HDRezka", true))
                         }
 
                         val isSeriesPage = url.contains("/series/") ||

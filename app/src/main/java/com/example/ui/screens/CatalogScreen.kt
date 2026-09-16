@@ -1,7 +1,8 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -14,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -53,6 +55,8 @@ fun CatalogScreen(
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val isEndReached by viewModel.isEndReached.collectAsState()
     var searchInput by remember { mutableStateOf(viewModel.searchQuery) }
+    val searchHistory by viewModel.searchHistory.collectAsState()
+    var isSearchFocused by remember { mutableStateOf(false) }
 
     val isSyncing by viewModel.isSyncing.collectAsState()
 
@@ -95,8 +99,104 @@ fun CatalogScreen(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
                 .height(52.dp)
+                .onFocusChanged { isSearchFocused = it.isFocused }
                 .testTag("catalog_search_bar")
         )
+
+        // ---- ВСПЛЫВАЮЩАЯ ИСТОРИЯ ПОИСКА (ПОСЛЕДНИЕ 5 ЗАПРОСОВ) ----
+        AnimatedVisibility(
+            visible = searchInput.isEmpty() && isSearchFocused && searchHistory.isNotEmpty(),
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, CinemaBorder),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .testTag("search_history_container")
+            ) {
+                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.History,
+                                contentDescription = null,
+                                tint = CinemaPrimary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Недавние запросы",
+                                color = CinemaTextGray,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            text = "Очистить",
+                            color = CinemaPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .clickable { viewModel.clearSearchHistory() }
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                .testTag("clear_search_history_btn")
+                        )
+                    }
+
+                    searchHistory.take(5).forEach { query ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    searchInput = query
+                                    viewModel.onSearchQueryChanged(query)
+                                    viewModel.addSearchQueryToHistory(query)
+                                }
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                .testTag("search_history_item_$query"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.History,
+                                contentDescription = null,
+                                tint = CinemaMuted,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = query,
+                                color = CinemaTextWhite,
+                                fontSize = 14.sp,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            IconButton(
+                                onClick = { viewModel.removeSearchQueryFromHistory(query) },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Удалить из истории",
+                                    tint = CinemaTextGray,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // ---- FILTERS DROPDOWNS (Category, Section, Genre) ----
         Row(

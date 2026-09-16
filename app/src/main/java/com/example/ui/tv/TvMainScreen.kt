@@ -439,6 +439,8 @@ private fun TvCatalogContent(
         ) {
             var searchInput by remember { mutableStateOf(viewModel.searchQuery) }
 
+            val searchHistory by viewModel.searchHistory.collectAsState()
+
             // ---- 2. ВЫПАДАЮЩИЕ СПИСКИ И КОМПАКТНЫЙ ПОИСК ДЛЯ ТВ ----
             TvCatalogFiltersBar(
                 currentType = currentType,
@@ -446,6 +448,7 @@ private fun TvCatalogContent(
                 currentGenre = currentGenre,
                 genresList = genresList,
                 searchQuery = searchInput,
+                searchHistory = searchHistory,
                 searchBarFocusRequester = searchBarFocusRequester,
                 categoryFocusRequester = categoryDropdownFocusRequester,
                 sectionFocusRequester = sectionDropdownFocusRequester,
@@ -665,6 +668,7 @@ private fun TvCatalogFiltersBar(
     currentGenre: String,
     genresList: List<GenreItem>,
     searchQuery: String,
+    searchHistory: List<String> = emptyList(),
     onSearchQueryChanged: (String) -> Unit,
     onTypeSelected: (RezkaType) -> Unit,
     onSectionSelected: (SectionType) -> Unit,
@@ -691,6 +695,48 @@ private fun TvCatalogFiltersBar(
             onDown = { categoryFocusRequester.requestFocusSafe() },
             modifier = Modifier.fillMaxWidth()
         )
+
+        // Подсказки недавних запросов из истории поиска для ТВ
+        if (searchQuery.isEmpty() && searchHistory.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.History,
+                    contentDescription = null,
+                    tint = CinemaPrimary,
+                    modifier = Modifier.size(13.dp)
+                )
+                Text(
+                    text = "История:",
+                    color = CinemaTextGray,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                searchHistory.take(5).forEach { histItem ->
+                    Surface(
+                        color = CinemaDark,
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(1.dp, CinemaBorder),
+                        modifier = Modifier
+                            .tvFocusableItem(
+                                onClick = { onSearchQueryChanged(histItem) },
+                                scaleFactor = 1.05f,
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                    ) {
+                        Text(
+                            text = histItem,
+                            color = CinemaTextWhite,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+            }
+        }
 
         // 2. Выпадающие списки (снизу) - Категория, Раздел, Жанр
         Row(
@@ -856,6 +902,18 @@ fun <T> TvRezkaDropdown(
                         fontWeight = FontWeight.Medium,
                         maxLines = 1
                     )
+                    val selTrans = selectedOption as? Translator
+                    if (selTrans != null && selTrans.flagUrl.isNotEmpty()) {
+                        AsyncImage(
+                            model = selTrans.flagUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .height(12.dp)
+                                .widthIn(max = 20.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                        )
+                    }
                     Text(
                         text = getLabel(selectedOption),
                         color = CinemaTextWhite,
@@ -865,6 +923,25 @@ fun <T> TvRezkaDropdown(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
+                    if (selTrans != null && selTrans.isPremium) {
+                        if (selTrans.premiumUrl.isNotEmpty()) {
+                            AsyncImage(
+                                model = selTrans.premiumUrl,
+                                contentDescription = "Премиум",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .height(12.dp)
+                                    .widthIn(max = 20.dp)
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = "Премиум",
+                                tint = CinemaAmber,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.width(4.dp))
                 Icon(
@@ -893,14 +970,53 @@ fun <T> TvRezkaDropdown(
         ) {
             options.forEach { option ->
                 val isSelected = option == selectedOption
+                val optTrans = option as? Translator
                 DropdownMenuItem(
                     text = {
-                        Text(
-                            text = getLabel(option),
-                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                            fontSize = 12.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (optTrans != null && optTrans.flagUrl.isNotEmpty()) {
+                                AsyncImage(
+                                    model = optTrans.flagUrl,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .padding(end = 6.dp)
+                                        .height(12.dp)
+                                        .widthIn(max = 20.dp)
+                                        .clip(RoundedCornerShape(2.dp))
+                                )
+                            }
+                            Text(
+                                text = getLabel(option),
+                                color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            if (optTrans != null && optTrans.isPremium) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                if (optTrans.premiumUrl.isNotEmpty()) {
+                                    AsyncImage(
+                                        model = optTrans.premiumUrl,
+                                        contentDescription = "Премиум",
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier
+                                            .height(12.dp)
+                                            .widthIn(max = 20.dp)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Star,
+                                        contentDescription = "Премиум",
+                                        tint = CinemaAmber,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                            }
+                        }
                     },
                     trailingIcon = if (isSelected) {
                         {

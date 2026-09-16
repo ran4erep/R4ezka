@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.RezkaApplication
@@ -125,6 +126,13 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val _genresList = MutableStateFlow<List<GenreItem>>(listOf(GenreItem("Без жанра", "")))
     val genresList: StateFlow<List<GenreItem>> = _genresList.asStateFlow()
 
+    // Search History persistence (последние 5 запросов поиска)
+    private val searchHistoryPrefs by lazy {
+        getApplication<Application>().getSharedPreferences("rezka_search_history_prefs", Context.MODE_PRIVATE)
+    }
+    private val _searchHistory = MutableStateFlow<List<String>>(emptyList())
+    val searchHistory: StateFlow<List<String>> = _searchHistory.asStateFlow()
+
     var currentCatalogPage = 1
         private set
     var searchQuery = ""
@@ -137,8 +145,39 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private var searchJob: Job? = null
 
     init {
+        loadSearchHistory()
         // Load default catalog (Movies) on startup
         loadCatalog(RezkaType.MOVIE, SectionType.LATEST, "", forceRefresh = true)
+    }
+
+    private fun loadSearchHistory() {
+        val raw = searchHistoryPrefs.getString("recent_queries", "") ?: ""
+        if (raw.isNotBlank()) {
+            _searchHistory.value = raw.split("\u0000").filter { it.isNotBlank() }.take(5)
+        }
+    }
+
+    fun addSearchQueryToHistory(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.length < 2) return
+        val current = _searchHistory.value.toMutableList()
+        current.removeAll { it.equals(trimmed, ignoreCase = true) }
+        current.add(0, trimmed)
+        val updated = current.take(5)
+        _searchHistory.value = updated
+        searchHistoryPrefs.edit().putString("recent_queries", updated.joinToString("\u0000")).apply()
+    }
+
+    fun removeSearchQueryFromHistory(query: String) {
+        val current = _searchHistory.value.toMutableList()
+        current.removeAll { it.equals(query, ignoreCase = true) }
+        _searchHistory.value = current
+        searchHistoryPrefs.edit().putString("recent_queries", current.joinToString("\u0000")).apply()
+    }
+
+    fun clearSearchHistory() {
+        _searchHistory.value = emptyList()
+        searchHistoryPrefs.edit().remove("recent_queries").apply()
     }
 
     /**
@@ -246,6 +285,9 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             _catalogState.value = CatalogState.Loading
             try {
                 val results = RezkaService.search(query).distinctBy { it.id }
+                if (results.isNotEmpty()) {
+                    addSearchQueryToHistory(query)
+                }
                 _catalogState.value = CatalogState.Success(results)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -445,6 +487,13 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 repository.insertFavoriteEntity(entity)
                 FirebaseSyncManager.onFavoriteAdded(entity)
             }
+        }
+    }
+
+    fun removeFavorite(itemId: String) {
+        viewModelScope.launch {
+            repository.removeFavorite(itemId)
+            FirebaseSyncManager.onFavoriteRemoved(itemId)
         }
     }
 

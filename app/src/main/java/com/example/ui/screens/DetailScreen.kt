@@ -145,7 +145,7 @@ fun DetailScreen(
     }
 
     // Playback starting logic
-    val startPlayback = { translator: Translator, seasonId: Int, episodeId: String ->
+    val startPlayback = { translator: Translator, seasonId: Int, episodeId: String, customStartPos: Long? ->
         isDecryptingStreams = true
         selectedTranslator = translator
         selectedSeasonId = seasonId
@@ -163,7 +163,9 @@ fun DetailScreen(
                 val savedHistory = viewModel.getSavedProgressForEpisode(item.id, effectiveSeason, effectiveEpisode)
                     ?: viewModel.getSavedProgress(item.id)
 
-                val startPos = if (savedHistory != null && 
+                val startPos = if (customStartPos != null) {
+                    customStartPos
+                } else if (savedHistory != null && 
                     (savedHistory.season == effectiveSeason || !isSeries) && 
                     (savedHistory.episode == effectiveEpisode || !isSeries)) {
                     if (savedHistory.durationMs > 0 && savedHistory.progressMs >= savedHistory.durationMs - 5000L) {
@@ -214,6 +216,10 @@ fun DetailScreen(
                 isDecryptingStreams = false
             }
         }
+    }
+
+    fun startPlayback(translator: Translator, seasonId: Int, episodeId: String) {
+        startPlayback(translator, seasonId, episodeId, null)
     }
 
     Box(
@@ -797,15 +803,52 @@ fun DetailScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text(
-                                            text = if (currentTrans.isPremium) "${currentTrans.name} (Premium 👑)" else currentTrans.name,
-                                            color = CinemaTextWhite,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f, fill = false)
-                                        )
+                                        Row(
+                                            modifier = Modifier.weight(1f, fill = false),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (currentTrans.flagUrl.isNotEmpty()) {
+                                                AsyncImage(
+                                                    model = currentTrans.flagUrl,
+                                                    contentDescription = null,
+                                                    contentScale = ContentScale.Fit,
+                                                    modifier = Modifier
+                                                        .padding(end = 8.dp)
+                                                        .height(14.dp)
+                                                        .widthIn(max = 22.dp)
+                                                        .clip(RoundedCornerShape(2.dp))
+                                                )
+                                            }
+                                            Text(
+                                                text = currentTrans.name,
+                                                color = CinemaTextWhite,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
+                                            )
+                                            if (currentTrans.isPremium) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                if (currentTrans.premiumUrl.isNotEmpty()) {
+                                                    AsyncImage(
+                                                        model = currentTrans.premiumUrl,
+                                                        contentDescription = "Премиум",
+                                                        contentScale = ContentScale.Fit,
+                                                        modifier = Modifier
+                                                            .height(14.dp)
+                                                            .widthIn(max = 22.dp)
+                                                    )
+                                                } else {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Star,
+                                                        contentDescription = "Премиум",
+                                                        tint = CinemaAmber,
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Icon(
                                             imageVector = if (translatorDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
@@ -827,12 +870,50 @@ fun DetailScreen(
                                             val isSelected = trans.id == currentTrans.id
                                             DropdownMenuItem(
                                                 text = {
-                                                    Text(
-                                                        text = if (trans.isPremium) "${trans.name} (Premium 👑)" else trans.name,
-                                                        color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                                        fontSize = 13.sp,
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                                    )
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    ) {
+                                                        if (trans.flagUrl.isNotEmpty()) {
+                                                            AsyncImage(
+                                                                model = trans.flagUrl,
+                                                                contentDescription = null,
+                                                                contentScale = ContentScale.Fit,
+                                                                modifier = Modifier
+                                                                    .padding(end = 8.dp)
+                                                                    .height(14.dp)
+                                                                    .widthIn(max = 22.dp)
+                                                                    .clip(RoundedCornerShape(2.dp))
+                                                            )
+                                                        }
+                                                        Text(
+                                                            text = trans.name,
+                                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                            fontSize = 13.sp,
+                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                            modifier = Modifier.weight(1f, fill = false)
+                                                        )
+                                                        if (trans.isPremium) {
+                                                            Spacer(modifier = Modifier.width(6.dp))
+                                                            if (trans.premiumUrl.isNotEmpty()) {
+                                                                AsyncImage(
+                                                                    model = trans.premiumUrl,
+                                                                    contentDescription = "Премиум",
+                                                                    contentScale = ContentScale.Fit,
+                                                                    modifier = Modifier
+                                                                        .height(14.dp)
+                                                                        .widthIn(max = 22.dp)
+                                                                )
+                                                            } else {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.Star,
+                                                                    contentDescription = "Премиум",
+                                                                    tint = CinemaAmber,
+                                                                    modifier = Modifier.size(14.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
                                                 },
                                                 onClick = {
                                                     translatorDropdownExpanded = false
@@ -1733,6 +1814,40 @@ fun DetailScreen(
                 title = playerTitle,
                 subtitle = playerSubtitle,
                 streams = streams,
+                translators = currentDetail?.translators ?: emptyList(),
+                currentTranslator = selectedTranslator ?: currentDetail?.translators?.firstOrNull(),
+                onSelectTranslator = { newTrans, currentPosMs ->
+                    selectedTranslator = newTrans
+                    if (isSeries && currentDetail != null && currentDetail.numericPostId.isNotEmpty()) {
+                        scope.launch {
+                            isDecryptingStreams = true
+                            try {
+                                val fetchedSeasons = viewModel.getEpisodesForTranslator(currentDetail.numericPostId, newTrans.id)
+                                val effectiveSeasonsList = if (fetchedSeasons.isNotEmpty()) {
+                                    dynamicSeasons = fetchedSeasons
+                                    fetchedSeasons
+                                } else {
+                                    seasonsList
+                                }
+                                val targetSeason = effectiveSeasonsList.find { it.id == curSeason?.id }
+                                    ?: effectiveSeasonsList.getOrNull(seasonsList.indexOfFirst { it.id == curSeason?.id })
+                                    ?: effectiveSeasonsList.firstOrNull()
+                                val targetSeasonId = targetSeason?.id ?: curSeason?.id ?: 1
+                                val targetEpisode = targetSeason?.episodes?.find { it.id == curEpisodes.getOrNull(curEpisodeIndex)?.id }
+                                    ?: targetSeason?.episodes?.getOrNull(curEpisodeIndex)
+                                    ?: targetSeason?.episodes?.firstOrNull()
+                                val targetEpisodeId = targetEpisode?.id ?: curEpisodes.getOrNull(curEpisodeIndex)?.id ?: "1"
+                                selectedSeasonId = targetSeasonId
+                                selectedEpisodeId = targetEpisodeId
+                                startPlayback(newTrans, targetSeasonId, targetEpisodeId, currentPosMs)
+                            } catch (e: Exception) {
+                                startPlayback(newTrans, curSeason?.id ?: 1, curEpisodes.getOrNull(curEpisodeIndex)?.id ?: "1", currentPosMs)
+                            }
+                        }
+                    } else {
+                        startPlayback(newTrans, 0, "", currentPosMs)
+                    }
+                },
                 initialQualityIndex = initialQualityIndex,
                 startPositionMs = playerStartPosition,
                 isSeries = isSeries,
