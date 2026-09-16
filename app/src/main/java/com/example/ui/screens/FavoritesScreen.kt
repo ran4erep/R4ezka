@@ -28,8 +28,10 @@ import com.example.data.RezkaItem
 import com.example.data.RezkaService
 import com.example.data.RezkaType
 import com.example.ui.RezkaViewModel
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.example.ui.theme.*
 import com.example.ui.tv.dpadScrollable
+import com.example.ui.tv.tvFocusableItem
 
 @Composable
 fun FavoritesScreen(
@@ -123,30 +125,52 @@ fun FavoritesScreen(
                             url = RezkaService.adjustUrlToCurrentMirror(fav.url, itemType, fav.id),
                             type = itemType
                         )
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            RezkaItemCard(item = item, onClick = { onNavigateToDetail(item) })
-
-                            // Кнопка для быстрого удаления из избранного
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 4.dp)
+                        ) {
+                            RezkaItemCard(
+                                item = item,
+                                onClick = { onNavigateToDetail(item) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
                             Surface(
                                 onClick = { viewModel.removeFavorite(fav.id) },
-                                color = Color.Black.copy(alpha = 0.75f),
-                                shape = CircleShape,
-                                border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.7f)),
+                                color = CinemaDark,
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.8f)),
                                 modifier = Modifier
-                                    .align(Alignment.TopStart)
-                                    .padding(8.dp)
-                                    .size(34.dp)
+                                    .fillMaxWidth()
+                                    .height(38.dp)
+                                    .tvFocusableItem(
+                                        onClick = { viewModel.removeFavorite(fav.id) },
+                                        scaleFactor = 1.04f,
+                                        focusedBorderColor = CinemaPrimary,
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
                                     .testTag("remove_favorite_${fav.id}")
                             ) {
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier.fillMaxSize()
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.DeleteOutline,
-                                        contentDescription = "Убрать из избранного",
+                                        contentDescription = "Удалить из избранного",
                                         tint = CinemaPrimary,
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Удалить",
+                                        color = CinemaTextWhite,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
                                     )
                                 }
                             }
