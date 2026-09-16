@@ -64,6 +64,10 @@ object FirebaseSyncManager {
     private val pendingProgressMap = ConcurrentHashMap<String, WatchHistoryEntity>()
     private var progressDebounceJob: Job? = null
 
+    // Провайдер локальной истории поиска и обратный вызов для синхронизации
+    var searchHistoryProvider: (() -> List<String>)? = null
+    var onSearchHistorySynced: ((List<String>) -> Unit)? = null
+
     fun init(context: Context, repository: RezkaRepository) {
         prefs = context.getSharedPreferences("r4ezka_firebase_auth", Context.MODE_PRIVATE)
         val savedUser = prefs?.getString("auth_username", null)
@@ -575,6 +579,73 @@ object FirebaseSyncManager {
     }
 
     /**
+     * Сохранение истории поиска в облако Firebase RTDB
+     */
+    fun onSearchHistoryUpdated(queries: List<String>) {
+        val key = _userKey.value ?: return
+        scope.launch {
+            try {
+                val jsonArr = org.json.JSONArray()
+                queries.take(15).forEach { query ->
+                    val clean = query.trim()
+                    if (clean.isNotEmpty()) {
+                        jsonArr.put(clean)
+                    }
+                }
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/searchHistory.json")
+                    .put(jsonArr.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                httpClient.newCall(request).execute().close()
+                Log.d(TAG, "Search history synced to cloud: ${jsonArr.length()} queries")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to sync search history to Firebase: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Очистка истории поиска в облаке Firebase RTDB
+     */
+    fun onSearchHistoryCleared() {
+        val key = _userKey.value ?: return
+        scope.launch {
+            try {
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/searchHistory.json")
+                    .delete()
+                    .build()
+                httpClient.newCall(request).execute().close()
+                Log.d(TAG, "Search history cleared in cloud")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to clear search history in Firebase: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Высокопроизводительное объединение локальной и облачной истории поиска
+     * с O(1) проверкой уникальности, сохранением хронологии и минимальной нагрузкой на CPU.
+     */
+    fun mergeSearchHistories(local: List<String>, remote: List<String>, limit: Int = 15): List<String> {
+        val result = ArrayList<String>(local.size + remote.size)
+        val seen = HashSet<String>()
+        for (q in local) {
+            val trimmed = q.trim()
+            if (trimmed.length >= 2 && seen.add(trimmed.lowercase())) {
+                result.add(trimmed)
+            }
+        }
+        for (q in remote) {
+            val trimmed = q.trim()
+            if (trimmed.length >= 2 && seen.add(trimmed.lowercase())) {
+                result.add(trimmed)
+            }
+        }
+        return if (result.size > limit) result.subList(0, limit) else result
+    }
+
+    /**
      * Полная двусторонняя синхронизация облачной базы и локального Room кэша
      */
     suspend fun syncAll(repository: RezkaRepository) = withContext(Dispatchers.IO) {
@@ -731,6 +802,45 @@ object FirebaseSyncManager {
                 Log.w(TAG, "Failed to sync settings from Firebase: ${e.message}")
             }
 
+            // 4. Синхронизация Истории поиска (недавние поисковые запросы)
+            try {
+                val searchReq = Request.Builder().url("$DATABASE_URL/users/$key/searchHistory.json").get().build()
+                val searchResp = httpClient.newCall(searchReq).execute()
+                val remoteQueries = mutableListOf<String>()
+                if (searchResp.isSuccessful) {
+                    val searchBody = searchResp.body?.string()?.trim() ?: ""
+                    if (searchBody != "null" && searchBody.isNotEmpty()) {
+                        if (searchBody.startsWith("[")) {
+                            val arr = org.json.JSONArray(searchBody)
+                            for (i in 0 until arr.length()) {
+                                val q = arr.optString(i)
+                                if (q.isNotBlank()) remoteQueries.add(q)
+                            }
+                        } else if (searchBody.startsWith("{")) {
+                            val obj = JSONObject(searchBody)
+                            val sortedKeys = obj.keys().asSequence().toList().sortedBy { it.toIntOrNull() ?: 0 }
+                            for (k in sortedKeys) {
+                                val q = obj.optString(k)
+                                if (q.isNotBlank()) remoteQueries.add(q)
+                            }
+                        }
+                    }
+                }
+
+                val localQueries = searchHistoryProvider?.invoke() ?: emptyList()
+                val mergedQueries = mergeSearchHistories(localQueries, remoteQueries)
+
+                withContext(Dispatchers.Main) {
+                    onSearchHistorySynced?.invoke(mergedQueries)
+                }
+
+                if (mergedQueries != remoteQueries && mergedQueries.isNotEmpty()) {
+                    onSearchHistoryUpdated(mergedQueries)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to sync search history from Firebase: ${e.message}")
+            }
+
             Log.d(TAG, "Sync complete: ${remoteFavorites.size} favorites, ${remoteHistory.size} history items")
         } catch (e: Exception) {
             Log.e(TAG, "Error during syncAll: ${e.message}", e)
@@ -767,6 +877,12 @@ object FirebaseSyncManager {
                     .patch(histJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 httpClient.newCall(req).execute().close()
+            }
+
+            // Выгружаем историю поиска в облако
+            val localSearch = searchHistoryProvider?.invoke() ?: emptyList()
+            if (localSearch.isNotEmpty()) {
+                onSearchHistoryUpdated(localSearch)
             }
 
             // Выгружаем настройки в облако

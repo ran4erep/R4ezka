@@ -146,6 +146,14 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         loadSearchHistory()
+        // Привязываем провайдер и коллбэк синхронизации истории поиска с Firebase
+        FirebaseSyncManager.searchHistoryProvider = {
+            _searchHistory.value
+        }
+        FirebaseSyncManager.onSearchHistorySynced = { syncedList ->
+            _searchHistory.value = syncedList
+            searchHistoryPrefs.edit().putString("recent_queries", syncedList.joinToString("\u0000")).apply()
+        }
         // Load default catalog (Movies) on startup
         loadCatalog(RezkaType.MOVIE, SectionType.LATEST, "", forceRefresh = true)
     }
@@ -153,31 +161,39 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadSearchHistory() {
         val raw = searchHistoryPrefs.getString("recent_queries", "") ?: ""
         if (raw.isNotBlank()) {
-            _searchHistory.value = raw.split("\u0000").filter { it.isNotBlank() }.take(5)
+            _searchHistory.value = raw.split("\u0000").filter { it.isNotBlank() }.take(15)
         }
     }
+
+    // Запоминаем последний зафиксированный запрос, чтобы ровно ОДНО действие (Enter, скролл или выбор фильма)
+    // добавило его в историю поиска без повторных аллокаций и лишних сетевых вызовов.
+    private var lastCommittedQuery: String = ""
 
     fun addSearchQueryToHistory(query: String) {
         val trimmed = query.trim()
         if (trimmed.length < 2) return
         val current = _searchHistory.value.toMutableList()
-        // Удаляем точные совпадения, а также элементы, которые являются префиксом к новому запросу или наоборот (для очистки промежуточного мусора)
-        current.removeAll { 
-            it.equals(trimmed, ignoreCase = true) || 
-            trimmed.startsWith(it, ignoreCase = true) || 
-            it.startsWith(trimmed, ignoreCase = true) 
-        }
+        // Удаляем только точные совпадения, чтобы похожие запросы (например, "Веном" и "Веном 2") не перезаписывали друг друга
+        current.removeAll { it.equals(trimmed, ignoreCase = true) }
         current.add(0, trimmed)
-        val updated = current.take(5)
+        val updated = current.take(15)
         _searchHistory.value = updated
         searchHistoryPrefs.edit().putString("recent_queries", updated.joinToString("\u0000")).apply()
+        FirebaseSyncManager.onSearchHistoryUpdated(updated)
     }
 
-    fun commitSearchQuery() {
-        val query = searchQuery
-        if (query.isNotBlank()) {
-            addSearchQueryToHistory(query)
-        }
+    /**
+     * Фиксирует поисковый запрос в историю ровно один раз при наступлении одного из событий:
+     * - Нажатие ввода на клавиатуре (Enter / Search)
+     * - Начало скролла выдачи
+     * - Выбор фильма из результатов
+     */
+    fun commitSearchQuery(query: String = searchQuery) {
+        val trimmed = query.trim()
+        if (trimmed.length < 2) return
+        if (trimmed.equals(lastCommittedQuery, ignoreCase = true)) return
+        lastCommittedQuery = trimmed
+        addSearchQueryToHistory(trimmed)
     }
 
     fun removeSearchQueryFromHistory(query: String) {
@@ -185,11 +201,14 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         current.removeAll { it.equals(query, ignoreCase = true) }
         _searchHistory.value = current
         searchHistoryPrefs.edit().putString("recent_queries", current.joinToString("\u0000")).apply()
+        FirebaseSyncManager.onSearchHistoryUpdated(current)
     }
 
     fun clearSearchHistory() {
         _searchHistory.value = emptyList()
+        lastCommittedQuery = ""
         searchHistoryPrefs.edit().remove("recent_queries").apply()
+        FirebaseSyncManager.onSearchHistoryCleared()
     }
 
     /**
@@ -288,6 +307,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         _isLoadingMore.value = false
 
         if (query.isBlank()) {
+            lastCommittedQuery = ""
             loadCatalog(_currentType.value, forceRefresh = true)
             return
         }
@@ -577,9 +597,10 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun getEpisodesForTranslator(
         numericId: String,
-        translatorId: String
+        translatorId: String,
+        translatorUrl: String = ""
     ): List<Season> {
-        return RezkaService.getEpisodesForTranslator(numericId, translatorId)
+        return RezkaService.getEpisodesForTranslator(numericId, translatorId, translatorUrl)
     }
 
     suspend fun getSavedProgress(itemId: String): WatchHistoryEntity? {

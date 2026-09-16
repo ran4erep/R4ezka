@@ -54,26 +54,55 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private fun findMatchingEpisode(currentEpisodeName: String, targetEpisodes: List<Episode>): Episode? {
+private fun findMatchingEpisode(
+    currentEpisodeId: String,
+    currentEpisodeName: String,
+    targetEpisodes: List<Episode>
+): Episode? {
     if (targetEpisodes.isEmpty()) return null
-    
-    // 1. Попробуем найти точное совпадение по названию (без учета регистра и пробелов)
+
+    // 1. Точное совпадение по ID серии
+    if (currentEpisodeId.isNotEmpty()) {
+        targetEpisodes.find { it.id == currentEpisodeId }?.let { return it }
+    }
+
+    // 2. Точное совпадение по названию (без учета регистра)
     val cleanCurrent = currentEpisodeName.trim().lowercase()
-    targetEpisodes.find { it.name.trim().lowercase() == cleanCurrent }?.let { return it }
-    
-    // 2. Извлечем все числа из названия текущей серии
-    val currentNumbers = Regex("""\d+""").findAll(currentEpisodeName).map { it.value.toInt() }.toList()
-    if (currentNumbers.isEmpty()) return null
-    
-    // 3. Ищем серию, в названии которой есть хотя бы одно из этих чисел
-    for (ep in targetEpisodes) {
-        val epNumbers = Regex("""\d+""").findAll(ep.name).map { it.value.toInt() }.toList()
-        if (epNumbers.any { currentNumbers.contains(it) }) {
-            return ep
+    if (cleanCurrent.isNotEmpty()) {
+        targetEpisodes.find { it.name.trim().lowercase() == cleanCurrent }?.let { return it }
+    }
+
+    // 3. Извлечем все числа из ID и названия текущей серии (поддержка сдвоенных серий 1-2, 3 и т.д.)
+    val currentNumbers = (Regex("""\d+""").findAll(currentEpisodeId).mapNotNull { it.value.toIntOrNull() } +
+            Regex("""\d+""").findAll(currentEpisodeName).mapNotNull { it.value.toIntOrNull() }).distinct().toList()
+
+    if (currentNumbers.isNotEmpty()) {
+        // Ищем серию, у которой ID или название содержит хотя бы одно из чисел
+        for (ep in targetEpisodes) {
+            val epNumbers = (Regex("""\d+""").findAll(ep.id).mapNotNull { it.value.toIntOrNull() } +
+                    Regex("""\d+""").findAll(ep.name).mapNotNull { it.value.toIntOrNull() }).distinct().toList()
+            if (epNumbers.any { currentNumbers.contains(it) }) {
+                return ep
+            }
+        }
+
+        // Если в новой озвучке меньше серий (еще не успели перевести), берем последнюю доступную серию
+        val maxCurrent = currentNumbers.maxOrNull() ?: 1
+        val lastEp = targetEpisodes.lastOrNull()
+        if (lastEp != null) {
+            val lastEpNumber = Regex("""\d+""").findAll(lastEp.id + " " + lastEp.name)
+                .mapNotNull { it.value.toIntOrNull() }.maxOrNull() ?: targetEpisodes.size
+            if (maxCurrent > lastEpNumber) {
+                return lastEp
+            }
         }
     }
-    
-    return null
+
+    return targetEpisodes.firstOrNull()
+}
+
+private fun findMatchingEpisode(currentEpisodeName: String, targetEpisodes: List<Episode>): Episode? {
+    return findMatchingEpisode("", currentEpisodeName, targetEpisodes)
 }
 
 @Composable
@@ -315,7 +344,7 @@ fun DetailScreen(
                                 selectedTranslator = translatorToUse
                                 if (!translatorToUse.isDefault && detail.type == RezkaType.SERIES && detail.numericPostId.isNotEmpty()) {
                                     try {
-                                        val fetchedSeasons = viewModel.getEpisodesForTranslator(detail.numericPostId, translatorToUse.id)
+                                        val fetchedSeasons = viewModel.getEpisodesForTranslator(detail.numericPostId, translatorToUse.id, translatorToUse.url)
                                         if (fetchedSeasons.isNotEmpty()) {
                                             dynamicSeasons = fetchedSeasons
                                         }
@@ -367,10 +396,12 @@ fun DetailScreen(
                             selectedTranslator = trans
                             if (detail.type == RezkaType.SERIES) {
                                 scope.launch {
-                                    val eps = viewModel.getEpisodesForTranslator(detail.numericPostId, trans.id)
+                                    val eps = viewModel.getEpisodesForTranslator(detail.numericPostId, trans.id, trans.url)
                                     if (eps.isNotEmpty()) {
                                         val currentSeasonName = effectiveSeasons.find { it.id == selectedSeasonId }?.name ?: ""
-                                        val currentEpisodeName = effectiveSeasons.find { it.id == selectedSeasonId }?.episodes?.find { it.id == selectedEpisodeId }?.name ?: ""
+                                        val currentEpisode = effectiveSeasons.find { it.id == selectedSeasonId }?.episodes?.find { it.id == selectedEpisodeId }
+                                        val currentEpisodeName = currentEpisode?.name ?: ""
+                                        val currentEpisodeIdVal = currentEpisode?.id ?: selectedEpisodeId.orEmpty()
 
                                         dynamicSeasons = eps
 
@@ -381,7 +412,7 @@ fun DetailScreen(
 
                                         selectedSeasonId = matchedSeason.id
 
-                                        val matchedEpisode = findMatchingEpisode(currentEpisodeName, matchedSeason.episodes)
+                                        val matchedEpisode = findMatchingEpisode(currentEpisodeIdVal, currentEpisodeName, matchedSeason.episodes)
                                             ?: matchedSeason.episodes.firstOrNull()
 
                                         selectedEpisodeId = matchedEpisode?.id
@@ -421,7 +452,8 @@ fun DetailScreen(
                         },
                         onOpenSchedule = { showScheduleCalendarDialog = true },
                         onBack = handleBack,
-                        onAppendNextCommentsPage = { viewModel.appendNextCommentsPage() }
+                        onAppendNextCommentsPage = { viewModel.appendNextCommentsPage() },
+                        onNavigateToMovieUrl = { url -> viewModel.loadDetail(url) }
                     )
                 } else {
                     // ---- SCROLLABLE MOBILE DETAIL PAGE (with TV/D-Pad support) ----
@@ -627,6 +659,14 @@ fun DetailScreen(
                                             value = detail.seriesCollection
                                         )
                                     }
+
+                                    if (detail.slogan.isNotEmpty()) {
+                                        DetailMetaRow(
+                                            icon = Icons.Default.FormatQuote,
+                                            label = "Слоган:",
+                                            value = detail.slogan
+                                        )
+                                    }
                                 }
                             }
 
@@ -799,6 +839,84 @@ fun DetailScreen(
                                     lineHeight = 19.sp
                                 )
                             }
+
+                            // Франшиза/Сага (Все части франшизы)
+                            if (detail.franchiseItems.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp)
+                                ) {
+                                    Text(
+                                        text = detail.franchiseTitle.ifEmpty { "Все части франшизы" },
+                                        color = CinemaTextWhite,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            detail.franchiseItems.forEach { franchiseItem ->
+                                                val isCurrent = franchiseItem.isCurrent
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(if (isCurrent) CinemaPrimary.copy(alpha = 0.15f) else Color.Transparent)
+                                                        .clickable(enabled = !isCurrent && franchiseItem.url.isNotEmpty()) {
+                                                            viewModel.loadDetail(franchiseItem.url)
+                                                        }
+                                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Icon(
+                                                        imageVector = if (isCurrent) Icons.Default.PlayArrow else Icons.Default.Movie,
+                                                        contentDescription = null,
+                                                        tint = if (isCurrent) CinemaPrimary else CinemaTextGray,
+                                                        modifier = Modifier.size(16.dp)
+                                                     )
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    Text(
+                                                        text = franchiseItem.title,
+                                                        color = if (isCurrent) CinemaPrimary else CinemaTextWhite,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                    if (franchiseItem.year.isNotEmpty()) {
+                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Text(
+                                                            text = franchiseItem.year,
+                                                            color = if (isCurrent) CinemaPrimary.copy(alpha = 0.8f) else CinemaTextGray,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal
+                                                        )
+                                                    }
+                                                    if (!isCurrent && franchiseItem.url.isNotEmpty()) {
+                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Icon(
+                                                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                                            contentDescription = null,
+                                                            tint = CinemaTextGray.copy(alpha = 0.6f),
+                                                            modifier = Modifier.size(14.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -858,25 +976,16 @@ fun DetailScreen(
                                                 overflow = TextOverflow.Ellipsis,
                                                 modifier = Modifier.weight(1f, fill = false)
                                             )
-                                            if (currentTrans.isPremium) {
+                                            if (currentTrans.isPremium && currentTrans.premiumUrl.isNotEmpty()) {
                                                 Spacer(modifier = Modifier.width(6.dp))
-                                                if (currentTrans.premiumUrl.isNotEmpty()) {
-                                                    AsyncImage(
-                                                        model = currentTrans.premiumUrl,
-                                                        contentDescription = "Премиум",
-                                                        contentScale = ContentScale.Fit,
-                                                        modifier = Modifier
-                                                            .height(14.dp)
-                                                            .widthIn(max = 22.dp)
-                                                    )
-                                                } else {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Star,
-                                                        contentDescription = "Премиум",
-                                                        tint = CinemaAmber,
-                                                        modifier = Modifier.size(14.dp)
-                                                    )
-                                                }
+                                                AsyncImage(
+                                                    model = currentTrans.premiumUrl,
+                                                    contentDescription = "Премиум",
+                                                    contentScale = ContentScale.Fit,
+                                                    modifier = Modifier
+                                                        .height(14.dp)
+                                                        .widthIn(max = 22.dp)
+                                                )
                                             }
                                         }
                                         Spacer(modifier = Modifier.width(8.dp))
@@ -923,38 +1032,31 @@ fun DetailScreen(
                                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                                             modifier = Modifier.weight(1f, fill = false)
                                                         )
-                                                        if (trans.isPremium) {
+                                                        if (trans.isPremium && trans.premiumUrl.isNotEmpty()) {
                                                             Spacer(modifier = Modifier.width(6.dp))
-                                                            if (trans.premiumUrl.isNotEmpty()) {
-                                                                AsyncImage(
-                                                                    model = trans.premiumUrl,
-                                                                    contentDescription = "Премиум",
-                                                                    contentScale = ContentScale.Fit,
-                                                                    modifier = Modifier
-                                                                        .height(14.dp)
-                                                                        .widthIn(max = 22.dp)
-                                                                )
-                                                            } else {
-                                                                Icon(
-                                                                    imageVector = Icons.Default.Star,
-                                                                    contentDescription = "Премиум",
-                                                                    tint = CinemaAmber,
-                                                                    modifier = Modifier.size(14.dp)
-                                                                )
-                                                            }
+                                                            AsyncImage(
+                                                                model = trans.premiumUrl,
+                                                                contentDescription = "Премиум",
+                                                                contentScale = ContentScale.Fit,
+                                                                modifier = Modifier
+                                                                    .height(14.dp)
+                                                                    .widthIn(max = 22.dp)
+                                                            )
                                                         }
                                                     }
                                                 },
-                                                onClick = {
+                                                 onClick = {
                                                     translatorDropdownExpanded = false
                                                     if (!isSelected) {
                                                         selectedTranslator = trans
                                                         if (detail.type == RezkaType.SERIES) {
                                                             scope.launch {
-                                                                val eps = viewModel.getEpisodesForTranslator(detail.numericPostId, trans.id)
+                                                                val eps = viewModel.getEpisodesForTranslator(detail.numericPostId, trans.id, trans.url)
                                                                 if (eps.isNotEmpty()) {
                                                                     val currentSeasonName = effectiveSeasons.find { it.id == selectedSeasonId }?.name ?: ""
-                                                                    val currentEpisodeName = effectiveSeasons.find { it.id == selectedSeasonId }?.episodes?.find { it.id == selectedEpisodeId }?.name ?: ""
+                                                                    val currentEpisode = effectiveSeasons.find { it.id == selectedSeasonId }?.episodes?.find { it.id == selectedEpisodeId }
+                                                                    val currentEpisodeName = currentEpisode?.name ?: ""
+                                                                    val currentEpisodeIdVal = currentEpisode?.id ?: selectedEpisodeId.orEmpty()
 
                                                                     dynamicSeasons = eps
 
@@ -965,7 +1067,7 @@ fun DetailScreen(
 
                                                                     selectedSeasonId = matchedSeason.id
 
-                                                                    val matchedEpisode = findMatchingEpisode(currentEpisodeName, matchedSeason.episodes)
+                                                                    val matchedEpisode = findMatchingEpisode(currentEpisodeIdVal, currentEpisodeName, matchedSeason.episodes)
                                                                         ?: matchedSeason.episodes.firstOrNull()
 
                                                                     selectedEpisodeId = matchedEpisode?.id
@@ -1320,16 +1422,16 @@ fun DetailScreen(
                     }
 
                     // 8. Comments / Reviews Section (Отзывы о фильме/сериале с пагинацией)
-                    item {
-                        val displayComments = if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
-                        val totalPages = maxOf(commentsState.totalPages, detail.commentsTotalPages, commentsState.currentPage)
-                        val hasPagination = totalPages > 1 || commentsState.hasMore || commentsState.currentPage > 1
-                        val totalReviewsCount = when {
-                            commentsState.totalCount > 0 -> commentsState.totalCount
-                            detail.commentsTotalCount > 0 -> detail.commentsTotalCount
-                            else -> displayComments.size
-                        }
+                    val displayComments = if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
+                    val totalPages = maxOf(commentsState.totalPages, detail.commentsTotalPages, commentsState.currentPage)
+                    val hasPagination = totalPages > 1 || commentsState.hasMore || commentsState.currentPage > 1
+                    val totalReviewsCount = when {
+                        commentsState.totalCount > 0 -> commentsState.totalCount
+                        detail.commentsTotalCount > 0 -> detail.commentsTotalCount
+                        else -> displayComments.size
+                    }
 
+                    item {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1373,53 +1475,61 @@ fun DetailScreen(
                                     )
                                 }
                             }
+                        }
+                    }
 
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            if (commentsState.isLoading && displayComments.isEmpty()) {
+                    if (commentsState.isLoading && displayComments.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 24.dp, horizontal = 16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(28.dp),
+                                        color = CinemaPrimary,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "Загрузка отзывов...",
+                                        color = CinemaTextGray,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                            }
+                        }
+                    } else if (displayComments.isEmpty()) {
+                        item {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp),
+                                colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 24.dp),
+                                        .padding(vertical = 20.dp, horizontal = 16.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(28.dp),
-                                            color = CinemaPrimary,
-                                            strokeWidth = 2.dp
-                                        )
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(
-                                            text = "Загрузка отзывов...",
-                                            color = CinemaTextGray,
-                                            fontSize = 13.sp
-                                        )
-                                    }
+                                    Text(
+                                        text = "Отзывов пока нет. Вы можете оставить первый отзыв на сайте!",
+                                        color = CinemaTextGray,
+                                        fontSize = 13.sp,
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
-                            } else if (displayComments.isEmpty()) {
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(containerColor = CinemaDark),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 20.dp, horizontal = 16.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = "Отзывов пока нет. Вы можете оставить первый отзыв на сайте!",
-                                            color = CinemaTextGray,
-                                            fontSize = 13.sp,
-                                            textAlign = TextAlign.Center
-                                        )
-                                    }
-                                }
-                            } else {
-                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    displayComments.forEach { comment ->
+                            }
+                        }
+                    } else {
+                        items(
+                            items = displayComments,
+                            key = { comment -> comment.id }
+                        ) { comment ->
                                         val startIndent = (comment.indent.coerceAtMost(3) * 14).dp
                                         Row(
                                             modifier = Modifier
@@ -1513,131 +1623,130 @@ fun DetailScreen(
                                 }
 
                                 // Блок полноценной пагинации отзывов с выбором страниц и догрузкой
-                                if (hasPagination) {
-                                    Spacer(modifier = Modifier.height(18.dp))
-
-                                    Column(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    if (hasPagination) {
+                        item {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 18.dp, bottom = 32.dp, start = 16.dp, end = 16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                // 1. Кнопка "Загрузить ещё отзывы" в текущий список
+                                if (commentsState.hasMore || commentsState.currentPage < totalPages) {
+                                    Button(
+                                        onClick = {
+                                            viewModel.appendNextCommentsPage()
+                                        },
+                                        enabled = !commentsState.isLoading && !commentsState.isLoadingMore,
+                                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = CinemaCard,
+                                            contentColor = CinemaTextWhite
+                                        ),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.35f))
                                     ) {
-                                        // 1. Кнопка "Загрузить ещё отзывы" в текущий список
-                                        if (commentsState.hasMore || commentsState.currentPage < totalPages) {
-                                            Button(
-                                                onClick = {
-                                                    viewModel.appendNextCommentsPage()
-                                                },
-                                                enabled = !commentsState.isLoading && !commentsState.isLoadingMore,
-                                                modifier = Modifier.fillMaxWidth().height(44.dp),
-                                                colors = ButtonDefaults.buttonColors(
-                                                    containerColor = CinemaCard,
-                                                    contentColor = CinemaTextWhite
-                                                ),
-                                                shape = RoundedCornerShape(10.dp),
-                                                border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.35f))
-                                            ) {
-                                                if (commentsState.isLoadingMore) {
-                                                    CircularProgressIndicator(
-                                                        modifier = Modifier.size(18.dp),
-                                                        color = CinemaPrimary,
-                                                        strokeWidth = 2.dp
-                                                    )
-                                                    Spacer(modifier = Modifier.width(8.dp))
-                                                    Text("Загрузка следующих отзывов...", fontSize = 13.sp)
-                                                } else {
-                                                    Icon(
-                                                        Icons.Default.ExpandMore,
-                                                        contentDescription = null,
-                                                        tint = CinemaPrimary,
-                                                        modifier = Modifier.size(18.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(6.dp))
+                                        if (commentsState.isLoadingMore) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(18.dp),
+                                                color = CinemaPrimary,
+                                                strokeWidth = 2.dp
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Загрузка следующих отзывов...", fontSize = 13.sp)
+                                        } else {
+                                            Icon(
+                                                Icons.Default.ExpandMore,
+                                                contentDescription = null,
+                                                tint = CinemaPrimary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Загрузить ещё отзывы (Стр. ${commentsState.currentPage + 1})",
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // 2. Постраничная панель (Номера страниц [1] [2] [3]... и стрелки Назад/Вперёд)
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        // Кнопка "Назад"
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.loadCommentsPage(commentsState.currentPage - 1); scope.launch { lazyListState.animateScrollToItem(commentsSectionIndex) }
+                                            },
+                                            enabled = commentsState.currentPage > 1 && !commentsState.isLoading && !commentsState.isLoadingMore
+                                        ) {
+                                            Icon(
+                                                Icons.AutoMirrored.Filled.ArrowBack,
+                                                contentDescription = "Предыдущая страница",
+                                                tint = if (commentsState.currentPage > 1) CinemaTextWhite else CinemaTextGray.copy(alpha = 0.4f),
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+
+                                        // Горизонтальный список номеров страниц
+                                        LazyRow(
+                                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            val pagesList = (1..totalPages).toList()
+                                            items(pagesList) { pageNum ->
+                                                val isSelected = pageNum == commentsState.currentPage
+                                                Box(
+                                                    modifier = Modifier
+                                                        .padding(horizontal = 3.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(if (isSelected) CinemaPrimary else CinemaCard)
+                                                        .border(
+                                                            1.dp,
+                                                            if (isSelected) CinemaPrimary else CinemaSecondary.copy(alpha = 0.3f),
+                                                            RoundedCornerShape(8.dp)
+                                                        )
+                                                        .clickable(enabled = !isSelected && !commentsState.isLoading) {
+                                                            viewModel.loadCommentsPage(pageNum); scope.launch { lazyListState.animateScrollToItem(commentsSectionIndex) }
+                                                        }
+                                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
                                                     Text(
-                                                        text = "Загрузить ещё отзывы (Стр. ${commentsState.currentPage + 1})",
-                                                        fontSize = 13.sp,
-                                                        fontWeight = FontWeight.Medium
+                                                        text = pageNum.toString(),
+                                                        color = if (isSelected) CinemaTextWhite else CinemaTextGray,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                                                     )
                                                 }
                                             }
                                         }
 
-                                        // 2. Постраничная панель (Номера страниц [1] [2] [3]... и стрелки Назад/Вперёд)
-                                        Card(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            colors = CardDefaults.cardColors(containerColor = CinemaDark),
-                                            shape = RoundedCornerShape(12.dp)
+                                        // Кнопка "Вперёд"
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.loadCommentsPage(commentsState.currentPage + 1); scope.launch { lazyListState.animateScrollToItem(commentsSectionIndex) }
+                                            },
+                                            enabled = (commentsState.hasMore || commentsState.currentPage < totalPages) && !commentsState.isLoading && !commentsState.isLoadingMore
                                         ) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                // Кнопка "Назад"
-                                                IconButton(
-                                                    onClick = {
-                                                        viewModel.loadCommentsPage(commentsState.currentPage - 1); scope.launch { lazyListState.animateScrollToItem(commentsSectionIndex) }
-                                                    },
-                                                    enabled = commentsState.currentPage > 1 && !commentsState.isLoading && !commentsState.isLoadingMore
-                                                ) {
-                                                    Icon(
-                                                        Icons.AutoMirrored.Filled.ArrowBack,
-                                                        contentDescription = "Предыдущая страница",
-                                                        tint = if (commentsState.currentPage > 1) CinemaTextWhite else CinemaTextGray.copy(alpha = 0.4f),
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
-                                                }
-
-                                                // Горизонтальный список номеров страниц
-                                                LazyRow(
-                                                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                                                    horizontalArrangement = Arrangement.Center,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    val pagesList = (1..totalPages).toList()
-                                                    items(pagesList) { pageNum ->
-                                                        val isSelected = pageNum == commentsState.currentPage
-                                                        Box(
-                                                            modifier = Modifier
-                                                                .padding(horizontal = 3.dp)
-                                                                .clip(RoundedCornerShape(8.dp))
-                                                                .background(if (isSelected) CinemaPrimary else CinemaCard)
-                                                                .border(
-                                                                    1.dp,
-                                                                    if (isSelected) CinemaPrimary else CinemaSecondary.copy(alpha = 0.3f),
-                                                                    RoundedCornerShape(8.dp)
-                                                                )
-                                                                .clickable(enabled = !isSelected && !commentsState.isLoading) {
-                                                                    viewModel.loadCommentsPage(pageNum); scope.launch { lazyListState.animateScrollToItem(commentsSectionIndex) }
-                                                                }
-                                                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                                                            contentAlignment = Alignment.Center
-                                                        ) {
-                                                            Text(
-                                                                text = pageNum.toString(),
-                                                                color = if (isSelected) CinemaTextWhite else CinemaTextGray,
-                                                                fontSize = 12.sp,
-                                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                                            )
-                                                        }
-                                                    }
-                                                }
-
-                                                // Кнопка "Вперёд"
-                                                IconButton(
-                                                    onClick = {
-                                                        viewModel.loadCommentsPage(commentsState.currentPage + 1); scope.launch { lazyListState.animateScrollToItem(commentsSectionIndex) }
-                                                    },
-                                                    enabled = (commentsState.hasMore || commentsState.currentPage < totalPages) && !commentsState.isLoading && !commentsState.isLoadingMore
-                                                ) {
-                                                    Icon(
-                                                        Icons.AutoMirrored.Filled.ArrowForward,
-                                                        contentDescription = "Следующая страница",
-                                                        tint = if (commentsState.hasMore || commentsState.currentPage < totalPages) CinemaTextWhite else CinemaTextGray.copy(alpha = 0.4f),
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
-                                                }
-                                            }
+                                            Icon(
+                                                Icons.AutoMirrored.Filled.ArrowForward,
+                                                contentDescription = "Следующая страница",
+                                                tint = if (commentsState.hasMore || commentsState.currentPage < totalPages) CinemaTextWhite else CinemaTextGray.copy(alpha = 0.4f),
+                                                modifier = Modifier.size(20.dp)
+                                            )
                                         }
                                     }
                                 }
@@ -1860,7 +1969,7 @@ fun DetailScreen(
                         scope.launch {
                             isDecryptingStreams = true
                             try {
-                                val fetchedSeasons = viewModel.getEpisodesForTranslator(currentDetail.numericPostId, newTrans.id)
+                                val fetchedSeasons = viewModel.getEpisodesForTranslator(currentDetail.numericPostId, newTrans.id, newTrans.url)
                                 val effectiveSeasonsList = if (fetchedSeasons.isNotEmpty()) {
                                     dynamicSeasons = fetchedSeasons
                                     fetchedSeasons
@@ -1869,7 +1978,9 @@ fun DetailScreen(
                                 }
 
                                 val currentSeasonName = curSeason?.name ?: ""
-                                val currentEpisodeName = curEpisodes.getOrNull(curEpisodeIndex)?.name ?: ""
+                                val currentEpisode = curEpisodes.getOrNull(curEpisodeIndex)
+                                val currentEpisodeName = currentEpisode?.name ?: ""
+                                val currentEpisodeIdVal = currentEpisode?.id ?: ""
 
                                 val targetSeason = effectiveSeasonsList.find { s ->
                                     s.name.trim().lowercase() == currentSeasonName.trim().lowercase() ||
@@ -1879,10 +1990,10 @@ fun DetailScreen(
                                 val targetSeasonId = targetSeason?.id ?: curSeason?.id ?: 1
 
                                 val targetEpisode = if (targetSeason != null) {
-                                    findMatchingEpisode(currentEpisodeName, targetSeason.episodes) ?: targetSeason.episodes.firstOrNull()
+                                    findMatchingEpisode(currentEpisodeIdVal, currentEpisodeName, targetSeason.episodes) ?: targetSeason.episodes.firstOrNull()
                                 } else null
 
-                                val targetEpisodeId = targetEpisode?.id ?: curEpisodes.getOrNull(curEpisodeIndex)?.id ?: "1"
+                                val targetEpisodeId = targetEpisode?.id ?: currentEpisodeIdVal.ifEmpty { "1" }
 
                                 selectedSeasonId = targetSeasonId
                                 selectedEpisodeId = targetEpisodeId

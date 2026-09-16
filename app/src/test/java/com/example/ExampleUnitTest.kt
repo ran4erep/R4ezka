@@ -196,4 +196,32 @@ class ExampleUnitTest {
         assertEquals("Пока 0 полных серий просмотрено", 0, result.watchedEpisodesCount)
         assertEquals("Прогресс должен быть 5% (половина первой из 10 серий)", 0.05f, result.totalProgressFraction, 0.005f)
     }
+
+    @Test
+    fun parseSeasonsFromDoc_handlesCombinedEpisodesAndDifferentEpisodeCounts() {
+        val html = """
+            <div id="simple-seasons-tabs">
+                <li class="b-simple_season__item" data-tab_id="1">Сезон 1</li>
+                <li class="b-simple_season__item" data-tab_id="2">Сезон 2</li>
+            </div>
+            <ul class="b-simple_episodes__list" data-season_id="1">
+                <li class="b-simple_episode__item" data-episode_id="1-2">Серия 1-2</li>
+                <li class="b-simple_episode__item" data-episode_id="3">Серия 3</li>
+            </ul>
+            <ul class="b-simple_episodes__list" data-season_id="2">
+                <li class="b-simple_episode__item" data-episode_id="1">Серия 1</li>
+                <li class="b-simple_episode__item" data-episode_id="2">Серия 2</li>
+                <li class="b-simple_episode__item" data-episode_id="3">Серия 3</li>
+            </ul>
+        """.trimIndent()
+
+        val doc = org.jsoup.Jsoup.parse(html)
+        val seasons = com.example.data.RezkaService.parseSeasonsFromDoc(doc, "56")
+
+        assertEquals("Должно быть 2 сезона", 2, seasons.size)
+        assertEquals("В первом сезоне 2 элемента (1-2 и 3)", 2, seasons[0].episodes.size)
+        assertEquals("ID первой серии должен быть 1-2", "1-2", seasons[0].episodes[0].id)
+        assertEquals("Название первой серии", "Серия 1-2", seasons[0].episodes[0].name)
+        assertEquals("Во втором сезоне 3 серии", 3, seasons[1].episodes.size)
+    }
 }

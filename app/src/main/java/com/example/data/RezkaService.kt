@@ -4,10 +4,18 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.collection.LruCache
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -421,6 +429,147 @@ object RezkaService {
     private val catalogCache = LruCache<String, List<RezkaItem>>(100)
     private val detailCache = LruCache<String, RezkaDetail>(100)
     private val streamCache = LruCache<String, List<StreamUrl>>(50)
+    // LRU кэш премиум-статуса озвучек (по ключу "${numericPostId}_${translatorId}")
+    private val translatorPremiumCache = LruCache<String, Boolean>(1000)
+    // LRU кэш сезонов и серий для каждой отдельной озвучки сериала (по ключу "${numericPostId}_${translatorId}")
+    private val seasonEpisodesCache = LruCache<String, List<Season>>(300)
+    // Фоновый скоуп для бережной параллельной предзагрузки серий остальных озвучек
+    private val prefetchScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val prefetchSemaphore = Semaphore(2)
+
+    // Динамически распарсенный со страницы адрес официальной SVG-иконки премиума
+    @Volatile
+    private var lastParsedPremiumIconUrl: String = ""
+
+    private fun isFlagImage(rawSrc: String, el: org.jsoup.nodes.Element): Boolean {
+        if (rawSrc.isBlank()) return false
+        val lowerSrc = rawSrc.lowercase()
+        val isFlagPath = lowerSrc.contains("flag") || lowerSrc.contains("/flags/") || lowerSrc.contains("flags/")
+        val isFlagClass = el.className().contains("flag", ignoreCase = true)
+        val isFlagAlt = el.attr("alt").contains("flag", ignoreCase = true)
+        val isFlagTitle = el.attr("title").contains("flag", ignoreCase = true)
+        return isFlagPath || isFlagClass || isFlagAlt || isFlagTitle
+    }
+
+    /**
+     * Проверяет, является ли конкретный пункт озвучки премиумным.
+     * Озвучка премиумная ТОГДА И ТОЛЬКО ТОГДА, когда перед её названием в HTML есть SVG-иконка или признаки премиума.
+     */
+    fun hasPremiumSvgIcon(tEl: org.jsoup.nodes.Element): Boolean {
+        // 1. Наличие векторного тега svg внутри элемента озвучки
+        if (tEl.selectFirst("svg") != null) {
+            return true
+        }
+        // 2. Наличие векторного тега use (векторные спрайты)
+        if (tEl.selectFirst("use") != null) {
+            return true
+        }
+        // 3. Наличие img тега с SVG, который НЕ является флагом страны
+        for (img in tEl.select("img")) {
+            val rawSrc = img.attr("src").ifEmpty { img.attr("data-src") }
+            if (rawSrc.isNotBlank() && rawSrc.contains(".svg", ignoreCase = true) && !isFlagImage(rawSrc, img)) {
+                return true
+            }
+        }
+        // 4. Наличие класса или атрибута премиума у элемента озвучки или его дочерних элементов
+        if (tEl.hasClass("prem") || tEl.hasClass("premium") || tEl.hasClass("b-translator__item--prem")) {
+            return true
+        }
+        if (tEl.selectFirst("[class*='prem'], [class*='vip'], [class*='star']") != null) {
+            return true
+        }
+        if (tEl.hasAttr("data-prem") || tEl.attr("data-premium") == "1" || tEl.attr("data-is_prem") == "1") {
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Динамическое извлечение адреса SVG-иконки прямо из элемента озвучки.
+     * По разметке HDRezka перед названием премиум-озвучки находится SVG-иконка (тег img или svg/use).
+     */
+    fun extractSvgIconFromTranslator(tEl: org.jsoup.nodes.Element, baseUrl: String = currentBaseUrl): String {
+        // 1. Поиск в img тегах внутри элемента озвучки
+        val imgElements = tEl.select("img")
+        for (img in imgElements) {
+            val rawSrc = img.attr("src").ifEmpty { img.attr("data-src") }
+            if (rawSrc.isBlank()) continue
+            if (!isFlagImage(rawSrc, img) && rawSrc.contains(".svg", ignoreCase = true)) {
+                val clean = rawSrc.substringBefore("#")
+                val normalized = normalizeUrl(clean, baseUrl)
+                if (normalized.isNotEmpty()) return normalized
+            }
+        }
+
+        // 2. Поиск в svg / use тегах внутри элемента озвучки (векторный спрайт)
+        for (use in tEl.select("svg use, use")) {
+            val href = use.attr("href").ifEmpty { use.attr("xlink:href") }
+            if (href.contains(".svg", ignoreCase = true)) {
+                val clean = href.substringBefore("#")
+                val normalized = normalizeUrl(clean, baseUrl)
+                if (normalized.isNotEmpty()) return normalized
+            }
+        }
+
+        // 3. Поиск любых других элементов с атрибутом *.svg внутри элемента озвучки перед текстом
+        for (el in tEl.select("[src*='.svg'], [data-src*='.svg'], [href*='.svg'], [xlink:href*='.svg']")) {
+            val raw = el.attr("src").ifEmpty { el.attr("data-src") }.ifEmpty { el.attr("href") }.ifEmpty { el.attr("xlink:href") }
+            if (raw.isNotBlank() && !isFlagImage(raw, el) && raw.contains(".svg", ignoreCase = true)) {
+                val clean = raw.substringBefore("#")
+                val normalized = normalizeUrl(clean, baseUrl)
+                if (normalized.isNotEmpty()) return normalized
+            }
+        }
+        return ""
+    }
+
+    /**
+     * Динамический поиск адреса SVG-иконки премиума в контейнере озвучек или на странице.
+     */
+    fun extractSvgIconFromPage(doc: org.jsoup.nodes.Document, baseUrl: String = currentBaseUrl): String {
+        val listContainer = doc.selectFirst("#translators-list, .b-translators__list, .b-translator__block")
+        if (listContainer != null) {
+            for (img in listContainer.select("img")) {
+                val rawSrc = img.attr("src").ifEmpty { img.attr("data-src") }
+                if (rawSrc.isNotBlank() && !isFlagImage(rawSrc, img) && rawSrc.contains(".svg", ignoreCase = true)) {
+                    val clean = rawSrc.substringBefore("#")
+                    val normalized = normalizeUrl(clean, baseUrl)
+                    if (normalized.isNotEmpty()) return normalized
+                }
+            }
+            for (use in listContainer.select("svg use, use")) {
+                val href = use.attr("href").ifEmpty { use.attr("xlink:href") }
+                if (href.contains(".svg", ignoreCase = true)) {
+                    val clean = href.substringBefore("#")
+                    val normalized = normalizeUrl(clean, baseUrl)
+                    if (normalized.isNotEmpty()) return normalized
+                }
+            }
+        }
+
+        val premImg = doc.selectFirst("img[src*='prem'][src*='.svg'], img[data-src*='prem'][data-src*='.svg'], img[src*='prem-icon'], [class*='prem'] img[src*='.svg']")
+        if (premImg != null) {
+            val src = premImg.attr("src").ifEmpty { premImg.attr("data-src") }
+            val clean = src.substringBefore("#")
+            val normalized = normalizeUrl(clean, baseUrl)
+            if (normalized.isNotEmpty()) return normalized
+        }
+        return ""
+    }
+
+    /**
+     * Динамическое получение URL официальной векторной (SVG) иконки премиума HDRezka.
+     * В первую очередь возвращает адрес, распарсенный прямо со страницы перед названием озвучки.
+     */
+    fun getPremiumIconUrl(mirrorUrl: String = currentBaseUrl): String {
+        if (lastParsedPremiumIconUrl.isNotEmpty()) {
+            return lastParsedPremiumIconUrl
+        }
+        val host = mirrorUrl.toHttpUrlOrNull()?.host
+            ?: mirrorUrl.removePrefix("https://").removePrefix("http://").substringBefore("/").substringBefore(":")
+        val staticHost = if (host.startsWith("static.")) host else "static.$host"
+        return "https://$staticHost/templates/hdrezka/images/prem-icon.svg"
+    }
 
     // Авторизация пользователя
     private val _isLoggedIn = MutableStateFlow(false)
@@ -692,6 +841,8 @@ object RezkaService {
         catalogCache.evictAll()
         detailCache.evictAll()
         streamCache.evictAll()
+        seasonEpisodesCache.evictAll()
+        translatorPremiumCache.evictAll()
         categoryGenres.clear()
         cookieJar.clear()
         try {
@@ -1302,9 +1453,10 @@ object RezkaService {
                         var director = ""
                         var ageRestriction = ""
                         var duration = ""
+                        var slogan = ""
                         val inCollections = ArrayList<String>()
                         var seriesCollection = ""
-                        val actors = ArrayList<String>()
+                        val actors = LinkedHashSet<String>()
 
                         val infoRows = doc.select(".b-post__info tr")
                         for (row in infoRows) {
@@ -1347,7 +1499,10 @@ object RezkaService {
                                 label.contains("время") || label.contains("длительность") -> {
                                     duration = value
                                 }
-                                label.contains("из серии") || label.contains("франшиза") || label.contains("серия") -> {
+                                label.contains("слоган") -> {
+                                    slogan = value
+                                }
+                                label.contains("из серии") || label.contains("франшиз") || label.contains("серия") || label.contains("серии") -> {
                                     seriesCollection = value
                                 }
                                 label.contains("в ролях") || label.contains("актеры") || label.contains("актёры") -> {
@@ -1359,6 +1514,113 @@ object RezkaService {
                                     }
                                 }
                             }
+                        }
+
+                        // Тщательный высокопроизводительный парсинг франшизы (связанных частей фильма/сериала)
+                        var franchiseTitle = ""
+                        val franchiseItems = ArrayList<FranchiseItem>()
+
+                        // Поиск заголовка франшизы в .b-sidetitle
+                        val franchiseLinkTitle = doc.selectFirst(".b-sidetitle .b-post__franchise_link_title, .b-post__franchise_link_title")
+                        if (franchiseLinkTitle != null) {
+                            franchiseTitle = franchiseLinkTitle.text().trim()
+                        } else {
+                            val sideTitle = doc.selectFirst(".b-sidetitle")
+                            if (sideTitle != null) {
+                                franchiseTitle = sideTitle.text().trim()
+                            }
+                        }
+
+                        if (franchiseTitle.endsWith(":")) {
+                            franchiseTitle = franchiseTitle.substring(0, franchiseTitle.length - 1).trim()
+                        }
+
+                        // Поиск списка связанных частей франшизы
+                        val partContent = doc.selectFirst(".b-post__partcontent")
+                        if (partContent != null) {
+                            if (franchiseTitle.isEmpty()) {
+                                franchiseTitle = "Все части франшизы"
+                            }
+
+                            val rawFranchiseItems = ArrayList<FranchiseItem>()
+                            val items = partContent.select(".b-post__partcontent_item")
+                            if (items.isNotEmpty()) {
+                                for (item in items) {
+                                    val linkEl = item.selectFirst("a")
+                                    val url = if (linkEl != null) normalizeUrl(linkEl.attr("href"), currentBaseUrl) else ""
+                                    val isCurrent = item.hasClass("current") || item.hasClass("active") || linkEl == null
+                                    val itemId = if (url.isNotEmpty()) extractIdFromUrl(url) else ""
+
+                                    // Получаем .td_year и оставляем только цифры
+                                    val yearEl = item.selectFirst(".td_year")
+                                    val itemYear = if (yearEl != null) {
+                                        yearEl.text().replace(Regex("[^0-9]"), "")
+                                    } else ""
+
+                                    // Получаем название фильма: убираем .td_rating и .td_year
+                                    val titleClone = item.clone()
+                                    titleClone.select(".td_rating").remove()
+                                    titleClone.select(".td_year").remove()
+                                    
+                                    var cleanedTitle = titleClone.text().trim()
+                                    cleanedTitle = cleanedTitle.replace(Regex("""\s+"""), " ")
+                                    if (cleanedTitle.endsWith(",") || cleanedTitle.endsWith(";") || cleanedTitle.endsWith("-")) {
+                                        cleanedTitle = cleanedTitle.substring(0, cleanedTitle.length - 1).trim()
+                                    }
+
+                                    if (cleanedTitle.isNotEmpty()) {
+                                        rawFranchiseItems.add(FranchiseItem(
+                                            id = itemId,
+                                            title = cleanedTitle,
+                                            url = url,
+                                            isCurrent = isCurrent,
+                                            year = itemYear
+                                        ))
+                                    }
+                                }
+                            } else {
+                                // Резервный вариант, если разметки b-post__partcontent_item нет
+                                val childElements = partContent.children()
+                                if (childElements.isNotEmpty()) {
+                                    for (child in childElements) {
+                                        val titleText = child.text().trim()
+                                        if (titleText.isEmpty()) continue
+
+                                        val linkEl = if (child.tagName().equals("a", ignoreCase = true)) child else child.selectFirst("a")
+                                        val url = if (linkEl != null) normalizeUrl(linkEl.attr("href"), currentBaseUrl) else ""
+                                        val isCurrent = child.hasClass("current") || child.hasClass("active") || linkEl == null
+                                        val itemId = if (url.isNotEmpty()) extractIdFromUrl(url) else ""
+
+                                        val (cleanedTitle, itemYear) = run {
+                                            var text = titleText
+                                            val yearRegex = Regex("""\((19\d{2}|20\d{2})\)""")
+                                            val yearMatch = yearRegex.find(text)
+                                            val extractedYear = yearMatch?.groupValues?.get(1) ?: ""
+                                            if (yearMatch != null) {
+                                                text = text.replace(yearMatch.value, "")
+                                            }
+                                            val ratingRegex = Regex("""\((?:\d+(?:\.\d+)?|КП:?\s*\d+(?:\.\d+)?|IMDb:?\s*\d+(?:\.\d+)?)\)""")
+                                            text = text.replace(ratingRegex, "")
+                                            text = text.replace(Regex("""\s+"""), " ").trim()
+                                            if (text.endsWith(",") || text.endsWith(";") || text.endsWith("-")) {
+                                                text = text.substring(0, text.length - 1).trim()
+                                            }
+                                            Pair(text, extractedYear)
+                                        }
+
+                                        rawFranchiseItems.add(FranchiseItem(
+                                            id = itemId,
+                                            title = cleanedTitle,
+                                            url = url,
+                                            isCurrent = isCurrent,
+                                            year = itemYear
+                                        ))
+                                    }
+                                }
+                            }
+
+                            // Инвертируем порядок элементов серии (чтобы первые части шли первыми сверху вниз)
+                            franchiseItems.addAll(rawFranchiseItems.reversed())
                         }
 
                         // Дополнительный поиск актёров, если в таблице не было
@@ -1487,95 +1749,126 @@ object RezkaService {
                         }
 
                         // Извлекаем озвучки/переводы
-                        val translators = ArrayList<Translator>()
                         val translatorItems = doc.select(".b-translator__item, #translators-list li, .b-translators__list li")
                         val mirrorUrl = currentBaseUrl.trimEnd('/')
+
+                        // Наличие премиум-контента на текущей (первой) открытой странице фильма
+                        val isCurrentPagePremium = html.contains("b-post__prem_content") || doc.selectFirst(".b-post__prem_content") != null
+
+                        // Динамический поиск адреса SVG-иконки прямо со страницы
+                        var pagePremIconUrl = extractSvgIconFromPage(doc, currentBaseUrl)
+                        if (pagePremIconUrl.isNotEmpty()) {
+                            lastParsedPremiumIconUrl = pagePremIconUrl
+                        }
+
+                        data class RawTranslatorItem(
+                            val id: String,
+                            val name: String,
+                            val isDefault: Boolean,
+                            val flagUrl: String,
+                            val isPremium: Boolean,
+                            val svgIconUrl: String,
+                            val url: String = ""
+                        )
+
+                        val rawTranslators = ArrayList<RawTranslatorItem>()
                         for (tEl in translatorItems) {
                             val tId = tEl.attr("data-translator_id").ifEmpty { tEl.attr("data-id") }
                             val tName = tEl.ownText().trim().ifEmpty { tEl.text().trim() }
                             val isDefault = tEl.hasClass("active") || tEl.hasClass("current")
 
-                            var flagUrl = ""
-                            var isPremium = false
-                            var premiumUrl = ""
+                            // Проверяем наличие SVG-иконки премиума перед названием озвучки
+                            val isPrem = hasPremiumSvgIcon(tEl)
+                            val itemSvgIcon = if (isPrem) extractSvgIconFromTranslator(tEl, currentBaseUrl) else ""
+                            if (itemSvgIcon.isNotEmpty()) {
+                                if (pagePremIconUrl.isEmpty()) {
+                                    pagePremIconUrl = itemSvgIcon
+                                }
+                                lastParsedPremiumIconUrl = itemSvgIcon
+                            }
 
+                            var flagUrl = ""
                             val imgElements = tEl.select("img")
                             for (img in imgElements) {
                                 val rawSrc = img.attr("src").ifEmpty { img.attr("data-src") }
-                                val title = img.attr("title").lowercase()
-                                val alt = img.attr("alt").lowercase()
-                                val className = img.className().lowercase()
-
-                                val isPremImg = rawSrc.contains("premium", ignoreCase = true) ||
-                                        className.contains("premium", ignoreCase = true) ||
-                                        alt.contains("premium", ignoreCase = true) ||
-                                        title.contains("premium", ignoreCase = true) ||
-                                        rawSrc.contains("crown", ignoreCase = true) ||
-                                        rawSrc.contains("vip", ignoreCase = true) ||
-                                        rawSrc.contains("star", ignoreCase = true)
-
-                                if (isPremImg) {
-                                    isPremium = true
-                                    premiumUrl = when {
-                                        rawSrc.startsWith("//") -> "https:$rawSrc"
-                                        rawSrc.startsWith("/") -> "$mirrorUrl$rawSrc"
-                                        rawSrc.startsWith("http") -> rawSrc
-                                        rawSrc.isNotEmpty() -> "$mirrorUrl/$rawSrc"
-                                        else -> ""
-                                    }
-                                } else {
-                                    val isFlagImg = rawSrc.contains("flag", ignoreCase = true) ||
-                                            rawSrc.contains("/flags/", ignoreCase = true) ||
-                                            className.contains("flag", ignoreCase = true) ||
-                                            alt.contains("flag", ignoreCase = true) ||
-                                            title.contains("flag", ignoreCase = true) ||
-                                            (imgElements.size == 1 && !rawSrc.contains("premium", ignoreCase = true) && !rawSrc.contains("crown", ignoreCase = true) && !rawSrc.contains("vip", ignoreCase = true))
-
-                                    if (isFlagImg && flagUrl.isEmpty()) {
-                                        flagUrl = when {
-                                            rawSrc.startsWith("//") -> "https:$rawSrc"
-                                            rawSrc.startsWith("/") -> "$mirrorUrl$rawSrc"
-                                            rawSrc.startsWith("http") -> rawSrc
-                                            rawSrc.isNotEmpty() -> "$mirrorUrl/$rawSrc"
-                                            else -> ""
-                                        }
-                                    }
+                                if (rawSrc.isBlank()) continue
+                                if (isFlagImage(rawSrc, img) && flagUrl.isEmpty()) {
+                                    flagUrl = normalizeUrl(rawSrc, currentBaseUrl)
+                                } else if (imgElements.size == 1 && flagUrl.isEmpty() && !rawSrc.contains(".svg", ignoreCase = true)) {
+                                    flagUrl = normalizeUrl(rawSrc, currentBaseUrl)
                                 }
                             }
 
-                            if (!isPremium) {
-                                val premiumElem = tEl.selectFirst(".premium, [class*='premium'], .b-translator__item__premium, .ico-premium, .crown, .vip")
-                                if (premiumElem != null || 
-                                    tEl.hasClass("premium") || 
-                                    tEl.hasClass("vip") ||
-                                    tEl.hasAttr("data-premium") || 
-                                    tEl.className().contains("premium", ignoreCase = true) ||
-                                    tName.contains("premium", ignoreCase = true) ||
-                                    tName.contains("премиум", ignoreCase = true) ||
-                                    tName.contains("hdrezka", ignoreCase = true)
-                                ) {
-                                    isPremium = true
-                                }
+                            // Извлекаем ссылку на отдельную страницу этой конкретной озвучки
+                            val rawHref = tEl.selectFirst("a")?.attr("href") ?: ""
+                            val rawDataUrl = tEl.attr("data-url")
+                            val rawDataLink = tEl.attr("data-link")
+                            val rawDirectHref = tEl.attr("href")
+                            val candidateUrl = rawHref.ifEmpty { rawDataUrl }.ifEmpty { rawDataLink }.ifEmpty { rawDirectHref }.trim()
+
+                            val transPageUrl = if (candidateUrl.isNotEmpty()) {
+                                normalizeUrl(candidateUrl, currentBaseUrl)
+                            } else if (isDefault) {
+                                normalizedUrl
+                            } else {
+                                ""
                             }
 
                             if (tId.isNotEmpty() && tName.isNotEmpty()) {
-                                translators.add(Translator(tId, tName, isDefault, flagUrl, isPremium, premiumUrl))
+                                rawTranslators.add(RawTranslatorItem(tId, tName, isDefault, flagUrl, isPrem, itemSvgIcon, transPageUrl))
                             }
                         }
 
                         // Если список озвучек пуст, ищем в JS-вызовах страницы
-                        if (translators.isEmpty()) {
+                        if (rawTranslators.isEmpty()) {
                             var foundId = ""
                             val jsEventMatch = Regex("""sof\.tv\.initCDN(?:Movies|Series)Events\s*\(\s*['"]?(\d+)['"]?\s*,\s*['"]?(\d+)['"]?""", RegexOption.IGNORE_CASE).find(html)
                                 ?: Regex("""initCDN(?:Movies|Series)Events\s*\(\s*['"]?(\d+)['"]?\s*,\s*['"]?(\d+)['"]?""", RegexOption.IGNORE_CASE).find(html)
-                                ?: Regex(""""translator_id"\s*:\s*"?(\d+)"?""", RegexOption.IGNORE_CASE).find(html)
-                                ?: Regex("""data-translator_id=["']?(\d+)["']?""", RegexOption.IGNORE_CASE).find(html)
+                            ?: Regex(""""translator_id"\s*:\s*"?(\d+)"?""", RegexOption.IGNORE_CASE).find(html)
+                            ?: Regex("""data-translator_id=["']?(\d+)["']?""", RegexOption.IGNORE_CASE).find(html)
 
                             if (jsEventMatch != null) {
                                 foundId = if (jsEventMatch.groupValues.size > 2) jsEventMatch.groupValues[2] else jsEventMatch.groupValues[1]
                             }
-                            // Для фильмов без выбора перевода дефолт "238" (Дубляж) гораздо надежнее "0"
-                            translators.add(Translator(foundId.ifEmpty { "238" }, "Оригинал / HDRezka", true))
+                            rawTranslators.add(
+                                RawTranslatorItem(
+                                    id = foundId.ifEmpty { "238" },
+                                    name = "Оригинал / HDRezka",
+                                    isDefault = true,
+                                    flagUrl = "",
+                                    isPremium = false,
+                                    svgIconUrl = "",
+                                    url = normalizedUrl
+                                )
+                            )
+                        }
+
+                        val effectivePremIcon = pagePremIconUrl.ifEmpty { lastParsedPremiumIconUrl.ifEmpty { getPremiumIconUrl(currentBaseUrl) } }
+
+                        val translators = ArrayList<Translator>(rawTranslators.size)
+                        for (item in rawTranslators) {
+                            val isPrem = item.isPremium
+                            val premUrl = if (isPrem) {
+                                item.svgIconUrl.ifEmpty { effectivePremIcon }
+                            } else {
+                                ""
+                            }
+                            if (numericPostId.isNotEmpty()) {
+                                synchronized(translatorPremiumCache) {
+                                    translatorPremiumCache.put("${numericPostId}_${item.id}", isPrem)
+                                }
+                            }
+                            translators.add(
+                                Translator(
+                                    id = item.id,
+                                    name = item.name,
+                                    isDefault = item.isDefault,
+                                    flagUrl = item.flagUrl,
+                                    isPremium = isPrem,
+                                    premiumUrl = premUrl,
+                                    url = item.url
+                                )
+                            )
                         }
 
                         val isSeriesPage = url.contains("/series/") ||
@@ -1586,43 +1879,45 @@ object RezkaService {
 
                         var seasons = ArrayList<Season>()
                         if (type == RezkaType.SERIES) {
-                            val defaultTranslatorId = translators.find { it.isDefault }?.id ?: translators.firstOrNull()?.id ?: "0"
-                            // 1. Попытка получить полный актуальный список сезонов и серий через AJAX get_episodes
-                            try {
-                                val fetched = getEpisodesForTranslator(numericPostId, defaultTranslatorId)
-                                if (fetched.isNotEmpty()) {
-                                    seasons = ArrayList(fetched)
+                            val defaultTranslator = translators.find { it.isDefault } ?: translators.firstOrNull()
+                            val defaultTranslatorId = defaultTranslator?.id ?: "0"
+                            val defaultTranslatorUrl = defaultTranslator?.url.orEmpty().ifEmpty { normalizedUrl }
+
+                            // 1. Сначала парсим серии напрямую из HTML структуры текущей страницы (это быстрее всего и точнее всего для дефолтной озвучки)
+                            val parsedFromCurrentPage = parseSeasonsFromDoc(doc, defaultTranslatorId)
+                            if (parsedFromCurrentPage.isNotEmpty()) {
+                                seasons = ArrayList(parsedFromCurrentPage)
+                            } else {
+                                // Если в HTML текущей страницы не было серий, пробуем AJAX / getEpisodesForTranslator
+                                try {
+                                    val fetched = getEpisodesForTranslator(numericPostId, defaultTranslatorId, defaultTranslatorUrl)
+                                    if (fetched.isNotEmpty()) {
+                                        seasons = ArrayList(fetched)
+                                    }
+                                } catch (e: Exception) {
+                                    if (e is kotlinx.coroutines.CancellationException) throw e
+                                    Log.w(TAG, "Ошибка получения серий для дефолтной озвучки: ${e.message}")
                                 }
-                            } catch (e: Exception) {
-                                if (e is kotlinx.coroutines.CancellationException) throw e
-                                Log.w(TAG, "Ошибка предзагрузки серий через AJAX: ${e.message}")
                             }
 
-                            // 2. Если AJAX не вернул, парсим напрямую из HTML структуры страницы
-                            if (seasons.isEmpty()) {
-                                val seasonTabs = doc.select(".b-simple_seasons__list .b-simple_season__item, #simple-seasons-tabs .b-simple_season__item, .b-seasons__list li")
-                                if (seasonTabs.isNotEmpty()) {
-                                    for (sEl in seasonTabs) {
-                                        val sId = sEl.attr("data-season_id").toIntOrNull()
-                                            ?: sEl.attr("data-tab_id").toIntOrNull()
-                                            ?: Regex("""\d+""").find(sEl.text())?.value?.toIntOrNull()
-                                            ?: continue
-                                        val sName = sEl.text().trim().ifEmpty { "Сезон $sId" }
-                                        val epList = ArrayList<Episode>()
-                                        val epTabs = doc.select(".b-simple_episodes__list[data-season_id=$sId] .b-simple_episode__item, #simple-episodes-tabs[data-season_id=$sId] li, [data-season_id=$sId] .b-simple_episode__item, [data-season_id=$sId][data-episode_id]")
-                                        for (epEl in epTabs) {
-                                            val rawEpId = epEl.attr("data-episode_id")
-                                                .ifEmpty { epEl.attr("data-id") }
-                                                .ifEmpty { epEl.attr("data-episode") }
-                                                .trim()
-                                            if (rawEpId.isNotEmpty()) {
-                                                val epText = epEl.text().trim()
-                                                val epName = if (epText.isNotEmpty()) epText else "Серия $rawEpId"
-                                                epList.add(Episode(id = rawEpId, name = epName, seasonId = sId, translatorId = defaultTranslatorId))
-                                            }
-                                        }
-                                        if (epList.isNotEmpty()) {
-                                            seasons.add(Season(sId, sName, epList.distinctBy { it.id }))
+                            // Сохраняем серии дефолтной озвучки в оперативный LRU-кэш
+                            if (seasons.isNotEmpty() && numericPostId.isNotEmpty()) {
+                                synchronized(seasonEpisodesCache) {
+                                    seasonEpisodesCache.put("${numericPostId}_${defaultTranslatorId}", seasons)
+                                    seasonEpisodesCache.put("${numericPostId}_0", seasons)
+                                }
+                            }
+
+                            // Фоновая асинхронная предзагрузка серий для остальных озвучек в оперативный кэш
+                            if (numericPostId.isNotEmpty() && translators.size > 1) {
+                                prefetchScope.launch {
+                                    for (t in translators) {
+                                        if (t.id != defaultTranslatorId) {
+                                            try {
+                                                prefetchSemaphore.withPermit {
+                                                    getEpisodesForTranslator(numericPostId, t.id, t.url)
+                                                }
+                                            } catch (_: Exception) {}
                                         }
                                     }
                                 }
@@ -1645,9 +1940,12 @@ object RezkaService {
                             director = director,
                             ageRestriction = ageRestriction,
                             duration = duration,
+                            slogan = slogan,
                             inCollections = inCollections,
                             seriesCollection = seriesCollection,
-                            actors = actors,
+                            franchiseTitle = franchiseTitle,
+                            franchiseItems = franchiseItems,
+                            actors = actors.toList(),
                             trailerUrl = trailerUrl,
                             comments = comments,
                             commentsTotalPages = commentsTotalPages,
@@ -1863,28 +2161,169 @@ object RezkaService {
     }
 
     /**
-     * Загрузка списка сезонов и серий для конкретной выбранной озвучки (AJAX get_episodes)
+     * Высокопроизводительный парсер сезонов и серий из DOM-дерева документа Rezka.
+     * Корректно извлекает сдвоенные серии ("1-2"), кастомные ID и разное число серий.
+     */
+    fun parseSeasonsFromDoc(doc: org.jsoup.nodes.Document, translatorId: String): List<Season> {
+        val seasons = ArrayList<Season>()
+        val seasonTabs = doc.select(
+            ".b-simple_seasons__list .b-simple_season__item, " +
+            "#simple-seasons-tabs .b-simple_season__item, " +
+            ".b-seasons__list li, " +
+            "#simple-seasons-tabs li, " +
+            "li[data-season_id], " +
+            "li[data-tab_id]"
+        )
+        if (seasonTabs.isNotEmpty()) {
+            for (sEl in seasonTabs) {
+                val sId = sEl.attr("data-season_id").toIntOrNull()
+                    ?: sEl.attr("data-tab_id").toIntOrNull()
+                    ?: Regex("""\d+""").find(sEl.text())?.value?.toIntOrNull()
+                    ?: continue
+                val sName = sEl.text().trim().ifEmpty { "Сезон $sId" }
+                val epList = ArrayList<Episode>()
+                val epTabs = doc.select(
+                    ".b-simple_episodes__list[data-season_id=$sId] .b-simple_episode__item, " +
+                    "#simple-episodes-tabs[data-season_id=$sId] li, " +
+                    "[data-season_id=$sId] .b-simple_episode__item, " +
+                    "[data-season_id=$sId] li, " +
+                    "li[data-season_id=$sId]"
+                )
+                for (epEl in epTabs) {
+                    val rawEpId = epEl.attr("data-episode_id")
+                        .ifEmpty { epEl.attr("data-id") }
+                        .ifEmpty { epEl.attr("data-episode") }
+                        .trim()
+                    val epText = epEl.text().trim()
+                    val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
+                    if (finalId.isNotEmpty()) {
+                        val epName = if (epText.isNotEmpty()) epText else "Серия $finalId"
+                        epList.add(Episode(id = finalId, name = epName, seasonId = sId, translatorId = translatorId))
+                    }
+                }
+                if (epList.isEmpty()) {
+                    val seasonContainer = doc.selectFirst("ul[data-season_id=$sId], div[data-season_id=$sId], [data-season_id=$sId]")
+                    val subElements = seasonContainer?.select("li, .b-simple_episode__item, [data-episode_id]") ?: emptyList()
+                    for (epEl in subElements) {
+                        val rawEpId = epEl.attr("data-episode_id")
+                            .ifEmpty { epEl.attr("data-id") }
+                            .ifEmpty { epEl.attr("data-episode") }
+                            .trim()
+                        val epText = epEl.text().trim()
+                        val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
+                        if (finalId.isNotEmpty()) {
+                            val epName = if (epText.isNotEmpty()) epText else "Серия $finalId"
+                            epList.add(Episode(id = finalId, name = epName, seasonId = sId, translatorId = translatorId))
+                        }
+                    }
+                }
+                if (epList.isNotEmpty()) {
+                    seasons.add(Season(sId, sName, epList.distinctBy { it.id }))
+                }
+            }
+        } else {
+            // Одиночный сезон (мини-сериал / аниме без вкладок сезонов)
+            val epElements = doc.select(
+                ".b-simple_episodes__list .b-simple_episode__item, " +
+                "#simple-episodes-tabs li, " +
+                ".b-simple_episode__item, " +
+                "li[data-episode_id], " +
+                "[data-episode_id]"
+            )
+            val epList = ArrayList<Episode>()
+            for (epEl in epElements) {
+                val rawEpId = epEl.attr("data-episode_id").ifEmpty { epEl.attr("data-id") }.ifEmpty { epEl.attr("data-episode") }.trim()
+                val epText = epEl.text().trim()
+                val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
+                if (finalId.isNotEmpty()) {
+                    val epName = if (epText.isNotEmpty()) epText else "Серия $finalId"
+                    epList.add(Episode(id = finalId, name = epName, seasonId = 1, translatorId = translatorId))
+                }
+            }
+            if (epList.isNotEmpty()) {
+                seasons.add(Season(1, "Сезон 1", epList.distinctBy { it.id }))
+            }
+        }
+        return seasons
+    }
+
+    /**
+     * Загрузка списка сезонов и серий для конкретной выбранной озвучки.
+     * Принимает translatorUrl: URL отдельной страницы этой озвучки.
+     * При переходе на страницу озвучки парсит актуальные серии и сезоны этой озвучки.
      */
     suspend fun getEpisodesForTranslator(
         numericId: String,
-        translatorId: String
+        translatorId: String,
+        translatorUrl: String = ""
     ): List<Season> = withContext(Dispatchers.IO) {
         val cleanId = extractNumericId(numericId)
         val cleanTranslatorId = translatorId.trim()
-        val endpoint = "$currentBaseUrl/ajax/get_episodes/?t=${System.currentTimeMillis()}"
+        val cacheKey = "${cleanId}_${cleanTranslatorId}"
 
+        // 0. Быстрая отдача из оперативного LRU-кэша (0ms задержка, 0 CPU)
+        synchronized(seasonEpisodesCache) {
+            seasonEpisodesCache.get(cacheKey)?.let { cached ->
+                if (cached.isNotEmpty()) return@withContext cached
+            }
+        }
+
+        // 1. Попытка загрузить HTML персональной страницы озвучки (если есть URL страницы)
+        if (translatorUrl.isNotBlank()) {
+            try {
+                val effectiveUrl = adjustUrlToCurrentMirror(translatorUrl)
+                val req = Request.Builder()
+                    .url(effectiveUrl)
+                    .header("User-Agent", USER_AGENT)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+                    .header("Referer", "$currentBaseUrl/")
+                    .build()
+
+                val pageHtml = client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) resp.body?.string() ?: "" else ""
+                }
+
+                if (pageHtml.isNotBlank()) {
+                    val pageDoc = Jsoup.parse(pageHtml)
+
+                    // Обновляем премиум-статус озвучки прямо с ее персональной страницы
+                    val isPrem = pageHtml.contains("b-post__prem_content") || pageDoc.selectFirst(".b-post__prem_content") != null
+                    if (isPrem) {
+                        synchronized(translatorPremiumCache) {
+                            translatorPremiumCache.put(cacheKey, true)
+                        }
+                    }
+
+                    val parsedFromPage = parseSeasonsFromDoc(pageDoc, cleanTranslatorId)
+                    if (parsedFromPage.isNotEmpty()) {
+                        synchronized(seasonEpisodesCache) {
+                            seasonEpisodesCache.put(cacheKey, parsedFromPage)
+                        }
+                        return@withContext parsedFromPage
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.w(TAG, "Не удалось загрузить серии со страницы озвучки $translatorUrl: ${e.message}")
+            }
+        }
+
+        // 2. Попытка получить через AJAX get_episodes
+        val endpoint = "$currentBaseUrl/ajax/get_cdn_series/"
         try {
             val formBuilder = FormBody.Builder()
                 .add("id", cleanId)
                 .add("translator_id", cleanTranslatorId)
                 .add("action", "get_episodes")
 
+            val refererUrl = if (translatorUrl.isNotBlank()) adjustUrlToCurrentMirror(translatorUrl) else "$currentBaseUrl/"
             val request = Request.Builder()
                 .url(endpoint)
                 .post(formBuilder.build())
                 .header("User-Agent", USER_AGENT)
                 .header("X-Requested-With", "XMLHttpRequest")
-                .header("Referer", "$currentBaseUrl/")
+                .header("Referer", refererUrl)
                 .header("Origin", currentBaseUrl)
                 .header("Accept", "application/json, text/javascript, */*; q=0.01")
                 .build()
@@ -1910,7 +2349,7 @@ object RezkaService {
                                     ?: continue
                                 val sName = sEl.text().trim().ifEmpty { "Сезон $sId" }
                                 val epList = ArrayList<Episode>()
-                                
+
                                 val epElements = episodesDoc.select(
                                     ".b-simple_episodes__list[data-season_id=$sId] .b-simple_episode__item, " +
                                     "#simple-episodes-tabs[data-season_id=$sId] li, " +
@@ -1967,7 +2406,11 @@ object RezkaService {
                                 seasonsList.add(Season(1, "Сезон 1", epList.distinctBy { it.id }))
                             }
                         }
+
                         if (seasonsList.isNotEmpty()) {
+                            synchronized(seasonEpisodesCache) {
+                                seasonEpisodesCache.put(cacheKey, seasonsList)
+                            }
                             return@withContext seasonsList
                         }
                     }
@@ -1975,8 +2418,21 @@ object RezkaService {
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Log.w(TAG, "Ошибка загрузки серий для озвучки $cleanTranslatorId: ${e.message}")
+            Log.w(TAG, "Ошибка загрузки серий через AJAX для озвучки $cleanTranslatorId: ${e.message}")
         }
+
+        // 3. Безопасный фоллбэк: если есть кэшированные серии дефолтной озвучки для этого тайтла
+        synchronized(seasonEpisodesCache) {
+            val defaultKey = "${cleanId}_0"
+            val fallback = seasonEpisodesCache.get(defaultKey)
+            if (fallback != null && fallback.isNotEmpty()) {
+                val adapted = fallback.map { s ->
+                    s.copy(episodes = s.episodes.map { ep -> ep.copy(translatorId = cleanTranslatorId) })
+                }
+                return@withContext adapted
+            }
+        }
+
         return@withContext emptyList()
     }
 
