@@ -145,6 +145,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private var searchJob: Job? = null
 
     init {
+        RezkaService.clearCache()
         loadSearchHistory()
         // Привязываем провайдер и коллбэк синхронизации истории поиска с Firebase
         FirebaseSyncManager.searchHistoryProvider = {
