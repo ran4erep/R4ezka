@@ -42,15 +42,18 @@ private class SkullParticle(
         radius = (sizeDp * density) / 2f
         x = Random.nextFloat() * screenWidthPx
         y = Random.nextFloat() * screenHeightPx
-        
-        val speedDp = Random.nextFloat() * 25f + 15f // 15 to 40 dp/sec speed
+
+        val speedDp = Random.nextFloat() * 35f + 20f // 20 to 55 dp/sec speed
         val speedPx = speedDp * density
-        val angle = Random.nextFloat() * (2f * Math.PI.toFloat())
-        vx = kotlin.math.cos(angle) * speedPx
-        vy = kotlin.math.sin(angle) * speedPx
         
+        // Преобладающий поток слева направо (углы от -35° до +35°) для красивого перелета через весь широкий ландшафтный экран
+        val angleDeg = Random.nextFloat() * 70f - 35f
+        val angleRad = angleDeg * (Math.PI.toFloat() / 180f)
+        vx = kotlin.math.cos(angleRad) * speedPx
+        vy = kotlin.math.sin(angleRad) * speedPx
+
         rotation = Random.nextFloat() * 360f
-        vRot = (Random.nextFloat() - 0.5f) * 36f // deg/sec slow smooth rotation
+        vRot = (Random.nextFloat() - 0.5f) * 36f // Медленное плавное вращение
         alpha = Random.nextFloat() * 0.45f + 0.45f
     }
 }
@@ -155,12 +158,28 @@ private fun SkullsParticleCanvas(
     val particles = remember { Array(numParticles) { SkullParticle() } }
     var tick by remember { mutableLongStateOf(0L) }
 
+    var prevWidth by remember { mutableFloatStateOf(0f) }
+    var prevHeight by remember { mutableFloatStateOf(0f) }
+
     LaunchedEffect(canvasWidth, canvasHeight) {
         if (canvasWidth <= 0f || canvasHeight <= 0f) return@LaunchedEffect
-        
-        particles.forEach { p ->
-            p.initRandom(canvasWidth, canvasHeight, density)
+
+        if (prevWidth <= 0f || prevHeight <= 0f) {
+            // Первичная инициализация
+            particles.forEach { p ->
+                p.initRandom(canvasWidth, canvasHeight, density)
+            }
+        } else if (prevWidth != canvasWidth || prevHeight != canvasHeight) {
+            // Масштабирование координат при смене ориентации экранов (портрет -> ландшафт)
+            val scaleX = canvasWidth / prevWidth
+            val scaleY = canvasHeight / prevHeight
+            particles.forEach { p ->
+                p.x = (p.x * scaleX).coerceIn(0f, canvasWidth)
+                p.y = (p.y * scaleY).coerceIn(0f, canvasHeight)
+            }
         }
+        prevWidth = canvasWidth
+        prevHeight = canvasHeight
 
         var lastNanos = System.nanoTime()
         while (true) {
@@ -174,19 +193,23 @@ private fun SkullsParticleCanvas(
                 p.y += p.vy * dt
                 p.rotation = (p.rotation + p.vRot * dt) % 360f
 
-                // Запас по расстоянию (margin) для полного заезда за край экрана перед переносом
                 val margin = p.radius * 3.0f + 16f * density
 
-                if (p.x < -margin) {
-                    p.x = canvasWidth + margin
-                } else if (p.x > canvasWidth + margin) {
+                // Перенос черепков с вылетом за противоположные границы экрана
+                if (p.x > canvasWidth + margin) {
                     p.x = -margin
+                    p.y = Random.nextFloat() * canvasHeight
+                } else if (p.x < -margin) {
+                    p.x = canvasWidth + margin
+                    p.y = Random.nextFloat() * canvasHeight
                 }
 
-                if (p.y < -margin) {
-                    p.y = canvasHeight + margin
-                } else if (p.y > canvasHeight + margin) {
+                if (p.y > canvasHeight + margin) {
                     p.y = -margin
+                    p.x = Random.nextFloat() * canvasWidth
+                } else if (p.y < -margin) {
+                    p.y = canvasHeight + margin
+                    p.x = Random.nextFloat() * canvasWidth
                 }
             }
 
