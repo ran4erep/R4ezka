@@ -75,7 +75,7 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE }}
         run: |
           echo "Decoding release keystore from secrets..."
-          echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
+          echo "$KEYSTORE_BASE64" | tr -d '\r\n' | base64 -d > release.keystore
 
       - name: Run Unit Tests
         run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
@@ -85,6 +85,7 @@ jobs:
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.STORE_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
