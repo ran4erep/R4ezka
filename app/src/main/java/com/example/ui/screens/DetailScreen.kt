@@ -2220,7 +2220,8 @@ fun DetailScreen(
                         val epNumberInSeason = if (curEpisodeIndex >= 0) {
                             curEpisodeIndex + 1
                         } else {
-                            selectedEpisodeId?.filter { it.isDigit() }?.toIntOrNull() ?: 1
+                            val parsedNum = selectedEpisodeId?.filter { it.isDigit() }?.toIntOrNull() ?: 1
+                            if (parsedNum > 2500) 1 else parsedNum
                         }
 
                         val calculatedEpisodeIndex = if (isSeries) {
@@ -2232,7 +2233,8 @@ fun DetailScreen(
                         val displayEpNumber = if (curEpisodeIndex >= 0) {
                             "${curEpisodeIndex + 1}"
                         } else {
-                            selectedEpisodeId?.filter { it.isDigit() }?.takeIf { it.isNotEmpty() } ?: "1"
+                            val parsedNum = selectedEpisodeId?.filter { it.isDigit() }?.toIntOrNull() ?: 1
+                            if (parsedNum > 2500) "1" else "$parsedNum"
                         }
 
                         viewModel.saveWatchProgress(
