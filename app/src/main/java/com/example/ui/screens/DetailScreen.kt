@@ -147,12 +147,14 @@ fun DetailScreen(
     }
 
     // Player Trigger States
+    var isPlayerOpen by remember { mutableStateOf(false) }
     var activePlayerStreams by remember { mutableStateOf<List<StreamUrl>?>(null) }
     var initialQualityIndex by remember { mutableIntStateOf(0) }
     var playerTitle by remember { mutableStateOf("") }
     var playerSubtitle by remember { mutableStateOf("") }
     var playerStartPosition by remember { mutableStateOf(0L) }
     var isDecryptingStreams by remember { mutableStateOf(false) }
+    var playbackJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     // Dialog state for "Ask" quality mode
     var pendingStreamsForDialog by remember { mutableStateOf<List<StreamUrl>?>(null) }
@@ -188,15 +190,23 @@ fun DetailScreen(
     var showScheduleCalendarDialog by remember { mutableStateOf(false) }
     var isActorsExpanded by remember { mutableStateOf(false) }
 
-    // Intercept system Back button so exiting player returns to movie details, NOT to home/search!
-    BackHandler(enabled = activePlayerStreams != null) {
+    val closePlayer = {
+        playbackJob?.cancel()
+        playbackJob = null
+        isPlayerOpen = false
         activePlayerStreams = null
+        isDecryptingStreams = false
+    }
+
+    // Intercept system Back button so exiting player returns to movie details, NOT to home/search!
+    BackHandler(enabled = isPlayerOpen || activePlayerStreams != null) {
+        closePlayer()
     }
 
     // Handle manual back button on movie detail screen
     val handleBack = {
-        if (activePlayerStreams != null) {
-            activePlayerStreams = null
+        if (isPlayerOpen || activePlayerStreams != null) {
+            closePlayer()
         } else {
             viewModel.clearDetail()
             onBack()
@@ -205,20 +215,29 @@ fun DetailScreen(
 
     // Playback starting logic
     val startPlayback = { translator: Translator, seasonId: Int, episodeId: String, customStartPos: Long? ->
+        playbackJob?.cancel()
+        isPlayerOpen = true
         isDecryptingStreams = true
         selectedTranslator = translator
         selectedSeasonId = seasonId
         selectedEpisodeId = episodeId
-        scope.launch {
+
+        val currentDetail = (detailState as? DetailState.Success)?.detail
+        val isSeries = currentDetail?.let { it.type == RezkaType.SERIES } ?: (item.type == RezkaType.SERIES)
+        val effectiveSeason = if (isSeries) seasonId.coerceAtLeast(1) else 0
+        val effectiveEpisode = if (isSeries) (if (episodeId.isBlank() || episodeId == "0") "1" else episodeId) else ""
+
+        playerTitle = item.title
+        playerSubtitle = if (isSeries) {
+            "Сезон $effectiveSeason, Серия $effectiveEpisode (${translator.name})"
+        } else {
+            translator.name
+        }
+
+        playbackJob = scope.launch {
             try {
-                val currentDetail = (detailState as? DetailState.Success)?.detail
-                val isSeries = currentDetail?.let { it.type == RezkaType.SERIES } ?: (item.type == RezkaType.SERIES)
                 val targetId = currentDetail?.numericPostId?.ifEmpty { null } ?: item.id
 
-                val effectiveSeason = if (isSeries) seasonId.coerceAtLeast(1) else 0
-                val effectiveEpisode = if (isSeries) (if (episodeId.isBlank() || episodeId == "0") "1" else episodeId) else ""
-
-                // Check for saved watch progress for this exact season/episode or general movie progress
                 val savedHistory = viewModel.getSavedProgressForEpisode(item.id, effectiveSeason, effectiveEpisode)
                     ?: viewModel.getSavedProgress(item.id)
 
@@ -228,7 +247,7 @@ fun DetailScreen(
                     (savedHistory.season == effectiveSeason || !isSeries) && 
                     (savedHistory.episode == effectiveEpisode || !isSeries)) {
                     if (savedHistory.durationMs > 0 && savedHistory.progressMs >= savedHistory.durationMs - 5000L) {
-                        0L // Reset to start if near end of video
+                        0L
                     } else {
                         savedHistory.progressMs
                     }
@@ -245,32 +264,26 @@ fun DetailScreen(
                 )
 
                 if (streams.isNotEmpty()) {
-                    val titleText = item.title
-                    val subtitleText = if (isSeries) {
-                        "Сезон $effectiveSeason, Серия $effectiveEpisode (${translator.name})"
-                    } else {
-                        translator.name
-                    }
-
                     if (defaultQuality == RezkaService.QUALITY_ASK) {
-                        // Open Quality Prompt Dialog
                         pendingStreamsForDialog = streams
-                        pendingPlayTitle = titleText
-                        pendingPlaySubtitle = subtitleText
+                        pendingPlayTitle = playerTitle
+                        pendingPlaySubtitle = playerSubtitle
                         pendingPlayStartPos = startPos
                     } else {
                         val chosenIdx = RezkaService.findBestQualityIndex(streams, defaultQuality)
-                        playerTitle = titleText
-                        playerSubtitle = subtitleText
                         playerStartPosition = startPos
                         initialQualityIndex = chosenIdx
                         activePlayerStreams = streams
                     }
                 } else {
                     Toast.makeText(context, "Не удалось получить ссылки на видео", Toast.LENGTH_SHORT).show()
+                    isPlayerOpen = false
                 }
             } catch (e: Exception) {
-                Toast.makeText(context, "Ошибка сети при загрузке плеера", Toast.LENGTH_SHORT).show()
+                if (e !is kotlinx.coroutines.CancellationException) {
+                    Toast.makeText(context, "Ошибка сети при загрузке плеера", Toast.LENGTH_SHORT).show()
+                    isPlayerOpen = false
+                }
             } finally {
                 isDecryptingStreams = false
             }
@@ -425,6 +438,16 @@ fun DetailScreen(
                                 selectedEpisodeId = detail.seasons.firstOrNull()?.episodes?.firstOrNull()?.id
                             }
                         }
+                    }
+                    // Warm up stream cache in background for instant playback when user clicks Watch
+                    val prefetchTranslator = selectedTranslator ?: detail.translators.find { it.isDefault } ?: detail.translators.firstOrNull()
+                    if (prefetchTranslator != null && detail.numericPostId.isNotEmpty()) {
+                        val isSeries = detail.type == RezkaType.SERIES
+                        val targetSeason = if (isSeries) (selectedSeasonId ?: 1) else 0
+                        val targetEp = if (isSeries) (selectedEpisodeId ?: "1") else ""
+                        try {
+                            viewModel.getStreamUrls(detail.numericPostId, prefetchTranslator.id, isSeries, targetSeason, targetEp)
+                        } catch (_: Exception) {}
                     }
                 }
             }
@@ -1971,7 +1994,12 @@ fun DetailScreen(
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { pendingStreamsForDialog = null }) {
+                    TextButton(onClick = {
+                        pendingStreamsForDialog = null
+                        if (activePlayerStreams == null) {
+                            isPlayerOpen = false
+                        }
+                    }) {
                         Text("Отмена", color = CinemaTextGray)
                     }
                 }
@@ -1989,22 +2017,9 @@ fun DetailScreen(
             }
         }
 
-        // Inline Fullscreen Loading Decryptor Overlay
-        if (isDecryptingStreams) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.85f)),
-                contentAlignment = Alignment.Center
-            ) {
-                FallingSkullsBufferingOverlay(
-                    text = "Буферизация... Приятного просмотра!"
-                )
-            }
-        }
-
         // ---- FULLSCREEN EXOPLAYER WRAPPER ----
-        activePlayerStreams?.let { streams ->
+        if (isPlayerOpen || activePlayerStreams != null) {
+            val streams = activePlayerStreams ?: emptyList()
             val currentDetail = (detailState as? DetailState.Success)?.detail
             val isSeries = currentDetail?.let { it.type == RezkaType.SERIES } ?: (item.type == RezkaType.SERIES)
             val seasonsList = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else (currentDetail?.seasons ?: emptyList())
@@ -2034,6 +2049,7 @@ fun DetailScreen(
                 title = playerTitle,
                 subtitle = playerSubtitle,
                 streams = streams,
+                isLoading = isDecryptingStreams || streams.isEmpty(),
                 translators = currentDetail?.translators ?: emptyList(),
                 currentTranslator = selectedTranslator ?: currentDetail?.translators?.firstOrNull(),
                 onSelectTranslator = { newTrans, currentPosMs ->
@@ -2128,7 +2144,7 @@ fun DetailScreen(
                     }
                 },
                 onBack = {
-                    activePlayerStreams = null
+                    closePlayer()
                     FirebaseSyncManager.flushPendingProgress()
                 },
                 onProgressUpdate = { pos, duration ->

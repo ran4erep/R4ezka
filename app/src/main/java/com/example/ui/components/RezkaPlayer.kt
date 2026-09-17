@@ -127,6 +127,7 @@ fun RezkaPlayer(
     title: String,
     subtitle: String,
     streams: List<StreamUrl>,
+    isLoading: Boolean = false,
     subtitleTracks: List<SubtitleTrack> = streams.firstOrNull()?.subtitles ?: emptyList(),
     translators: List<Translator> = emptyList(),
     currentTranslator: Translator? = null,
@@ -143,25 +144,79 @@ fun RezkaPlayer(
     onProgressUpdate: (positionMs: Long, durationMs: Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    if (streams.isEmpty()) {
+    if (isLoading || streams.isEmpty()) {
         Box(
             modifier = modifier
                 .fillMaxSize()
-                .background(CinemaBlack),
-            contentAlignment = Alignment.Center
+                .background(CinemaBlack)
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(
-                    imageVector = Icons.Default.Error,
-                    contentDescription = null,
-                    tint = CinemaPrimary,
-                    modifier = Modifier.size(64.dp)
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text("Ссылки на видео не найдены", color = CinemaTextWhite, fontSize = 18.sp)
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)) {
-                    Text("Назад")
+            if (isLoading) {
+                // Top header bar with title & back button while decrypting streams inside player
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Назад",
+                            tint = CinemaTextWhite
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = title,
+                            color = CinemaTextWhite,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (subtitle.isNotEmpty()) {
+                            Text(
+                                text = subtitle,
+                                color = CinemaTextGray,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    FallingSkullsBufferingOverlay(
+                        text = "Буферизация... Приятного просмотра!"
+                    )
+                }
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Error,
+                        contentDescription = null,
+                        tint = CinemaPrimary,
+                        modifier = Modifier.size(64.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Ссылки на видео не найдены", color = CinemaTextWhite, fontSize = 18.sp)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)) {
+                        Text("Назад")
+                    }
                 }
             }
         }
