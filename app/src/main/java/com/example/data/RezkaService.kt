@@ -1769,8 +1769,9 @@ object RezkaService {
                         return@withContext emptyList()
                     }
                     val items = parseCatalogHtml(html, RezkaType.MOVIE)
-                    catalogCache.put(cacheKey, items)
-                    return@withContext items
+                    val sortedItems = items.sortedWith(MovieDateParser.MovieDateComparator)
+                    catalogCache.put(cacheKey, sortedItems)
+                    return@withContext sortedItems
                 }
             }
         } catch (e: Exception) {
@@ -1801,8 +1802,9 @@ object RezkaService {
                         return@withContext emptyList()
                     }
                     val items = parseLiveSearchHtml(html)
-                    catalogCache.put(cacheKey, items)
-                    return@withContext items
+                    val sortedItems = items.sortedWith(MovieDateParser.MovieDateComparator)
+                    catalogCache.put(cacheKey, sortedItems)
+                    return@withContext sortedItems
                 }
             }
         } catch (e: Exception) {
@@ -1834,7 +1836,14 @@ object RezkaService {
                 if (title.isEmpty()) continue
 
                 val rating = link.selectFirst(".rating, .num")?.text()?.trim() ?: ""
-                val subtitle = link.selectFirst(".misc, .year, .info")?.text()?.trim() ?: ""
+                val yearEl = link.selectFirst(".year")?.text()?.trim() ?: ""
+                val miscEl = link.selectFirst(".misc, .info")?.text()?.trim() ?: ""
+                val rawSubtitle = when {
+                    yearEl.isNotEmpty() && miscEl.isNotEmpty() && !miscEl.contains(yearEl) -> "$yearEl, $miscEl"
+                    yearEl.isNotEmpty() -> yearEl
+                    else -> miscEl
+                }
+                val subtitle = CountryFlags.formatWithFlags(rawSubtitle)
                 val id = extractIdFromUrl(url)
 
                 val itemType = when {
@@ -2740,18 +2749,29 @@ object RezkaService {
 
     /**
      * Высокопроизводительный парсер сезонов и серий из DOM-дерева документа Rezka.
-     * Корректно извлекает сдвоенные серии ("1-2"), кастомные ID и разное число серий.
+     * Корректно извлекает сдвоенные серии ("1-2"), кастомные ID, фильтрует вкладки сезонов
+     * и обрабатывает любые структуры сезонов/серий без утечки заголовочных вкладок.
      */
     fun parseSeasonsFromDoc(doc: org.jsoup.nodes.Document, translatorId: String): List<Season> {
         val seasons = ArrayList<Season>()
-        val seasonTabs = doc.select(
+
+        // 1. Извлекаем только реальные элементы сезонов (исключая серии)
+        val rawSeasonTabs = doc.select(
             ".b-simple_seasons__list .b-simple_season__item, " +
             "#simple-seasons-tabs .b-simple_season__item, " +
-            ".b-seasons__list li, " +
+            ".b-simple_seasons__list li, " +
             "#simple-seasons-tabs li, " +
-            "li[data-season_id], " +
-            "li[data-tab_id]"
+            ".b-seasons__list li, " +
+            "li.b-simple_season__item"
         )
+
+        val seasonTabs = rawSeasonTabs.filter { el ->
+            !el.hasAttr("data-episode_id") && !el.hasClass("b-simple_episode__item")
+        }.distinctBy { el ->
+            val idAttr = el.attr("data-season_id").ifEmpty { el.attr("data-tab_id") }
+            if (idAttr.isNotEmpty()) idAttr else el.text().trim()
+        }
+
         if (seasonTabs.isNotEmpty()) {
             for (sEl in seasonTabs) {
                 val sId = sEl.attr("data-season_id").toIntOrNull()
@@ -2760,14 +2780,28 @@ object RezkaService {
                     ?: continue
                 val sName = sEl.text().trim().ifEmpty { "Сезон $sId" }
                 val epList = ArrayList<Episode>()
-                val epTabs = doc.select(
-                    ".b-simple_episodes__list[data-season_id=$sId] .b-simple_episode__item, " +
-                    "#simple-episodes-tabs[data-season_id=$sId] li, " +
-                    "[data-season_id=$sId] .b-simple_episode__item, " +
-                    "[data-season_id=$sId] li, " +
-                    "li[data-season_id=$sId]"
+
+                // Поиск контейнера серий конкретно для сезона sId
+                val seasonContainer = doc.selectFirst(
+                    "ul.b-simple_episodes__list[data-season_id=$sId], " +
+                    "#simple-episodes-tabs[data-season_id=$sId], " +
+                    "[data-season_id=$sId].b-simple_episodes__list, " +
+                    "ul[data-season_id=$sId], " +
+                    "div[data-season_id=$sId]"
                 )
-                for (epEl in epTabs) {
+
+                val epElements = if (seasonContainer != null) {
+                    seasonContainer.select(".b-simple_episode__item, li[data-episode_id], [data-episode_id], li")
+                } else {
+                    doc.select(
+                        ".b-simple_episodes__list .b-simple_episode__item[data-season_id=$sId], " +
+                        ".b-simple_episode__item[data-season_id=$sId], " +
+                        "li[data-season_id=$sId][data-episode_id]"
+                    )
+                }
+
+                for (epEl in epElements) {
+                    if (epEl.hasClass("b-simple_season__item") || epEl.selectFirst(".b-simple_season__item") != null) continue
                     val rawEpId = epEl.attr("data-episode_id")
                         .ifEmpty { epEl.attr("data-id") }
                         .ifEmpty { epEl.attr("data-episode") }
@@ -2779,14 +2813,16 @@ object RezkaService {
                         epList.add(Episode(id = finalId, name = epName, seasonId = sId, translatorId = translatorId))
                     }
                 }
+
+                // Фоллбэк: поиск серий для сезона sId если epList пуст
                 if (epList.isEmpty()) {
-                    val seasonContainer = doc.selectFirst("ul[data-season_id=$sId], div[data-season_id=$sId], [data-season_id=$sId]")
-                    val subElements = seasonContainer?.select("li, .b-simple_episode__item, [data-episode_id]") ?: emptyList()
-                    for (epEl in subElements) {
-                        val rawEpId = epEl.attr("data-episode_id")
-                            .ifEmpty { epEl.attr("data-id") }
-                            .ifEmpty { epEl.attr("data-episode") }
-                            .trim()
+                    val allEpEls = doc.select(".b-simple_episodes__list .b-simple_episode__item, #simple-episodes-tabs li, .b-simple_episode__item, li[data-episode_id]")
+                    for (epEl in allEpEls) {
+                        if (epEl.hasClass("b-simple_season__item")) continue
+                        val epSeasonId = epEl.attr("data-season_id").toIntOrNull()
+                        if (epSeasonId != null && epSeasonId != sId) continue
+
+                        val rawEpId = epEl.attr("data-episode_id").ifEmpty { epEl.attr("data-id") }.ifEmpty { epEl.attr("data-episode") }.trim()
                         val epText = epEl.text().trim()
                         val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
                         if (finalId.isNotEmpty()) {
@@ -2795,12 +2831,15 @@ object RezkaService {
                         }
                     }
                 }
+
                 if (epList.isNotEmpty()) {
                     seasons.add(Season(sId, sName, epList.distinctBy { it.id }))
                 }
             }
-        } else {
-            // Одиночный сезон (мини-сериал / аниме без вкладок сезонов)
+        }
+
+        // Если вкладки сезонов отсутствовали вообще или не дали ни одной серии, ищем сквозной список серий (одиночный сезон)
+        if (seasons.isEmpty()) {
             val epElements = doc.select(
                 ".b-simple_episodes__list .b-simple_episode__item, " +
                 "#simple-episodes-tabs li, " +
@@ -2810,6 +2849,7 @@ object RezkaService {
             )
             val epList = ArrayList<Episode>()
             for (epEl in epElements) {
+                if (epEl.hasClass("b-simple_season__item")) continue
                 val rawEpId = epEl.attr("data-episode_id").ifEmpty { epEl.attr("data-id") }.ifEmpty { epEl.attr("data-episode") }.trim()
                 val epText = epEl.text().trim()
                 val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
@@ -2918,7 +2958,18 @@ object RezkaService {
                         val episodesDoc = Jsoup.parse(episodesHtml)
 
                         val seasonsList = ArrayList<Season>()
-                        val seasonElements = seasonsDoc.select(".b-simple_season__item, .b-simple_seasons__list li, #simple-seasons-tabs li, li[data-season_id], li[data-tab_id]")
+                        val rawSeasonEls = seasonsDoc.select(".b-simple_season__item, .b-simple_seasons__list li, #simple-seasons-tabs li, li.b-simple_season__item")
+                        val seasonElements = rawSeasonEls.filter { el ->
+                            !el.hasAttr("data-episode_id") && !el.hasClass("b-simple_episode__item")
+                        }.ifEmpty {
+                            seasonsDoc.select("li[data-season_id], [data-season_id]").filter { el ->
+                                !el.hasAttr("data-episode_id") && !el.hasClass("b-simple_episode__item")
+                            }
+                        }.distinctBy { el ->
+                            val idAttr = el.attr("data-season_id").ifEmpty { el.attr("data-tab_id") }
+                            if (idAttr.isNotEmpty()) idAttr else el.text().trim()
+                        }
+
                         if (seasonElements.isNotEmpty()) {
                             for (sEl in seasonElements) {
                                 val sId = sEl.attr("data-season_id").toIntOrNull()
@@ -2928,33 +2979,46 @@ object RezkaService {
                                 val sName = sEl.text().trim().ifEmpty { "Сезон $sId" }
                                 val epList = ArrayList<Episode>()
 
-                                val epElements = episodesDoc.select(
-                                    ".b-simple_episodes__list[data-season_id=$sId] .b-simple_episode__item, " +
-                                    "#simple-episodes-tabs[data-season_id=$sId] li, " +
-                                    "[data-season_id=$sId] .b-simple_episode__item, " +
-                                    "[data-season_id=$sId] li, " +
-                                    "li[data-season_id=$sId]"
+                                val seasonContainer = episodesDoc.selectFirst(
+                                    "ul.b-simple_episodes__list[data-season_id=$sId], " +
+                                    "#simple-episodes-tabs[data-season_id=$sId], " +
+                                    "[data-season_id=$sId].b-simple_episodes__list, " +
+                                    "ul[data-season_id=$sId], " +
+                                    "div[data-season_id=$sId]"
                                 )
+
+                                val epElements = if (seasonContainer != null) {
+                                    seasonContainer.select(".b-simple_episode__item, li[data-episode_id], [data-episode_id], li")
+                                } else {
+                                    episodesDoc.select(
+                                        ".b-simple_episodes__list .b-simple_episode__item[data-season_id=$sId], " +
+                                        ".b-simple_episode__item[data-season_id=$sId], " +
+                                        "li[data-season_id=$sId][data-episode_id]"
+                                    )
+                                }
+
                                 for (epEl in epElements) {
+                                    if (epEl.hasClass("b-simple_season__item")) continue
                                     val rawEpId = epEl.attr("data-episode_id")
                                         .ifEmpty { epEl.attr("data-id") }
                                         .ifEmpty { epEl.attr("data-episode") }
                                         .trim()
-                                    if (rawEpId.isNotEmpty()) {
-                                        val epText = epEl.text().trim()
-                                        val epName = if (epText.isNotEmpty()) epText else "Серия $rawEpId"
-                                        epList.add(Episode(id = rawEpId, name = epName, seasonId = sId, translatorId = cleanTranslatorId))
+                                    val epText = epEl.text().trim()
+                                    val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
+                                    if (finalId.isNotEmpty()) {
+                                        val epName = if (epText.isNotEmpty()) epText else "Серия $finalId"
+                                        epList.add(Episode(id = finalId, name = epName, seasonId = sId, translatorId = cleanTranslatorId))
                                     }
                                 }
 
                                 if (epList.isEmpty()) {
-                                    val seasonUl = episodesDoc.selectFirst("ul[data-season_id=$sId], div[data-season_id=$sId]")
-                                    val subElements = seasonUl?.select("li, .b-simple_episode__item, [data-episode_id]") ?: emptyList()
-                                    for (epEl in subElements) {
-                                        val rawEpId = epEl.attr("data-episode_id")
-                                            .ifEmpty { epEl.attr("data-id") }
-                                            .ifEmpty { epEl.attr("data-episode") }
-                                            .trim()
+                                    val allEpEls = episodesDoc.select(".b-simple_episode__item, li[data-episode_id], [data-episode_id]")
+                                    for (epEl in allEpEls) {
+                                        if (epEl.hasClass("b-simple_season__item")) continue
+                                        val epSeasonId = epEl.attr("data-season_id").toIntOrNull()
+                                        if (epSeasonId != null && epSeasonId != sId) continue
+
+                                        val rawEpId = epEl.attr("data-episode_id").ifEmpty { epEl.attr("data-id") }.ifEmpty { epEl.attr("data-episode") }.trim()
                                         val epText = epEl.text().trim()
                                         val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
                                         if (finalId.isNotEmpty()) {
@@ -2972,7 +3036,8 @@ object RezkaService {
                             val epElements = episodesDoc.select(".b-simple_episode__item, li[data-episode_id], [data-episode_id]")
                             val epList = ArrayList<Episode>()
                             for (epEl in epElements) {
-                                val rawEpId = epEl.attr("data-episode_id").ifEmpty { epEl.attr("data-id") }.trim()
+                                if (epEl.hasClass("b-simple_season__item")) continue
+                                val rawEpId = epEl.attr("data-episode_id").ifEmpty { epEl.attr("data-id") }.ifEmpty { epEl.attr("data-episode") }.trim()
                                 val epText = epEl.text().trim()
                                 val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
                                 if (finalId.isNotEmpty()) {

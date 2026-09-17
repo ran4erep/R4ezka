@@ -55,6 +55,7 @@ fun CatalogScreen(
     viewModel: RezkaViewModel,
     onNavigateToDetail: (RezkaItem) -> Unit,
     onNavigateToSettings: () -> Unit = {},
+    isTopScreen: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -81,7 +82,13 @@ fun CatalogScreen(
         }
     }
 
-    BackHandler(enabled = isSearchFocused || searchInput.isNotEmpty()) {
+    LaunchedEffect(viewModel.searchQuery) {
+        if (searchInput != viewModel.searchQuery) {
+            searchInput = viewModel.searchQuery
+        }
+    }
+
+    BackHandler(enabled = isTopScreen && (isSearchFocused || searchInput.isNotEmpty())) {
         if (isSearchFocused) {
             focusManager.clearFocus()
             keyboardController?.hide()

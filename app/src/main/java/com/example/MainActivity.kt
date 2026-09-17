@@ -90,6 +90,20 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
         }
     }
 
+    // Безопасный метод добавления экрана в стек с автоматической дедупликацией последовательных переходов
+    val pushToStack = { state: ScreenState ->
+        val currentTop = navigationStack.lastOrNull()
+        val isDuplicate = when {
+            state is ScreenState.Detail && currentTop is ScreenState.Detail -> state.item.id == currentTop.item.id
+            state is ScreenState.ThematicList && currentTop is ScreenState.ThematicList -> state.url == currentTop.url
+            state is ScreenState.PersonProfile && currentTop is ScreenState.PersonProfile -> state.url == currentTop.url
+            else -> false
+        }
+        if (!isDuplicate) {
+            navigationStack.add(state)
+        }
+    }
+
     val pendingDeepLink by viewModel.pendingDeepLink.collectAsState()
 
     LaunchedEffect(pendingDeepLink) {
@@ -98,10 +112,10 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
         if (top?.item?.id == link.item.id) {
             if (top.initialTranslatorId != link.translatorId) {
                 popBackStack()
-                navigationStack.add(ScreenState.Detail(item = link.item, initialTranslatorId = link.translatorId))
+                pushToStack(ScreenState.Detail(item = link.item, initialTranslatorId = link.translatorId))
             }
         } else {
-            navigationStack.add(ScreenState.Detail(item = link.item, initialTranslatorId = link.translatorId))
+            pushToStack(ScreenState.Detail(item = link.item, initialTranslatorId = link.translatorId))
         }
         viewModel.consumePendingDeepLink()
     }
@@ -157,13 +171,13 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 onBack = { popBackStack() },
                                 onNavigateToThematic = { name, url ->
                                     if (url.contains("/person/")) {
-                                        navigationStack.add(ScreenState.PersonProfile(name, url))
+                                        pushToStack(ScreenState.PersonProfile(name, url))
                                     } else {
-                                        navigationStack.add(ScreenState.ThematicList(name, url))
+                                        pushToStack(ScreenState.ThematicList(name, url))
                                     }
                                 },
                                 onNavigateToDetail = { targetItem ->
-                                    navigationStack.add(ScreenState.Detail(targetItem))
+                                    pushToStack(ScreenState.Detail(targetItem))
                                 },
                                 modifier = Modifier.fillMaxSize()
                             )
@@ -174,7 +188,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 url = topState.url,
                                 onBack = { popBackStack() },
                                 onNavigateToDetail = { item ->
-                                    navigationStack.add(ScreenState.Detail(item))
+                                    pushToStack(ScreenState.Detail(item))
                                 },
                                 modifier = Modifier.fillMaxSize(),
                                 isTvMode = true
@@ -186,7 +200,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 url = topState.url,
                                 onBack = { popBackStack() },
                                 onNavigateToDetail = { item ->
-                                    navigationStack.add(ScreenState.Detail(item))
+                                    pushToStack(ScreenState.Detail(item))
                                 },
                                 modifier = Modifier.fillMaxSize(),
                                 isTvMode = true
@@ -205,8 +219,9 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                     TvMainScreen(
                         viewModel = viewModel,
                         onNavigateToDetail = { item ->
-                            navigationStack.add(ScreenState.Detail(item))
+                            pushToStack(ScreenState.Detail(item))
                         },
+                        isTopScreen = navigationStack.isEmpty() && !isSettingsOpen,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -313,16 +328,17 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                             CatalogScreen(
                                 viewModel = viewModel,
                                 onNavigateToDetail = { item ->
-                                    navigationStack.add(ScreenState.Detail(item))
+                                    pushToStack(ScreenState.Detail(item))
                                 },
-                                onNavigateToSettings = { isSettingsOpen = true }
+                                onNavigateToSettings = { isSettingsOpen = true },
+                                isTopScreen = navigationStack.isEmpty() && !isSettingsOpen
                             )
                         }
                         NavTab.FAVORITES -> {
                             FavoritesScreen(
                                 viewModel = viewModel,
                                 onNavigateToDetail = { item ->
-                                    navigationStack.add(ScreenState.Detail(item))
+                                    pushToStack(ScreenState.Detail(item))
                                 }
                             )
                         }
@@ -330,7 +346,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                             HistoryScreen(
                                 viewModel = viewModel,
                                 onNavigateToDetail = { item ->
-                                    navigationStack.add(ScreenState.Detail(item))
+                                    pushToStack(ScreenState.Detail(item))
                                 }
                             )
                         }
@@ -382,13 +398,13 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 onBack = { popBackStack() },
                                 onNavigateToThematic = { name, url ->
                                     if (url.contains("/person/")) {
-                                        navigationStack.add(ScreenState.PersonProfile(name, url))
+                                        pushToStack(ScreenState.PersonProfile(name, url))
                                     } else {
-                                        navigationStack.add(ScreenState.ThematicList(name, url))
+                                        pushToStack(ScreenState.ThematicList(name, url))
                                     }
                                 },
                                 onNavigateToDetail = { targetItem ->
-                                    navigationStack.add(ScreenState.Detail(targetItem))
+                                    pushToStack(ScreenState.Detail(targetItem))
                                 }
                             )
                         }
@@ -398,7 +414,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 url = topState.url,
                                 onBack = { popBackStack() },
                                 onNavigateToDetail = { item ->
-                                    navigationStack.add(ScreenState.Detail(item))
+                                    pushToStack(ScreenState.Detail(item))
                                 }
                             )
                         }
@@ -408,7 +424,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 url = topState.url,
                                 onBack = { popBackStack() },
                                 onNavigateToDetail = { item ->
-                                    navigationStack.add(ScreenState.Detail(item))
+                                    pushToStack(ScreenState.Detail(item))
                                 }
                             )
                         }

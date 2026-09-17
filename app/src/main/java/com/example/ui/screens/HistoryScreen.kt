@@ -13,8 +13,9 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
+import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,6 +28,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import kotlin.math.roundToInt
 import com.example.data.AggregatedHistoryItem
 import com.example.data.RezkaItem
 import com.example.data.RezkaService
@@ -41,7 +43,7 @@ fun HistoryScreen(
     onNavigateToDetail: (RezkaItem) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val historyList by viewModel.aggregatedWatchHistory.collectAsState()
+    val historyList by viewModel.aggregatedWatchHistory.collectAsStateWithLifecycle()
 
     Column(
         modifier = modifier
@@ -178,25 +180,38 @@ fun HistoryCardItem(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Row(
+    val progressFraction = remember(history.totalProgressFraction) {
+        history.totalProgressFraction.coerceIn(0f, 1f)
+    }
+    val progressPercentage = remember(progressFraction) {
+        (progressFraction * 100f).roundToInt()
+    }
+    val isFullyWatched = remember(history.isSeries, history.watchedEpisodesCount, history.totalEpisodesCount, progressPercentage, history.totalProgressFraction) {
+        if (history.isSeries) {
+            (history.watchedEpisodesCount >= history.totalEpisodesCount && history.totalEpisodesCount > 0) || progressPercentage >= 100
+        } else {
+            progressPercentage >= 100 || history.totalProgressFraction >= 0.85f
+        }
+    }
+
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        // Главная карточка элемента (проигрывание при клике)
+        // Главная карточка элемента — занимает всю ширину экрана
         Card(
             modifier = Modifier
-                .weight(1f)
+                .fillMaxWidth()
                 .tvFocusableItem(
                     onClick = onClick, 
-                    scaleFactor = 1.02f, 
-                    shape = RoundedCornerShape(10.dp)
+                    scaleFactor = 1.015f, 
+                    shape = RoundedCornerShape(12.dp)
                 )
                 .testTag("history_item_${history.itemId}"),
             colors = CardDefaults.cardColors(containerColor = CinemaDark),
-            shape = RoundedCornerShape(10.dp)
+            shape = RoundedCornerShape(12.dp)
         ) {
             Row(
                 modifier = Modifier
@@ -208,7 +223,7 @@ fun HistoryCardItem(
                 Box(
                     modifier = Modifier
                         .size(width = 65.dp, height = 95.dp)
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(RoundedCornerShape(8.dp))
                 ) {
                     AsyncImage(
                         model = history.imageUrl,
@@ -289,22 +304,22 @@ fun HistoryCardItem(
 
                     // Progress Meter Bar
                     LinearProgressIndicator(
-                        progress = { history.totalProgressFraction.coerceIn(0f, 1f) },
+                        progress = { if (isFullyWatched) 1.0f else progressFraction },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(4.dp)
                             .clip(RoundedCornerShape(2.dp)),
-                        color = CinemaPrimary,
+                        color = if (isFullyWatched) CinemaGreen else CinemaPrimary,
                         trackColor = CinemaSecondary,
                     )
 
                     Text(
                         text = if (history.isSeries) {
-                            "${(history.totalProgressFraction * 100).toInt()}% общего прогресса"
+                            if (isFullyWatched) "100% — Все серии просмотрены" else "$progressPercentage% общего прогресса"
                         } else {
-                            "${(history.totalProgressFraction * 100).toInt()}% просмотрено"
+                            if (isFullyWatched) "100% просмотрено" else "$progressPercentage% просмотрено"
                         },
-                        color = CinemaTextGray,
+                        color = if (isFullyWatched) CinemaGreen else CinemaTextGray,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.padding(top = 4.dp)
@@ -313,30 +328,39 @@ fun HistoryCardItem(
             }
         }
 
-        // Кнопка удаления из истории (полноценный ТВ-фокусируемый элемент с подсветкой)
+        // Продолговатая аккуратная кнопка удаления из истории под карточкой
         Surface(
             color = CinemaDark,
-            shape = RoundedCornerShape(10.dp),
+            shape = RoundedCornerShape(8.dp),
             modifier = Modifier
-                .size(48.dp)
+                .fillMaxWidth()
+                .height(36.dp)
                 .tvFocusableItem(
                     onClick = onDelete,
-                    scaleFactor = 1.1f,
+                    scaleFactor = 1.01f,
                     focusedBorderColor = CinemaPrimary,
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(8.dp)
                 )
                 .testTag("history_item_delete_${history.itemId}"),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
         ) {
-            Box(
+            Row(
                 modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
                     imageVector = Icons.Default.Delete,
-                    contentDescription = "Удалить из истории",
+                    contentDescription = null,
                     tint = CinemaMuted,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Удалить из истории",
+                    color = CinemaTextGray,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
                 )
             }
         }
