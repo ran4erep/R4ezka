@@ -67,13 +67,40 @@ jobs:
             chmod +x ./gradlew
           fi
 
+      - name: Prepare Release Keystore
+        if: ${{ secrets.KEYSTORE != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE }}
+        run: |
+          echo "Decoding release keystore from secrets..."
+          echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
+
       - name: Run Unit Tests
         run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
 
+      - name: Build Release APK
+        if: ${{ secrets.KEYSTORE != '' }}
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.STORE_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Upload Release APK Artifact
+        if: ${{ secrets.KEYSTORE != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rezka-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Build Debug APK
+        if: ${{ secrets.KEYSTORE == '' }}
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload Debug APK Artifact
+        if: ${{ secrets.KEYSTORE == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: rezka-debug-apk
