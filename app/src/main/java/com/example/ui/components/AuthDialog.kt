@@ -39,6 +39,8 @@ import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvPulsingFocusBorder
+import com.example.ui.tv.TvDetector
+import com.example.ui.tv.TvModePreference
 
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -51,6 +53,16 @@ fun AuthDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val tvModePrefString by viewModel.tvModePreference.collectAsState()
+    val isTvMode = remember(context, tvModePrefString) {
+        val pref = when (tvModePrefString) {
+            "force_tv" -> TvModePreference.FORCE_TV
+            "force_mobile" -> TvModePreference.FORCE_MOBILE
+            else -> TvModePreference.AUTO
+        }
+        TvDetector.shouldShowTvInterface(context, pref)
+    }
+
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val currentUserAvatar by viewModel.currentUserAvatar.collectAsState()
@@ -346,6 +358,7 @@ fun AuthDialog(
                             authError = null
                         },
                         placeholderText = "Логин",
+                        isTvMode = isTvMode,
                         testTag = "auth_login_input"
                     )
 
@@ -376,6 +389,7 @@ fun AuthDialog(
                                 )
                             }
                         },
+                        isTvMode = isTvMode,
                         testTag = "auth_password_input"
                     )
 
@@ -406,6 +420,7 @@ fun AuthDialog(
                                     )
                                 }
                             },
+                            isTvMode = isTvMode,
                             testTag = "auth_confirm_password_input"
                         )
                     }
@@ -533,56 +548,11 @@ private fun TvAuthTextField(
     modifier: Modifier = Modifier,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     trailingIcon: @Composable (() -> Unit)? = null,
+    isTvMode: Boolean = false,
     testTag: String = ""
 ) {
-    var isBoxFocused by remember { mutableStateOf(false) }
-    var isFieldFocused by remember { mutableStateOf(false) }
-    var isEditing by remember { mutableStateOf(false) }
-
-    val focusRequester = remember { FocusRequester() }
-    val keyboardController = LocalSoftwareKeyboardController.current
-
-    LaunchedEffect(isEditing) {
-        if (isEditing) {
-            focusRequester.requestFocusSafe()
-            delay(50)
-            keyboardController?.show()
-        }
-    }
-
-    val isHighlighted = isBoxFocused || isFieldFocused
-
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .onFocusChanged { focusState ->
-                isBoxFocused = focusState.isFocused
-            }
-            .tvPulsingFocusBorder(
-                isFocused = isHighlighted,
-                focusedBorderColor = CinemaPrimary,
-                shape = RoundedCornerShape(10.dp),
-                baseBorderWidth = 2.5.dp
-            )
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) {
-                isEditing = true
-            }
-            .onKeyEvent { keyEvent ->
-                if (keyEvent.type == KeyEventType.KeyUp &&
-                    (keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
-                     keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
-                     keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)
-                ) {
-                    if (!isEditing) {
-                        isEditing = true
-                        true
-                    } else false
-                } else false
-            }
-    ) {
+    if (!isTvMode) {
+        // Стандартное высокопроизводительное текстовое поле для смартфонов и планшетов
         TextField(
             value = value,
             onValueChange = onValueChange,
@@ -596,32 +566,104 @@ private fun TvAuthTextField(
                 unfocusedContainerColor = CinemaCard,
                 focusedTextColor = CinemaTextWhite,
                 unfocusedTextColor = CinemaTextWhite,
-                focusedIndicatorColor = if (isEditing) CinemaPrimary else Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent
+                focusedIndicatorColor = CinemaPrimary,
+                unfocusedIndicatorColor = Color.Transparent,
+                cursorColor = CinemaPrimary
             ),
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
-                .focusProperties { canFocus = isEditing }
-                .focusRequester(focusRequester)
+                .testTag(testTag)
+        )
+    } else {
+        var isBoxFocused by remember { mutableStateOf(false) }
+        var isFieldFocused by remember { mutableStateOf(false) }
+        var isEditing by remember { mutableStateOf(false) }
+
+        val focusRequester = remember { FocusRequester() }
+        val keyboardController = LocalSoftwareKeyboardController.current
+
+        LaunchedEffect(isEditing) {
+            if (isEditing) {
+                focusRequester.requestFocusSafe()
+                delay(50)
+                keyboardController?.show()
+            }
+        }
+
+        val isHighlighted = isBoxFocused || isFieldFocused
+
+        Box(
+            modifier = modifier
+                .fillMaxWidth()
                 .onFocusChanged { focusState ->
-                    isFieldFocused = focusState.isFocused
-                    if (!focusState.isFocused && isEditing) {
-                        isEditing = false
-                    }
+                    isBoxFocused = focusState.isFocused
                 }
-                .onPreviewKeyEvent { keyEvent ->
+                .tvPulsingFocusBorder(
+                    isFocused = isHighlighted,
+                    focusedBorderColor = CinemaPrimary,
+                    shape = RoundedCornerShape(10.dp),
+                    baseBorderWidth = 2.5.dp
+                )
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    isEditing = true
+                }
+                .onKeyEvent { keyEvent ->
                     if (keyEvent.type == KeyEventType.KeyUp &&
-                        keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK
+                        (keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+                         keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                         keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)
                     ) {
-                        if (isEditing) {
-                            isEditing = false
-                            keyboardController?.hide()
+                        if (!isEditing) {
+                            isEditing = true
                             true
                         } else false
                     } else false
                 }
-                .testTag(testTag)
-        )
+        ) {
+            TextField(
+                value = value,
+                onValueChange = onValueChange,
+                placeholder = { Text(placeholderText, color = CinemaMuted) },
+                singleLine = true,
+                visualTransformation = visualTransformation,
+                trailingIcon = trailingIcon,
+                shape = RoundedCornerShape(10.dp),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = CinemaCard,
+                    unfocusedContainerColor = CinemaCard,
+                    focusedTextColor = CinemaTextWhite,
+                    unfocusedTextColor = CinemaTextWhite,
+                    focusedIndicatorColor = if (isEditing) CinemaPrimary else Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    cursorColor = CinemaPrimary
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusProperties { canFocus = isEditing }
+                    .focusRequester(focusRequester)
+                    .onFocusChanged { focusState ->
+                        isFieldFocused = focusState.isFocused
+                        if (!focusState.isFocused && isEditing) {
+                            isEditing = false
+                        }
+                    }
+                    .onPreviewKeyEvent { keyEvent ->
+                        if (keyEvent.type == KeyEventType.KeyUp &&
+                            keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK
+                        ) {
+                            if (isEditing) {
+                                isEditing = false
+                                keyboardController?.hide()
+                                true
+                            } else false
+                        } else false
+                    }
+                    .testTag(testTag)
+            )
+        }
     }
 }
 
