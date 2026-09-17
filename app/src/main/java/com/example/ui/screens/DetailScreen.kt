@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.util.Log
 import android.widget.Toast
@@ -146,6 +148,8 @@ fun DetailScreen(
         viewModel.loadDetail(item.url)
     }
 
+    val activity = context as? Activity
+
     // Player Trigger States
     var isPlayerOpen by remember { mutableStateOf(false) }
     var activePlayerStreams by remember { mutableStateOf<List<StreamUrl>?>(null) }
@@ -155,6 +159,16 @@ fun DetailScreen(
     var playerStartPosition by remember { mutableStateOf(0L) }
     var isDecryptingStreams by remember { mutableStateOf(false) }
     var playbackJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    // Ensure screen orientation is restored to portrait whenever leaving DetailScreen (if not in TV mode)
+    DisposableEffect(isTvMode) {
+        onDispose {
+            playbackJob?.cancel()
+            if (!isTvMode) {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
+        }
+    }
 
     // Dialog state for "Ask" quality mode
     var pendingStreamsForDialog by remember { mutableStateOf<List<StreamUrl>?>(null) }
@@ -190,34 +204,41 @@ fun DetailScreen(
     var showScheduleCalendarDialog by remember { mutableStateOf(false) }
     var isActorsExpanded by remember { mutableStateOf(false) }
 
-    val closePlayer = {
+    // Intercept system Back button so exiting player returns to movie details, NOT to home/search!
+    BackHandler(enabled = isPlayerOpen) {
         playbackJob?.cancel()
-        playbackJob = null
         isPlayerOpen = false
         activePlayerStreams = null
         isDecryptingStreams = false
-    }
-
-    // Intercept system Back button so exiting player returns to movie details, NOT to home/search!
-    BackHandler(enabled = isPlayerOpen || activePlayerStreams != null) {
-        closePlayer()
+        if (!isTvMode) {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        } else {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
     }
 
     // Handle manual back button on movie detail screen
     val handleBack = {
-        if (isPlayerOpen || activePlayerStreams != null) {
-            closePlayer()
+        if (isPlayerOpen) {
+            playbackJob?.cancel()
+            isPlayerOpen = false
+            activePlayerStreams = null
+            isDecryptingStreams = false
+            if (!isTvMode) {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            } else {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
         } else {
             viewModel.clearDetail()
             onBack()
         }
     }
 
-    // Playback starting logic
+    // Playback starting logic: Immediately opens player in landscape and fetches streams in background
     val startPlayback = { translator: Translator, seasonId: Int, episodeId: String, customStartPos: Long? ->
         playbackJob?.cancel()
-        isPlayerOpen = true
-        isDecryptingStreams = true
+
         selectedTranslator = translator
         selectedSeasonId = seasonId
         selectedEpisodeId = episodeId
@@ -227,17 +248,29 @@ fun DetailScreen(
         val effectiveSeason = if (isSeries) seasonId.coerceAtLeast(1) else 0
         val effectiveEpisode = if (isSeries) (if (episodeId.isBlank() || episodeId == "0") "1" else episodeId) else ""
 
-        playerTitle = item.title
-        playerSubtitle = if (isSeries) {
+        val titleText = item.title
+        val subtitleText = if (isSeries) {
             "Сезон $effectiveSeason, Серия $effectiveEpisode (${translator.name})"
         } else {
             translator.name
+        }
+
+        playerTitle = titleText
+        playerSubtitle = subtitleText
+        playerStartPosition = customStartPos ?: 0L
+        isPlayerOpen = true
+        isDecryptingStreams = true
+
+        // Rotate screen immediately to sensor landscape upon click on mobile
+        if (!isTvMode) {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         }
 
         playbackJob = scope.launch {
             try {
                 val targetId = currentDetail?.numericPostId?.ifEmpty { null } ?: item.id
 
+                // Check for saved watch progress for this exact season/episode or general movie progress
                 val savedHistory = viewModel.getSavedProgressForEpisode(item.id, effectiveSeason, effectiveEpisode)
                     ?: viewModel.getSavedProgress(item.id)
 
@@ -247,7 +280,7 @@ fun DetailScreen(
                     (savedHistory.season == effectiveSeason || !isSeries) && 
                     (savedHistory.episode == effectiveEpisode || !isSeries)) {
                     if (savedHistory.durationMs > 0 && savedHistory.progressMs >= savedHistory.durationMs - 5000L) {
-                        0L
+                        0L // Reset to start if near end of video
                     } else {
                         savedHistory.progressMs
                     }
@@ -265,27 +298,42 @@ fun DetailScreen(
 
                 if (streams.isNotEmpty()) {
                     if (defaultQuality == RezkaService.QUALITY_ASK) {
+                        // Open Quality Prompt Dialog
                         pendingStreamsForDialog = streams
-                        pendingPlayTitle = playerTitle
-                        pendingPlaySubtitle = playerSubtitle
+                        pendingPlayTitle = titleText
+                        pendingPlaySubtitle = subtitleText
                         pendingPlayStartPos = startPos
+                        isDecryptingStreams = false
                     } else {
                         val chosenIdx = RezkaService.findBestQualityIndex(streams, defaultQuality)
                         playerStartPosition = startPos
                         initialQualityIndex = chosenIdx
                         activePlayerStreams = streams
+                        isDecryptingStreams = false
                     }
                 } else {
+                    isDecryptingStreams = false
                     Toast.makeText(context, "Не удалось получить ссылки на видео", Toast.LENGTH_SHORT).show()
                     isPlayerOpen = false
+                    activePlayerStreams = null
+                    if (!isTvMode) {
+                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    } else {
+                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
                 }
             } catch (e: Exception) {
                 if (e !is kotlinx.coroutines.CancellationException) {
+                    isDecryptingStreams = false
                     Toast.makeText(context, "Ошибка сети при загрузке плеера", Toast.LENGTH_SHORT).show()
                     isPlayerOpen = false
+                    activePlayerStreams = null
+                    if (!isTvMode) {
+                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    } else {
+                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
                 }
-            } finally {
-                isDecryptingStreams = false
             }
         }
     }
@@ -438,16 +486,6 @@ fun DetailScreen(
                                 selectedEpisodeId = detail.seasons.firstOrNull()?.episodes?.firstOrNull()?.id
                             }
                         }
-                    }
-                    // Warm up stream cache in background for instant playback when user clicks Watch
-                    val prefetchTranslator = selectedTranslator ?: detail.translators.find { it.isDefault } ?: detail.translators.firstOrNull()
-                    if (prefetchTranslator != null && detail.numericPostId.isNotEmpty()) {
-                        val isSeries = detail.type == RezkaType.SERIES
-                        val targetSeason = if (isSeries) (selectedSeasonId ?: 1) else 0
-                        val targetEp = if (isSeries) (selectedEpisodeId ?: "1") else ""
-                        try {
-                            viewModel.getStreamUrls(detail.numericPostId, prefetchTranslator.id, isSeries, targetSeason, targetEp)
-                        } catch (_: Exception) {}
                     }
                 }
             }
@@ -1843,7 +1881,7 @@ fun DetailScreen(
     }
 
         // Floating Top Buttons: Кнопки "Назад" и "В избранное" для мобильного режима (плавающие в верхних углах)
-        if (activePlayerStreams == null && !isTvMode) {
+        if (!isPlayerOpen && !isTvMode) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -1962,6 +2000,7 @@ fun DetailScreen(
                                         playerStartPosition = pendingPlayStartPos
                                         initialQualityIndex = idx
                                         activePlayerStreams = streams
+                                        isPlayerOpen = true
                                         pendingStreamsForDialog = null
                                     }
                                     .padding(vertical = 12.dp, horizontal = 12.dp),
@@ -1998,6 +2037,11 @@ fun DetailScreen(
                         pendingStreamsForDialog = null
                         if (activePlayerStreams == null) {
                             isPlayerOpen = false
+                            if (!isTvMode) {
+                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                            } else {
+                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                            }
                         }
                     }) {
                         Text("Отмена", color = CinemaTextGray)
@@ -2018,7 +2062,7 @@ fun DetailScreen(
         }
 
         // ---- FULLSCREEN EXOPLAYER WRAPPER ----
-        if (isPlayerOpen || activePlayerStreams != null) {
+        if (isPlayerOpen) {
             val streams = activePlayerStreams ?: emptyList()
             val currentDetail = (detailState as? DetailState.Success)?.detail
             val isSeries = currentDetail?.let { it.type == RezkaType.SERIES } ?: (item.type == RezkaType.SERIES)
@@ -2049,7 +2093,8 @@ fun DetailScreen(
                 title = playerTitle,
                 subtitle = playerSubtitle,
                 streams = streams,
-                isLoading = isDecryptingStreams || streams.isEmpty(),
+                isLoading = isDecryptingStreams,
+                isTvMode = isTvMode,
                 translators = currentDetail?.translators ?: emptyList(),
                 currentTranslator = selectedTranslator ?: currentDetail?.translators?.firstOrNull(),
                 onSelectTranslator = { newTrans, currentPosMs ->
@@ -2144,7 +2189,15 @@ fun DetailScreen(
                     }
                 },
                 onBack = {
-                    closePlayer()
+                    playbackJob?.cancel()
+                    isPlayerOpen = false
+                    activePlayerStreams = null
+                    isDecryptingStreams = false
+                    if (!isTvMode) {
+                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    } else {
+                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
                     FirebaseSyncManager.flushPendingProgress()
                 },
                 onProgressUpdate = { pos, duration ->
@@ -2207,7 +2260,7 @@ fun DetailScreen(
         // Кнопка быстрой прокрутки вверх к началу комментариев
         val showScrollToTop by remember {
             derivedStateOf {
-                if (activePlayerStreams != null) return@derivedStateOf false
+                if (isPlayerOpen) return@derivedStateOf false
                 val success = detailState as? DetailState.Success ?: return@derivedStateOf false
                 if (commentsSectionIndex < 0) return@derivedStateOf false
 
