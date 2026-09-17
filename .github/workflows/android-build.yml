@@ -21,6 +21,8 @@ jobs:
     name: Build & Test APK
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      KEYSTORE_SECRET: ${{ secrets.KEYSTORE }}
 
     steps:
       - name: Checkout Source Code
@@ -68,7 +70,7 @@ jobs:
           fi
 
       - name: Prepare Release Keystore
-        if: ${{ secrets.KEYSTORE != '' }}
+        if: ${{ env.KEYSTORE_SECRET != '' }}
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE }}
         run: |
@@ -79,7 +81,7 @@ jobs:
         run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
 
       - name: Build Release APK
-        if: ${{ secrets.KEYSTORE != '' }}
+        if: ${{ env.KEYSTORE_SECRET != '' }}
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
@@ -87,7 +89,7 @@ jobs:
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Upload Release APK Artifact
-        if: ${{ secrets.KEYSTORE != '' }}
+        if: ${{ env.KEYSTORE_SECRET != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: rezka-release-apk
@@ -96,11 +98,11 @@ jobs:
           retention-days: 14
 
       - name: Build Debug APK
-        if: ${{ secrets.KEYSTORE == '' }}
+        if: ${{ env.KEYSTORE_SECRET == '' }}
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload Debug APK Artifact
-        if: ${{ secrets.KEYSTORE == '' }}
+        if: ${{ env.KEYSTORE_SECRET == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: rezka-debug-apk
