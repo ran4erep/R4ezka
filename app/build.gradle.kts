@@ -19,7 +19,7 @@ android {
     minSdk = 24
     targetSdk = 36
     versionCode = 4
-    versionName = "1.0.4"
+    versionName = "1.0.5"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -54,6 +54,8 @@ android {
       storePassword = storePass
       keyAlias = resolvedAlias ?: "upload"
       keyPassword = keyPass
+      enableV1Signing = true
+      enableV2Signing = true
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")
