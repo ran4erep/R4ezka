@@ -48,6 +48,7 @@ import coil.request.ImageRequest
 import com.example.data.*
 import com.example.ui.DetailState
 import com.example.ui.RezkaViewModel
+import com.example.ui.components.FallingSkullsBufferingOverlay
 import com.example.ui.components.RezkaPlayer
 import com.example.ui.components.ScheduleCalendarDialog
 import com.example.ui.theme.*
@@ -1990,36 +1991,15 @@ fun DetailScreen(
 
         // Inline Fullscreen Loading Decryptor Overlay
         if (isDecryptingStreams) {
-            var decryptionProgress by remember { mutableStateOf(0) }
-            LaunchedEffect(Unit) {
-                decryptionProgress = 0
-                while (decryptionProgress < 99) {
-                    kotlinx.coroutines.delay(if (decryptionProgress < 40) 45L else if (decryptionProgress < 75) 90L else 180L)
-                    decryptionProgress++
-                }
-            }
-
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.85f)),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(56.dp))
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "Буферизация...",
-                        color = CinemaTextWhite,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = "Загрузка: $decryptionProgress%",
-                        color = CinemaTextGray,
-                        fontSize = 12.sp
-                    )
-                }
+                FallingSkullsBufferingOverlay(
+                    text = "Буферизация... Приятного просмотра!"
+                )
             }
         }
 
@@ -2180,16 +2160,22 @@ fun DetailScreen(
 
                         val totalSeasonsCount = if (isSeries) effectiveSeasons.size else 1
 
+                        val displayEpNumber = if (curEpisodeIndex >= 0) {
+                            "${curEpisodeIndex + 1}"
+                        } else {
+                            selectedEpisodeId?.filter { it.isDigit() }?.takeIf { it.isNotEmpty() } ?: "1"
+                        }
+
                         viewModel.saveWatchProgress(
                             itemId = item.id,
                             title = item.title,
                             imageUrl = item.imageUrl,
-                            subtitle = if (isSeries) "Сезон ${selectedSeasonId ?: 1}, Серия ${selectedEpisodeId ?: "1"}" else "Фильм",
+                            subtitle = if (isSeries) "Сезон ${curSeason?.id ?: selectedSeasonId ?: 1}, Серия $displayEpNumber" else "Фильм",
                             url = item.url,
                             translatorId = selectedTranslator?.id ?: "",
                             translatorName = selectedTranslator?.name ?: "Дубляж",
-                            season = if (isSeries) (selectedSeasonId ?: 1) else 0,
-                            episode = if (isSeries) (selectedEpisodeId ?: "1") else "",
+                            season = if (isSeries) (curSeason?.id ?: selectedSeasonId ?: 1) else 0,
+                            episode = if (isSeries) displayEpNumber else "",
                             progressMs = pos,
                             durationMs = duration,
                             totalEpisodes = totalEpCount,

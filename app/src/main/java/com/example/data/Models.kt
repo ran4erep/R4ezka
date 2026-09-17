@@ -32,7 +32,9 @@ data class RezkaItem(
     val imageUrl: String,
     val rating: String = "",
     val url: String,
-    val type: RezkaType
+    val type: RezkaType,
+    val releaseDateNum: Int = MovieDateParser.extractReleaseDateNum(subtitle, url),
+    val numericId: Long = MovieDateParser.extractNumericId(id, url)
 ) : Serializable
 
 data class RatingInfo(

@@ -65,9 +65,10 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 val totalEpisodesCount: Int
 
                 if (!isSeries) {
-                    totalProgressFraction = if (latest.durationMs > 0) {
+                    val rawFraction = if (latest.durationMs > 0) {
                         (latest.progressMs.toFloat() / latest.durationMs.toFloat()).coerceIn(0f, 1f)
                     } else 0f
+                    totalProgressFraction = if (rawFraction >= 0.85f) 1.0f else rawFraction
                     watchedEpisodesCount = if (totalProgressFraction >= 0.85f) 1 else 0
                     totalEpisodesCount = 1
                 } else {
@@ -334,7 +335,9 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             delay(400) // Debounce for 400ms to reduce CPU load and network requests
             _catalogState.value = CatalogState.Loading
             try {
-                val results = RezkaService.search(query).distinctBy { it.id }
+                val results = RezkaService.search(query)
+                    .distinctBy { it.id }
+                    .sortedWith(MovieDateParser.MovieDateComparator)
                 _catalogState.value = CatalogState.Success(results)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -768,9 +771,10 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         ): SeriesProgressCalculation {
             val latestSeason = latest.season.coerceAtLeast(1)
             val latestEpNumber = latest.episode.filter { it.isDigit() }.toIntOrNull() ?: 1
-            val currentEpProgress = if (latest.durationMs > 0) {
+            val rawCurrentEpProgress = if (latest.durationMs > 0) {
                 (latest.progressMs.toFloat() / latest.durationMs.toFloat()).coerceIn(0f, 1f)
             } else 0f
+            val currentEpProgress = if (rawCurrentEpProgress >= 0.85f) 1.0f else rawCurrentEpProgress
 
             val storedTotalEpisodes = items.maxOfOrNull { it.totalEpisodes } ?: 0
             val storedTotalSeasons = items.maxOfOrNull { it.totalSeasons } ?: 0
@@ -779,8 +783,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             val estimatedTotalEpisodes: Int
 
             if (latest.episodeIndex > 0) {
-                // Прямой точный сохраненный сквозной индекс
-                absoluteEpisodeIndex = latest.episodeIndex
+                // Прямой точный сохраненный сквозной индекс (с зашитой защитой от старого бага 1 серии)
+                absoluteEpisodeIndex = maxOf(latest.episodeIndex, latestEpNumber)
                 estimatedTotalEpisodes = if (storedTotalEpisodes > 0) {
                     maxOf(storedTotalEpisodes, absoluteEpisodeIndex)
                 } else {
@@ -791,14 +795,14 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 if (storedTotalEpisodes > 0 && storedTotalSeasons > 0) {
                     val epsPerSeason = (storedTotalEpisodes.toDouble() / storedTotalSeasons.toDouble()).coerceAtLeast(1.0)
                     val priorEpisodes = ((latestSeason - 1) * epsPerSeason).toInt()
-                    absoluteEpisodeIndex = (priorEpisodes + latestEpNumber).coerceIn(1, storedTotalEpisodes)
-                    estimatedTotalEpisodes = storedTotalEpisodes
+                    absoluteEpisodeIndex = maxOf(1, priorEpisodes + latestEpNumber)
+                    estimatedTotalEpisodes = maxOf(storedTotalEpisodes, absoluteEpisodeIndex)
                 } else if (storedTotalEpisodes > 0) {
                     val maxEpSeen = items.mapNotNull { it.episode.filter { c -> c.isDigit() }.toIntOrNull() }.maxOrNull()?.coerceAtLeast(1) ?: latestEpNumber
                     val epsPerSeason = maxOf(maxEpSeen, latestEpNumber)
                     val priorEpisodes = (latestSeason - 1) * epsPerSeason
-                    absoluteEpisodeIndex = (priorEpisodes + latestEpNumber).coerceIn(1, storedTotalEpisodes)
-                    estimatedTotalEpisodes = storedTotalEpisodes
+                    absoluteEpisodeIndex = maxOf(1, priorEpisodes + latestEpNumber)
+                    estimatedTotalEpisodes = maxOf(storedTotalEpisodes, absoluteEpisodeIndex)
                 } else {
                     val maxEpSeen = items.mapNotNull { it.episode.filter { c -> c.isDigit() }.toIntOrNull() }.maxOrNull()?.coerceAtLeast(1) ?: latestEpNumber
                     val maxSeasonSeen = maxOf(latestSeason, items.maxOfOrNull { it.season } ?: 1)
@@ -822,7 +826,11 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             val totalEpisodesCount = maxOf(estimatedTotalEpisodes, absoluteEpisodeIndex, 1)
 
             // Суммарный прогресс сериала в диапазоне от 0.0 до 1.0
-            val totalProgressFraction = ((priorCompletedCount.toFloat() + currentEpProgress) / totalEpisodesCount.toFloat()).coerceIn(0f, 1f)
+            val totalProgressFraction = if (watchedEpisodesCount >= totalEpisodesCount) {
+                1.0f
+            } else {
+                ((priorCompletedCount.toFloat() + currentEpProgress) / totalEpisodesCount.toFloat()).coerceIn(0f, 1f)
+            }
 
             return SeriesProgressCalculation(
                 absoluteEpisodeIndex = absoluteEpisodeIndex,

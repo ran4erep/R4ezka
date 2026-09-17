@@ -2,6 +2,7 @@ package com.example
 
 import com.example.data.AnubisInterceptor
 import com.example.data.RezkaDecryptor
+import com.example.data.WatchHistoryEntity
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -198,6 +199,37 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun seriesProgress_allEpisodesWatched_shows100PercentNot99Percent() {
+        val lastEp = WatchHistoryEntity(
+            id = "1",
+            itemId = "test_1",
+            title = "Тестовый сериал",
+            imageUrl = "",
+            subtitle = "10 серия",
+            url = "",
+            translatorId = "1",
+            translatorName = "Дубляж",
+            season = 1,
+            episode = "10",
+            progressMs = 2370_000L,
+            durationMs = 2400_000L, // 98.75%
+            totalEpisodes = 10,
+            episodeIndex = 10,
+            totalSeasons = 1
+        )
+
+        val result = com.example.ui.RezkaViewModel.calculateSeriesProgress(
+            latest = lastEp,
+            items = listOf(lastEp)
+        )
+
+        assertEquals("Сквозной индекс 10", 10, result.absoluteEpisodeIndex)
+        assertEquals("Всего серий 10", 10, result.totalEpisodesCount)
+        assertEquals("Все 10 серий просмотрены", 10, result.watchedEpisodesCount)
+        assertEquals("Прогресс должен быть ровно 100% (1.0f), а не 99%", 1.0f, result.totalProgressFraction, 0.001f)
+    }
+
+    @Test
     fun parseSeasonsFromDoc_handlesCombinedEpisodesAndDifferentEpisodeCounts() {
         val html = """
             <div id="simple-seasons-tabs">
@@ -223,5 +255,100 @@ class ExampleUnitTest {
         assertEquals("ID первой серии должен быть 1-2", "1-2", seasons[0].episodes[0].id)
         assertEquals("Название первой серии", "Серия 1-2", seasons[0].episodes[0].name)
         assertEquals("Во втором сезоне 3 серии", 3, seasons[1].episodes.size)
+    }
+
+    @Test
+    fun movieDateParser_extractsReleaseDateNum_correctlyForAllFormats() {
+        // Обычный фильм с одним годом
+        val film1 = com.example.data.MovieDateParser.extractReleaseDateNum("2024, США, Боевик")
+        assertEquals(20240000, film1)
+
+        // Фильм с эмодзи-флагами после CountryFlags
+        val filmFlags = com.example.data.MovieDateParser.extractReleaseDateNum("2025, 🇺🇸 США, 🇫🇷 Франция, Комедия")
+        assertEquals(20250000, filmFlags)
+
+        // Сериал с диапазоном годов (должен выбираться последний завершившийся год)
+        val seriesFinished = com.example.data.MovieDateParser.extractReleaseDateNum("2018 - 2023, США, Драма")
+        assertEquals(20230000, seriesFinished)
+
+        // Сериал онгоинг ("2022 - ...")
+        val ongoing1 = com.example.data.MovieDateParser.extractReleaseDateNum("2022 - ..., Япония, Аниме")
+        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        assertEquals(currentYear * 10000, ongoing1)
+
+        // Сериал онгоинг ("2023 - по наст. время")
+        val ongoing2 = com.example.data.MovieDateParser.extractReleaseDateNum("2023 - по наст. время, Южная Корея")
+        assertEquals(currentYear * 10000, ongoing2)
+
+        // Точная числовая дата
+        val exactDate = com.example.data.MovieDateParser.extractReleaseDateNum("15.10.2024, Премьера")
+        assertEquals(20241015, exactDate)
+
+        // Год из URL при пустом подзаголовке
+        val fromUrl = com.example.data.MovieDateParser.extractReleaseDateNum("", "https://hdrezka.ag/films/action/68900-gladiator-ii-2024.html")
+        assertEquals(20240000, fromUrl)
+
+        // Старый фильм
+        val classicFilm = com.example.data.MovieDateParser.extractReleaseDateNum("1994, США, Драма")
+        assertEquals(19940000, classicFilm)
+    }
+
+    @Test
+    fun movieDateParser_searchSort_ordersFromNewestToOldest() {
+        val item1994 = com.example.data.RezkaItem(
+            id = "100-pulp-fiction-1994",
+            title = "Криминальное чтиво",
+            subtitle = "1994, США, Криминал",
+            imageUrl = "",
+            url = "/films/crime/100-pulp-fiction-1994.html",
+            type = com.example.data.RezkaType.MOVIE
+        )
+        val item2021 = com.example.data.RezkaItem(
+            id = "200-dune-2021",
+            title = "Дюна",
+            subtitle = "2021, США, Фантастика",
+            imageUrl = "",
+            url = "/films/fiction/200-dune-2021.html",
+            type = com.example.data.RezkaType.MOVIE
+        )
+        val item2024OlderId = com.example.data.RezkaItem(
+            id = "500-movie-a-2024",
+            title = "Фильм А",
+            subtitle = "2024, США, Комедия",
+            imageUrl = "",
+            url = "/films/comedy/500-movie-a-2024.html",
+            type = com.example.data.RezkaType.MOVIE
+        )
+        val item2024NewerId = com.example.data.RezkaItem(
+            id = "600-movie-b-2024",
+            title = "Фильм Б",
+            subtitle = "2024, США, Боевик",
+            imageUrl = "",
+            url = "/films/action/600-movie-b-2024.html",
+            type = com.example.data.RezkaType.MOVIE
+        )
+        val item2025 = com.example.data.RezkaItem(
+            id = "700-future-movie-2025",
+            title = "Фильм Будущего",
+            subtitle = "2025, Франция, Фантастика",
+            imageUrl = "",
+            url = "/films/fiction/700-future-movie-2025.html",
+            type = com.example.data.RezkaType.MOVIE
+        )
+
+        val unorganizedList = listOf(item1994, item2024OlderId, item2025, item2021, item2024NewerId)
+        val sortedList = unorganizedList.sortedWith(com.example.data.MovieDateParser.MovieDateComparator)
+
+        // Порядок должен быть:
+        // 1. 2025
+        // 2. 2024 (с большим ID: 600)
+        // 3. 2024 (с меньшим ID: 500)
+        // 4. 2021
+        // 5. 1994
+        assertEquals("Первым должен идти самый новый фильм 2025 года", item2025.id, sortedList[0].id)
+        assertEquals("Вторым должен идти фильм 2024 года с более свежим ID", item2024NewerId.id, sortedList[1].id)
+        assertEquals("Третьим должен идти фильм 2024 года", item2024OlderId.id, sortedList[2].id)
+        assertEquals("Четвертым должен идти фильм 2021 года", item2021.id, sortedList[3].id)
+        assertEquals("Последним должен идти самый старый фильм 1994 года", item1994.id, sortedList[4].id)
     }
 }

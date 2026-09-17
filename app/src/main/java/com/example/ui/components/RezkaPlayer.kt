@@ -608,6 +608,9 @@ fun RezkaPlayer(
                         exoPlayer.setPlaybackSpeed(playbackSpeed)
                     }
                 } else if (state == Player.STATE_ENDED) {
+                    if (totalDuration > 0) {
+                        onProgressUpdate(totalDuration, totalDuration)
+                    }
                     if (isSeries && hasNextEpisode && autoNextEpisode && !isAutoNextDismissed && onNextEpisode != null) {
                         showAutoNextCountdown = true
                     }
@@ -1581,13 +1584,10 @@ fun RezkaPlayer(
                     }
             )
 
-            // Buffering Indicator
+            // Buffering Indicator with Falling Skulls
             if (isBuffering && playerErrorMessage == null) {
-                CircularProgressIndicator(
-                    color = CinemaPrimary,
-                    modifier = Modifier
-                        .size(60.dp)
-                        .align(Alignment.Center)
+                FallingSkullsBufferingOverlay(
+                    text = "Буферизация... Приятного просмотра!"
                 )
             }
 
@@ -1956,29 +1956,6 @@ fun RezkaPlayer(
                             }
                         }
 
-                        // Rewind 10s button
-                        IconButton(
-                            onClick = {
-                                showControls = true
-                                controlsInteractionKey++
-                                val cur = exoPlayer.currentPosition
-                                val target = (cur - 10_000L).coerceAtLeast(0L)
-                                exoPlayer.seekTo(target)
-                                currentPosition = target
-                            },
-                            modifier = Modifier
-                                .size(50.dp)
-                                .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                                .testTag("player_rewind_10_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Replay10,
-                                contentDescription = "Перемотка на 10 секунд назад",
-                                tint = CinemaTextWhite,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-
                         // Play / Pause Button
                         IconButton(
                             onClick = {
@@ -1999,30 +1976,6 @@ fun RezkaPlayer(
                                 contentDescription = "Воспроизведение/Пауза",
                                 tint = CinemaTextWhite,
                                 modifier = Modifier.size(40.dp)
-                            )
-                        }
-
-                        // Forward 10s button
-                        IconButton(
-                            onClick = {
-                                showControls = true
-                                controlsInteractionKey++
-                                val cur = exoPlayer.currentPosition
-                                val dur = exoPlayer.duration.coerceAtLeast(0L)
-                                val target = if (dur > 0) (cur + 10_000L).coerceAtMost(dur) else (cur + 10_000L)
-                                exoPlayer.seekTo(target)
-                                currentPosition = target
-                            },
-                            modifier = Modifier
-                                .size(50.dp)
-                                .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                                .testTag("player_forward_10_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Forward10,
-                                contentDescription = "Перемотка на 10 секунд вперед",
-                                tint = CinemaTextWhite,
-                                modifier = Modifier.size(28.dp)
                             )
                         }
 

@@ -74,6 +74,7 @@ enum class TvNavDestination(val title: String, val icon: ImageVector) {
 fun TvMainScreen(
     viewModel: RezkaViewModel,
     onNavigateToDetail: (RezkaItem) -> Unit,
+    isTopScreen: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     var selectedDestination by remember { mutableStateOf(TvNavDestination.CATALOG) }
@@ -176,7 +177,8 @@ fun TvMainScreen(
                         isEndReached = isEndReached,
                         onNavigateToDetail = onNavigateToDetail,
                         sidebarFocusRequester = sidebarCatalogFocusRequester,
-                        entryFocusRequester = rightContentFocusRequester
+                        entryFocusRequester = rightContentFocusRequester,
+                        isTopScreen = isTopScreen
                     )
                 }
                 TvNavDestination.FAVORITES -> {
@@ -361,7 +363,8 @@ private fun TvCatalogContent(
     isEndReached: Boolean,
     onNavigateToDetail: (RezkaItem) -> Unit,
     sidebarFocusRequester: FocusRequester,
-    entryFocusRequester: FocusRequester
+    entryFocusRequester: FocusRequester,
+    isTopScreen: Boolean = true
 ) {
     val gridState = rememberLazyGridState()
     val searchBarFocusRequester = entryFocusRequester
@@ -439,7 +442,13 @@ private fun TvCatalogContent(
         ) {
             var searchInput by remember { mutableStateOf(viewModel.searchQuery) }
 
-            BackHandler(enabled = searchInput.isNotEmpty()) {
+            LaunchedEffect(viewModel.searchQuery) {
+                if (searchInput != viewModel.searchQuery) {
+                    searchInput = viewModel.searchQuery
+                }
+            }
+
+            BackHandler(enabled = isTopScreen && searchInput.isNotEmpty()) {
                 searchInput = ""
                 viewModel.onSearchQueryChanged("")
             }
