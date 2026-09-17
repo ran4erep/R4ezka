@@ -40,6 +40,11 @@ import com.example.ui.theme.*
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvPulsingFocusBorder
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.focus.focusProperties
+import kotlinx.coroutines.delay
+
 @Composable
 fun AuthDialog(
     viewModel: RezkaViewModel,
@@ -104,6 +109,7 @@ fun AuthDialog(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
                         .padding(20.dp)
                 ) {
                 // Header
@@ -529,23 +535,31 @@ private fun TvAuthTextField(
     trailingIcon: @Composable (() -> Unit)? = null,
     testTag: String = ""
 ) {
-    var isFocused by remember { mutableStateOf(false) }
+    var isBoxFocused by remember { mutableStateOf(false) }
+    var isFieldFocused by remember { mutableStateOf(false) }
     var isEditing by remember { mutableStateOf(false) }
+
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(isEditing) {
+        if (isEditing) {
+            focusRequester.requestFocusSafe()
+            delay(50)
+            keyboardController?.show()
+        }
+    }
+
+    val isHighlighted = isBoxFocused || isFieldFocused
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .onFocusChanged { focusState ->
-                isFocused = focusState.isFocused
-                if (!focusState.isFocused) {
-                    isEditing = false
-                    keyboardController?.hide()
-                }
+                isBoxFocused = focusState.isFocused
             }
             .tvPulsingFocusBorder(
-                isFocused = isFocused,
+                isFocused = isHighlighted,
                 focusedBorderColor = CinemaPrimary,
                 shape = RoundedCornerShape(10.dp),
                 baseBorderWidth = 2.5.dp
@@ -555,8 +569,6 @@ private fun TvAuthTextField(
                 indication = null
             ) {
                 isEditing = true
-                focusRequester.requestFocusSafe()
-                keyboardController?.show()
             }
             .onKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyUp &&
@@ -564,10 +576,10 @@ private fun TvAuthTextField(
                      keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
                      keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)
                 ) {
-                    isEditing = true
-                    focusRequester.requestFocusSafe()
-                    keyboardController?.show()
-                    true
+                    if (!isEditing) {
+                        isEditing = true
+                        true
+                    } else false
                 } else false
             }
     ) {
@@ -576,7 +588,6 @@ private fun TvAuthTextField(
             onValueChange = onValueChange,
             placeholder = { Text(placeholderText, color = CinemaMuted) },
             singleLine = true,
-            readOnly = !isEditing,
             visualTransformation = visualTransformation,
             trailingIcon = trailingIcon,
             shape = RoundedCornerShape(10.dp),
@@ -590,7 +601,25 @@ private fun TvAuthTextField(
             ),
             modifier = Modifier
                 .fillMaxWidth()
+                .focusProperties { canFocus = isEditing }
                 .focusRequester(focusRequester)
+                .onFocusChanged { focusState ->
+                    isFieldFocused = focusState.isFocused
+                    if (!focusState.isFocused && isEditing) {
+                        isEditing = false
+                    }
+                }
+                .onPreviewKeyEvent { keyEvent ->
+                    if (keyEvent.type == KeyEventType.KeyUp &&
+                        keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK
+                    ) {
+                        if (isEditing) {
+                            isEditing = false
+                            keyboardController?.hide()
+                            true
+                        } else false
+                    } else false
+                }
                 .testTag(testTag)
         )
     }
