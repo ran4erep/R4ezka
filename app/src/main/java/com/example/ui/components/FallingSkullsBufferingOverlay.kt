@@ -105,10 +105,53 @@ fun FallingSkullsBufferingOverlay(
         }
     }
 
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        if (skullBitmap != null) {
+            SkullsParticleCanvas(
+                skullBitmap = skullBitmap,
+                density = density,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(24.dp)
+        ) {
+            CircularProgressIndicator(
+                color = CinemaPrimary,
+                modifier = Modifier.size(56.dp)
+            )
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            Text(
+                text = text,
+                color = CinemaTextWhite,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+/**
+ * Изолированный слой анимации частиц черепков для нулевой лишней нагрузки на CPU и исключения рекомпозиций родительского дерева UI.
+ */
+@Composable
+private fun SkullsParticleCanvas(
+    skullBitmap: androidx.compose.ui.graphics.ImageBitmap,
+    density: Float,
+    modifier: Modifier = Modifier
+) {
     var canvasWidth by remember { mutableFloatStateOf(0f) }
     var canvasHeight by remember { mutableFloatStateOf(0f) }
 
-    val numParticles = 22
+    val numParticles = 20
     val particles = remember { Array(numParticles) { SkullParticle() } }
     var tick by remember { mutableLongStateOf(0L) }
 
@@ -150,59 +193,34 @@ fun FallingSkullsBufferingOverlay(
         }
     }
 
-    Box(
+    Canvas(
         modifier = modifier
             .fillMaxSize()
             .onGloballyPositioned { coords ->
                 canvasWidth = coords.size.width.toFloat()
                 canvasHeight = coords.size.height.toFloat()
-            },
-        contentAlignment = Alignment.Center
+            }
     ) {
-        if (skullBitmap != null && canvasWidth > 0f && canvasHeight > 0f) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                @Suppress("UNUSED_VARIABLE")
-                val frame = tick
-                val bmp = skullBitmap
-                val bmpW = bmp.width.toFloat()
-                val bmpH = bmp.height.toFloat()
+        @Suppress("UNUSED_VARIABLE")
+        val frame = tick
+        val bmp = skullBitmap
+        val bmpW = bmp.width.toFloat()
+        val bmpH = bmp.height.toFloat()
 
-                particles.forEach { p ->
-                    if (p.x + p.radius >= 0f && p.x - p.radius <= canvasWidth &&
-                        p.y + p.radius >= 0f && p.y - p.radius <= canvasHeight) {
-                        withTransform({
-                            translate(left = p.x, top = p.y)
-                            rotate(degrees = p.rotation)
-                        }) {
-                            drawImage(
-                                image = bmp,
-                                dstOffset = IntOffset((-bmpW / 2f).toInt(), (-bmpH / 2f).toInt()),
-                                alpha = p.alpha
-                            )
-                        }
-                    }
+        particles.forEach { p ->
+            if (p.x + p.radius >= 0f && p.x - p.radius <= size.width &&
+                p.y + p.radius >= 0f && p.y - p.radius <= size.height) {
+                withTransform({
+                    translate(left = p.x, top = p.y)
+                    rotate(degrees = p.rotation)
+                }) {
+                    drawImage(
+                        image = bmp,
+                        dstOffset = IntOffset((-bmpW / 2f).toInt(), (-bmpH / 2f).toInt()),
+                        alpha = p.alpha
+                    )
                 }
             }
-        }
-
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(24.dp)
-        ) {
-            CircularProgressIndicator(
-                color = CinemaPrimary,
-                modifier = Modifier.size(56.dp)
-            )
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            Text(
-                text = text,
-                color = CinemaTextWhite,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center
-            )
         }
     }
 }
