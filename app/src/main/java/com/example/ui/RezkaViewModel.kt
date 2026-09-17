@@ -78,16 +78,13 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     totalEpisodesCount = calc.totalEpisodesCount
                 }
 
-                val rawEpDigit = latest.episode.filter { it.isDigit() }.toIntOrNull() ?: 0
-                val safeLatestEpisode = if (rawEpDigit > 2500) "1" else latest.episode
-
                 AggregatedHistoryItem(
                     itemId = itemId,
                     title = latest.title,
                     imageUrl = latest.imageUrl,
                     url = latest.url,
                     latestSeason = latest.season,
-                    latestEpisode = safeLatestEpisode,
+                    latestEpisode = latest.episode,
                     latestTranslatorName = latest.translatorName,
                     isSeries = isSeries,
                     totalProgressFraction = totalProgressFraction,
@@ -773,26 +770,21 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             items: List<WatchHistoryEntity>
         ): SeriesProgressCalculation {
             val latestSeason = latest.season.coerceAtLeast(1)
-            val rawEpNum = latest.episode.filter { it.isDigit() }.toIntOrNull() ?: 1
-            val latestEpNumber = if (rawEpNum > 2500) 1 else rawEpNum
-
+            val latestEpNumber = latest.episode.filter { it.isDigit() }.toIntOrNull() ?: 1
             val rawCurrentEpProgress = if (latest.durationMs > 0) {
                 (latest.progressMs.toFloat() / latest.durationMs.toFloat()).coerceIn(0f, 1f)
             } else 0f
             val currentEpProgress = if (rawCurrentEpProgress >= 0.85f) 1.0f else rawCurrentEpProgress
 
-            val rawStoredTotalEpisodes = items.mapNotNull { it.totalEpisodes.takeIf { ep -> ep in 1..2500 } }.maxOrNull() ?: 0
-            val storedTotalEpisodes = if (rawStoredTotalEpisodes > 2500) 0 else rawStoredTotalEpisodes
-            val storedTotalSeasons = items.mapNotNull { it.totalSeasons.takeIf { s -> s in 1..100 } }.maxOrNull() ?: 0
-
-            val rawEpIndex = if (latest.episodeIndex in 1..2500) latest.episodeIndex else 0
+            val storedTotalEpisodes = items.maxOfOrNull { it.totalEpisodes } ?: 0
+            val storedTotalSeasons = items.maxOfOrNull { it.totalSeasons } ?: 0
 
             val absoluteEpisodeIndex: Int
             val estimatedTotalEpisodes: Int
 
-            if (rawEpIndex > 0) {
+            if (latest.episodeIndex > 0) {
                 // Прямой точный сохраненный сквозной индекс (с зашитой защитой от старого бага 1 серии)
-                absoluteEpisodeIndex = maxOf(rawEpIndex, latestEpNumber)
+                absoluteEpisodeIndex = maxOf(latest.episodeIndex, latestEpNumber)
                 estimatedTotalEpisodes = if (storedTotalEpisodes > 0) {
                     maxOf(storedTotalEpisodes, absoluteEpisodeIndex)
                 } else {
@@ -806,14 +798,14 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     absoluteEpisodeIndex = maxOf(1, priorEpisodes + latestEpNumber)
                     estimatedTotalEpisodes = maxOf(storedTotalEpisodes, absoluteEpisodeIndex)
                 } else if (storedTotalEpisodes > 0) {
-                    val maxEpSeen = items.mapNotNull { it.episode.filter { c -> c.isDigit() }.toIntOrNull()?.takeIf { e -> e in 1..2500 } }.maxOrNull()?.coerceAtLeast(1) ?: latestEpNumber
+                    val maxEpSeen = items.mapNotNull { it.episode.filter { c -> c.isDigit() }.toIntOrNull() }.maxOrNull()?.coerceAtLeast(1) ?: latestEpNumber
                     val epsPerSeason = maxOf(maxEpSeen, latestEpNumber)
                     val priorEpisodes = (latestSeason - 1) * epsPerSeason
                     absoluteEpisodeIndex = maxOf(1, priorEpisodes + latestEpNumber)
                     estimatedTotalEpisodes = maxOf(storedTotalEpisodes, absoluteEpisodeIndex)
                 } else {
-                    val maxEpSeen = items.mapNotNull { it.episode.filter { c -> c.isDigit() }.toIntOrNull()?.takeIf { e -> e in 1..2500 } }.maxOrNull()?.coerceAtLeast(1) ?: latestEpNumber
-                    val maxSeasonSeen = maxOf(latestSeason, items.mapNotNull { it.season.takeIf { s -> s in 1..100 } }.maxOrNull() ?: 1)
+                    val maxEpSeen = items.mapNotNull { it.episode.filter { c -> c.isDigit() }.toIntOrNull() }.maxOrNull()?.coerceAtLeast(1) ?: latestEpNumber
+                    val maxSeasonSeen = maxOf(latestSeason, items.maxOfOrNull { it.season } ?: 1)
                     val epsPerSeason = maxOf(maxEpSeen, latestEpNumber)
                     val priorEpisodes = (latestSeason - 1) * epsPerSeason
                     absoluteEpisodeIndex = priorEpisodes + latestEpNumber
