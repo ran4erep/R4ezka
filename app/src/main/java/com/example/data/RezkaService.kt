@@ -2753,20 +2753,20 @@ object RezkaService {
      * а не внутреннему идентификатору записи в БД HDRezka (data-episode_id="30140").
      */
     private fun extractEpisodeNumberId(epEl: org.jsoup.nodes.Element): String {
+        val epIdAttr = epEl.attr("data-episode_id").trim()
+        if (epIdAttr.isNotEmpty() && (epIdAttr.contains("-") || epIdAttr.length <= 5)) return epIdAttr
+
         val epAttr = epEl.attr("data-episode").trim()
         if (epAttr.isNotEmpty()) return epAttr
 
-        val epIdAttr = epEl.attr("data-id").trim()
-        if (epIdAttr.isNotEmpty() && epIdAttr.length <= 4) return epIdAttr
+        val rawIdAttr = epEl.attr("data-id").trim()
+        if (rawIdAttr.isNotEmpty() && rawIdAttr.length <= 4) return rawIdAttr
 
         val epText = epEl.text().trim()
-        val digitsFromText = Regex("""\d+""").find(epText)?.value
-        if (!digitsFromText.isNullOrEmpty()) return digitsFromText
+        val rangeOrDigits = Regex("""\d+(?:-\d+)?""").find(epText)?.value
+        if (!rangeOrDigits.isNullOrEmpty()) return rangeOrDigits
 
-        val fallbackEpisodeId = epEl.attr("data-episode_id").trim()
-        if (fallbackEpisodeId.isNotEmpty() && fallbackEpisodeId.length <= 4) return fallbackEpisodeId
-
-        return if (epIdAttr.isNotEmpty()) epIdAttr else fallbackEpisodeId
+        return if (epIdAttr.isNotEmpty()) epIdAttr else rawIdAttr
     }
 
     /**
