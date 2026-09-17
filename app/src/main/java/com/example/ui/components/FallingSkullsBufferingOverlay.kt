@@ -151,7 +151,7 @@ private fun SkullsParticleCanvas(
     var canvasWidth by remember { mutableFloatStateOf(0f) }
     var canvasHeight by remember { mutableFloatStateOf(0f) }
 
-    val numParticles = 20
+    val numParticles = 48
     val particles = remember { Array(numParticles) { SkullParticle() } }
     var tick by remember { mutableLongStateOf(0L) }
 
@@ -174,8 +174,9 @@ private fun SkullsParticleCanvas(
                 p.y += p.vy * dt
                 p.rotation = (p.rotation + p.vRot * dt) % 360f
 
-                // Плавный заезд за край и появление с противоположной стороны
-                val margin = p.radius * 2.5f
+                // Запас по расстоянию (margin) для полного заезда за край экрана перед переносом
+                val margin = p.radius * 3.0f + 16f * density
+
                 if (p.x < -margin) {
                     p.x = canvasWidth + margin
                 } else if (p.x > canvasWidth + margin) {
@@ -206,6 +207,8 @@ private fun SkullsParticleCanvas(
         val bmp = skullBitmap
         val bmpW = bmp.width.toFloat()
         val bmpH = bmp.height.toFloat()
+        val halfBmpW = (bmpW / 2f).toInt()
+        val halfBmpH = (bmpH / 2f).toInt()
 
         particles.forEach { p ->
             if (p.x + p.radius >= 0f && p.x - p.radius <= size.width &&
@@ -216,7 +219,7 @@ private fun SkullsParticleCanvas(
                 }) {
                     drawImage(
                         image = bmp,
-                        dstOffset = IntOffset((-bmpW / 2f).toInt(), (-bmpH / 2f).toInt()),
+                        dstOffset = IntOffset(-halfBmpW, -halfBmpH),
                         alpha = p.alpha
                     )
                 }
