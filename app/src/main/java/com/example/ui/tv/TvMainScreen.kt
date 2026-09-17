@@ -537,11 +537,27 @@ private fun TvCatalogContent(
                             items = catalogState.items,
                             key = { _, item -> item.id }
                         ) { index, item ->
-                            val isFirstRow = index < columnCount
-                            val isFirstColumn = index % columnCount == 0
+                            val navigateToItem: (Int) -> Unit = { targetIndex ->
+                                val total = catalogState.items.size
+                                if (total > 0) {
+                                    val clampedIndex = targetIndex.coerceIn(0, total - 1)
+                                    coroutineScope.launch {
+                                        try {
+                                            val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
+                                            if (!isVisible) {
+                                                gridState.scrollToItem(clampedIndex)
+                                            }
+                                        } catch (_: Exception) {}
+                                        getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
+                                    }
+                                }
+                            }
 
                             TvMovieCard(
                                 item = item,
+                                index = index,
+                                totalItems = catalogState.items.size,
+                                columnCount = columnCount,
                                 onClick = {
                                     viewModel.commitSearchQuery(searchInput)
                                     onNavigateToDetail(item)
@@ -553,8 +569,7 @@ private fun TvCatalogContent(
                                     }
                                 },
                                 focusRequester = getFocusRequesterForIndex(index),
-                                isFirstRow = isFirstRow,
-                                isFirstColumn = isFirstColumn,
+                                onNavigateIndex = navigateToItem,
                                 onUp = { categoryDropdownFocusRequester.requestFocusSafe() },
                                 onLeft = { sidebarFocusRequester.requestFocusSafe() }
                             )
@@ -1281,32 +1296,63 @@ fun TvCompactSearchBar(
 @Composable
 private fun TvMovieCard(
     item: RezkaItem,
+    index: Int,
+    totalItems: Int,
+    columnCount: Int,
     onClick: () -> Unit,
     onFocused: () -> Unit,
+    onNavigateIndex: (Int) -> Unit,
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
-    isFirstRow: Boolean = false,
-    isFirstColumn: Boolean = false,
     onUp: (() -> Unit)? = null,
     onLeft: (() -> Unit)? = null
 ) {
+    val safeCols = if (columnCount > 0) columnCount else 4
+    val isFirstColumn = index % safeCols == 0
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .onKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyDown) {
                     when (keyEvent.nativeKeyEvent.keyCode) {
+                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                            val targetIndex = index + safeCols
+                            if (targetIndex < totalItems) {
+                                onNavigateIndex(targetIndex)
+                                true
+                            } else if (index < totalItems - 1) {
+                                onNavigateIndex(totalItems - 1)
+                                true
+                            } else true
+                        }
                         AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                            if (isFirstRow && onUp != null) {
+                            if (index >= safeCols) {
+                                onNavigateIndex(index - safeCols)
+                                true
+                            } else if (onUp != null) {
                                 onUp()
                                 true
                             } else false
                         }
                         AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                            if (isFirstColumn && onLeft != null) {
-                                onLeft()
+                            if (isFirstColumn) {
+                                if (onLeft != null) {
+                                    onLeft()
+                                    true
+                                } else false
+                            } else {
+                                onNavigateIndex(index - 1)
                                 true
-                            } else false
+                            }
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if ((index + 1) % safeCols == 0 || index == totalItems - 1) {
+                                true
+                            } else {
+                                onNavigateIndex(index + 1)
+                                true
+                            }
                         }
                         else -> false
                     }
