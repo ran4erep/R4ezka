@@ -2748,28 +2748,6 @@ object RezkaService {
     }
 
     /**
-     * Извлекает порядковый номер серии из элемента DOM.
-     * Приоритет отдаётся прямому атрибуту data-episode и номеру из текста ("130 серия"),
-     * а не внутреннему идентификатору записи в БД HDRezka (data-episode_id="30140").
-     */
-    private fun extractEpisodeNumberId(epEl: org.jsoup.nodes.Element): String {
-        val epAttr = epEl.attr("data-episode").trim()
-        if (epAttr.isNotEmpty()) return epAttr
-
-        val epIdAttr = epEl.attr("data-id").trim()
-        if (epIdAttr.isNotEmpty() && epIdAttr.length <= 4) return epIdAttr
-
-        val epText = epEl.text().trim()
-        val digitsFromText = Regex("""\d+""").find(epText)?.value
-        if (!digitsFromText.isNullOrEmpty()) return digitsFromText
-
-        val fallbackEpisodeId = epEl.attr("data-episode_id").trim()
-        if (fallbackEpisodeId.isNotEmpty() && fallbackEpisodeId.length <= 4) return fallbackEpisodeId
-
-        return if (epIdAttr.isNotEmpty()) epIdAttr else fallbackEpisodeId
-    }
-
-    /**
      * Высокопроизводительный парсер сезонов и серий из DOM-дерева документа Rezka.
      * Корректно извлекает сдвоенные серии ("1-2"), кастомные ID, фильтрует вкладки сезонов
      * и обрабатывает любые структуры сезонов/серий без утечки заголовочных вкладок.
@@ -2824,8 +2802,12 @@ object RezkaService {
 
                 for (epEl in epElements) {
                     if (epEl.hasClass("b-simple_season__item") || epEl.selectFirst(".b-simple_season__item") != null) continue
-                    val finalId = extractEpisodeNumberId(epEl)
+                    val rawEpId = epEl.attr("data-episode_id")
+                        .ifEmpty { epEl.attr("data-id") }
+                        .ifEmpty { epEl.attr("data-episode") }
+                        .trim()
                     val epText = epEl.text().trim()
+                    val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
                     if (finalId.isNotEmpty()) {
                         val epName = if (epText.isNotEmpty()) epText else "Серия $finalId"
                         epList.add(Episode(id = finalId, name = epName, seasonId = sId, translatorId = translatorId))
@@ -2840,8 +2822,9 @@ object RezkaService {
                         val epSeasonId = epEl.attr("data-season_id").toIntOrNull()
                         if (epSeasonId != null && epSeasonId != sId) continue
 
-                        val finalId = extractEpisodeNumberId(epEl)
+                        val rawEpId = epEl.attr("data-episode_id").ifEmpty { epEl.attr("data-id") }.ifEmpty { epEl.attr("data-episode") }.trim()
                         val epText = epEl.text().trim()
+                        val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
                         if (finalId.isNotEmpty()) {
                             val epName = if (epText.isNotEmpty()) epText else "Серия $finalId"
                             epList.add(Episode(id = finalId, name = epName, seasonId = sId, translatorId = translatorId))
@@ -2867,8 +2850,9 @@ object RezkaService {
             val epList = ArrayList<Episode>()
             for (epEl in epElements) {
                 if (epEl.hasClass("b-simple_season__item")) continue
-                val finalId = extractEpisodeNumberId(epEl)
+                val rawEpId = epEl.attr("data-episode_id").ifEmpty { epEl.attr("data-id") }.ifEmpty { epEl.attr("data-episode") }.trim()
                 val epText = epEl.text().trim()
+                val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
                 if (finalId.isNotEmpty()) {
                     val epName = if (epText.isNotEmpty()) epText else "Серия $finalId"
                     epList.add(Episode(id = finalId, name = epName, seasonId = 1, translatorId = translatorId))
@@ -3015,8 +2999,12 @@ object RezkaService {
 
                                 for (epEl in epElements) {
                                     if (epEl.hasClass("b-simple_season__item")) continue
-                                    val finalId = extractEpisodeNumberId(epEl)
+                                    val rawEpId = epEl.attr("data-episode_id")
+                                        .ifEmpty { epEl.attr("data-id") }
+                                        .ifEmpty { epEl.attr("data-episode") }
+                                        .trim()
                                     val epText = epEl.text().trim()
+                                    val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
                                     if (finalId.isNotEmpty()) {
                                         val epName = if (epText.isNotEmpty()) epText else "Серия $finalId"
                                         epList.add(Episode(id = finalId, name = epName, seasonId = sId, translatorId = cleanTranslatorId))
@@ -3030,8 +3018,9 @@ object RezkaService {
                                         val epSeasonId = epEl.attr("data-season_id").toIntOrNull()
                                         if (epSeasonId != null && epSeasonId != sId) continue
 
-                                        val finalId = extractEpisodeNumberId(epEl)
+                                        val rawEpId = epEl.attr("data-episode_id").ifEmpty { epEl.attr("data-id") }.ifEmpty { epEl.attr("data-episode") }.trim()
                                         val epText = epEl.text().trim()
+                                        val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
                                         if (finalId.isNotEmpty()) {
                                             val epName = if (epText.isNotEmpty()) epText else "Серия $finalId"
                                             epList.add(Episode(id = finalId, name = epName, seasonId = sId, translatorId = cleanTranslatorId))
@@ -3048,8 +3037,9 @@ object RezkaService {
                             val epList = ArrayList<Episode>()
                             for (epEl in epElements) {
                                 if (epEl.hasClass("b-simple_season__item")) continue
-                                val finalId = extractEpisodeNumberId(epEl)
+                                val rawEpId = epEl.attr("data-episode_id").ifEmpty { epEl.attr("data-id") }.ifEmpty { epEl.attr("data-episode") }.trim()
                                 val epText = epEl.text().trim()
+                                val finalId = rawEpId.ifEmpty { Regex("""\d+""").find(epText)?.value ?: "" }
                                 if (finalId.isNotEmpty()) {
                                     val epName = if (epText.isNotEmpty()) epText else "Серия $finalId"
                                     epList.add(Episode(id = finalId, name = epName, seasonId = 1, translatorId = cleanTranslatorId))
