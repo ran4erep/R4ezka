@@ -210,7 +210,8 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 onNavigateToDetail = { targetItem ->
                                     pushToStack(ScreenState.Detail(targetItem))
                                 },
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier.fillMaxSize(),
+                                isTvMode = true
                             )
                         }
                         is ScreenState.ThematicList -> {
@@ -436,7 +437,8 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 },
                                 onNavigateToDetail = { targetItem ->
                                     pushToStack(ScreenState.Detail(targetItem))
-                                }
+                                },
+                                isTvMode = false
                             )
                         }
                         is ScreenState.ThematicList -> {
