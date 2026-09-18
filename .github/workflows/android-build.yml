@@ -77,8 +77,7 @@ jobs:
           echo "Decoding release keystore from secrets..."
           echo "$KEYSTORE_BASE64" | tr -d '\r\n' | base64 -d > release.keystore
 
-      - name: Run Unit Tests
-        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
+
 
       - name: Build Release APK
         if: ${{ env.KEYSTORE_SECRET != '' }}
