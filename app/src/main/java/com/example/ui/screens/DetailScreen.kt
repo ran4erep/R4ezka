@@ -120,7 +120,8 @@ fun DetailScreen(
     onBack: () -> Unit,
     onNavigateToThematic: (String, String) -> Unit = { _, _ -> },
     onNavigateToDetail: (RezkaItem) -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isTvMode: Boolean = false
 ) {
     val context = LocalContext.current
     val lazyListState = rememberLazyListState()
@@ -130,16 +131,6 @@ fun DetailScreen(
     val autoNextEpisode by viewModel.autoNextEpisode.collectAsState()
     val commentsState by viewModel.commentsState.collectAsState()
     val isFavorite = favorites.any { it.id == item.id }
-
-    val tvModePrefString by viewModel.tvModePreference.collectAsState()
-    val isTvMode = remember(context, tvModePrefString) {
-        val pref = when (tvModePrefString) {
-            "force_tv" -> TvModePreference.FORCE_TV
-            "force_mobile" -> TvModePreference.FORCE_MOBILE
-            else -> TvModePreference.AUTO
-        }
-        TvDetector.shouldShowTvInterface(context, pref)
-    }
 
     val scope = rememberCoroutineScope()
 
