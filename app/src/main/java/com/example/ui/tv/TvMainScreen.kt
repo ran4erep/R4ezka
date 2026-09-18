@@ -735,6 +735,9 @@ private fun TvCatalogFiltersBar(
     onFocusGrid: () -> Unit,
     sidebarFocusRequester: FocusRequester
 ) {
+    var isSearchAreaFocused by remember { mutableStateOf(false) }
+    val firstHistoryFocusRequester = remember { FocusRequester() }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -747,13 +750,20 @@ private fun TvCatalogFiltersBar(
             onQueryChanged = onSearchQueryChanged,
             searchBarFocusRequester = searchBarFocusRequester,
             onLeft = { sidebarFocusRequester.requestFocusSafe() },
-            onDown = { categoryFocusRequester.requestFocusSafe() },
+            onDown = {
+                if (searchHistory.isNotEmpty()) {
+                    firstHistoryFocusRequester.requestFocusSafe()
+                } else {
+                    categoryFocusRequester.requestFocusSafe()
+                }
+            },
             onSearchCommit = onSearchCommit,
+            onFocusChanged = { focused -> isSearchAreaFocused = focused },
             modifier = Modifier.fillMaxWidth()
         )
 
-        // Подсказки недавних запросов из истории поиска для ТВ
-        if (searchQuery.isEmpty() && searchHistory.isNotEmpty()) {
+        // Подсказки недавних запросов из истории поиска для ТВ (отображаются при фокусе в поиске)
+        if ((isSearchAreaFocused || searchQuery.isNotEmpty()) && searchHistory.isNotEmpty()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -771,12 +781,24 @@ private fun TvCatalogFiltersBar(
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium
                 )
-                searchHistory.take(5).forEach { histItem ->
+                searchHistory.take(5).forEachIndexed { index, histItem ->
                     Surface(
                         color = CinemaDark,
                         shape = RoundedCornerShape(6.dp),
                         border = BorderStroke(1.dp, CinemaBorder),
                         modifier = Modifier
+                            .then(if (index == 0) Modifier.focusRequester(firstHistoryFocusRequester) else Modifier)
+                            .onFocusChanged { focusState ->
+                                if (focusState.isFocused) {
+                                    isSearchAreaFocused = true
+                                }
+                            }
+                            .onKeyEvent { keyEvent ->
+                                if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_DOWN) {
+                                    categoryFocusRequester.requestFocusSafe()
+                                    true
+                                } else false
+                            }
                             .tvFocusableItem(
                                 onClick = {
                                     onSearchQueryChanged(histItem)
@@ -1112,7 +1134,8 @@ fun TvCompactSearchBar(
     searchBarFocusRequester: FocusRequester? = null,
     onLeft: (() -> Unit)? = null,
     onDown: (() -> Unit)? = null,
-    onSearchCommit: (() -> Unit)? = null
+    onSearchCommit: (() -> Unit)? = null,
+    onFocusChanged: ((Boolean) -> Unit)? = null
 ) {
     var isEditing by remember { mutableStateOf(false) }
     var hasBeenFocused by remember { mutableStateOf(false) }
@@ -1125,6 +1148,8 @@ fun TvCompactSearchBar(
         if (!isEditing) {
             hasBeenFocused = false
             searchBarFocusRequester?.requestFocusSafe()
+        } else {
+            onFocusChanged?.invoke(true)
         }
     }
 
@@ -1146,6 +1171,9 @@ fun TvCompactSearchBar(
             .focusProperties {
                 // Запрещаем переход фокуса ВВЕРХ с поисковой строки в боковое меню.
                 up = FocusRequester.Cancel
+            }
+            .onFocusChanged { focusState ->
+                onFocusChanged?.invoke(focusState.isFocused || isEditing)
             }
             .onKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyDown) {
@@ -1172,6 +1200,9 @@ fun TvCompactSearchBar(
                         onClick = {
                             isEditing = true
                             hasBeenFocused = false
+                        },
+                        onFocused = {
+                            onFocusChanged?.invoke(true)
                         },
                         scaleFactor = 1.02f,
                         focusedBorderWidth = 2.dp,
