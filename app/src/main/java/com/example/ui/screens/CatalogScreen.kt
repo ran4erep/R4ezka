@@ -16,8 +16,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -404,7 +402,6 @@ fun CatalogScreen(
                         }
 
                         val columnsCount = parsedCardGrid?.columns ?: 2
-                        val catalogFocusRequesters = remember(state.items.size) { List(state.items.size) { FocusRequester() } }
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(columnsCount),
                             state = gridState,
@@ -413,41 +410,16 @@ fun CatalogScreen(
                             verticalArrangement = Arrangement.spacedBy(if (columnsCount >= 6) 10.dp else 16.dp),
                             modifier = Modifier
                                 .fillMaxSize()
+                                .dpadScrollable(gridState)
                                 .testTag("catalog_items_grid")
                         ) {
-                            itemsIndexed(
+                            items(
                                 items = state.items,
-                                key = { _, item -> item.id }
-                            ) { index, item ->
-                                val itemFocusRequester = catalogFocusRequesters.getOrNull(index) ?: remember { FocusRequester() }
-                                val itemModifier = Modifier
-                                    .focusRequester(itemFocusRequester)
-                                    .onKeyEvent { keyEvent ->
-                                        if (keyEvent.type == KeyEventType.KeyDown) {
-                                            when (keyEvent.nativeKeyEvent.keyCode) {
-                                                AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                                    val nextIndex = index + columnsCount
-                                                    if (nextIndex < state.items.size) {
-                                                        catalogFocusRequesters.getOrNull(nextIndex)?.requestFocusSafe()
-                                                        true
-                                                    } else false
-                                                }
-                                                AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                                                    val prevIndex = index - columnsCount
-                                                    if (prevIndex >= 0) {
-                                                        catalogFocusRequesters.getOrNull(prevIndex)?.requestFocusSafe()
-                                                        true
-                                                    } else false
-                                                }
-                                                else -> false
-                                            }
-                                        } else false
-                                    }
-
+                                key = { it.id }
+                            ) { item ->
                                 RezkaItemCard(
                                     item = item,
                                     columnsCount = columnsCount,
-                                    modifier = itemModifier,
                                     onClick = {
                                         viewModel.commitSearchQuery(searchInput)
                                         keyboardController?.hide()

@@ -871,6 +871,8 @@ fun TvDetailContent(
                                                         }
                                                     },
                                                     scaleFactor = 1.02f,
+                                                    focusedBorderColor = CinemaPrimary,
+                                                    focusedBorderWidth = 2.5.dp,
                                                     shape = RoundedCornerShape(8.dp),
                                                     lazyListState = rightScrollState
                                                 )

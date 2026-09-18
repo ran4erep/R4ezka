@@ -344,7 +344,10 @@ fun DetailScreen(
 
     val displayState = remember(detailState, item.id) {
         val state = detailState
-        if (state is DetailState.Success && state.detail.id != item.id) {
+        if (state is DetailState.Success &&
+            state.detail.id != item.id &&
+            RezkaService.extractNumericId(state.detail.id) != RezkaService.extractNumericId(item.id)
+        ) {
             DetailState.Loading
         } else {
             state
