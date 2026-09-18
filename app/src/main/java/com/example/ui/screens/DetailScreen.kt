@@ -560,7 +560,8 @@ fun DetailScreen(
                         onOpenSchedule = { showScheduleCalendarDialog = true },
                         onBack = handleBack,
                         onAppendNextCommentsPage = { viewModel.appendNextCommentsPage() },
-                        onNavigateToMovie = { targetItem -> onNavigateToDetail(targetItem) }
+                        onNavigateToMovie = { targetItem -> onNavigateToDetail(targetItem) },
+                        onNavigateToThematic = { name, url -> onNavigateToThematic(name, url) }
                     )
                 } else {
                     // ---- SCROLLABLE MOBILE DETAIL PAGE (with TV/D-Pad support) ----

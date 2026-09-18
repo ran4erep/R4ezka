@@ -99,6 +99,8 @@ fun TvMainScreen(
     val genresList by viewModel.genresList.collectAsState()
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val isEndReached by viewModel.isEndReached.collectAsState()
+    val cardGridMode by viewModel.cardGridMode.collectAsState()
+    val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
 
     // Анимированная ширина бокового меню: 64dp в свернутом виде, 190dp при фокусе
     val sidebarWidth by animateDpAsState(
@@ -373,19 +375,25 @@ private fun TvCatalogContent(
     val genreDropdownFocusRequester = remember { FocusRequester() }
 
     val coroutineScope = rememberCoroutineScope()
+    val cardGridMode by viewModel.cardGridMode.collectAsState()
+    val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
     var lastFocusedIndex by remember { mutableStateOf(0) }
     val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
     fun getFocusRequesterForIndex(index: Int): FocusRequester {
         return itemFocusRequesters.getOrPut(index) { FocusRequester() }
     }
 
-    val columnCount by remember {
+    val columnCount by remember(parsedCardGrid) {
         derivedStateOf {
-            val visibleItems = gridState.layoutInfo.visibleItemsInfo
-            if (visibleItems.isEmpty()) 4
-            else {
-                val maxCol = visibleItems.maxOfOrNull { it.column } ?: 0
-                maxCol + 1
+            if (parsedCardGrid != null) {
+                parsedCardGrid.columns
+            } else {
+                val visibleItems = gridState.layoutInfo.visibleItemsInfo
+                if (visibleItems.isEmpty()) 4
+                else {
+                    val maxCol = visibleItems.maxOfOrNull { it.column } ?: 0
+                    maxCol + 1
+                }
             }
         }
     }
@@ -523,12 +531,13 @@ private fun TvCatalogContent(
                     }
                 }
                 is CatalogState.Success -> {
+                    val tvGridCols = parsedCardGrid?.columns
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = 150.dp),
+                        columns = if (tvGridCols != null) GridCells.Fixed(tvGridCols) else GridCells.Adaptive(minSize = 150.dp),
                         state = gridState,
                         contentPadding = PaddingValues(bottom = 32.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(if ((tvGridCols ?: 0) >= 7) 8.dp else 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(if ((tvGridCols ?: 0) >= 7) 10.dp else 16.dp),
                         modifier = Modifier
                             .fillMaxSize()
                             .testTag("tv_catalog_grid")
@@ -1310,6 +1319,9 @@ private fun TvMovieCard(
     val safeCols = if (columnCount > 0) columnCount else 4
     val isFirstColumn = index % safeCols == 0
 
+    val isDense = columnCount >= 6
+    val isUltraDense = columnCount >= 8
+
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -1361,14 +1373,14 @@ private fun TvMovieCard(
             .tvFocusableItem(
                 onClick = onClick,
                 onFocused = onFocused,
-                scaleFactor = 1.08f,
-                focusedBorderWidth = 3.dp,
-                shape = RoundedCornerShape(12.dp),
+                scaleFactor = if (isDense) 1.05f else 1.08f,
+                focusedBorderWidth = if (isDense) 2.dp else 3.dp,
+                shape = RoundedCornerShape(if (isDense) 8.dp else 12.dp),
                 focusRequester = focusRequester
             )
             .testTag("tv_movie_card_${item.id}"),
         colors = CardDefaults.cardColors(containerColor = CinemaDark),
-        shape = RoundedCornerShape(12.dp)
+        shape = RoundedCornerShape(if (isDense) 8.dp else 12.dp)
     ) {
         Column {
             Box(
@@ -1387,14 +1399,14 @@ private fun TvMovieCard(
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(6.dp)
-                            .background(CinemaPrimary, RoundedCornerShape(6.dp))
-                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                            .padding(if (isDense) 4.dp else 6.dp)
+                            .background(CinemaPrimary, RoundedCornerShape(if (isDense) 4.dp else 6.dp))
+                            .padding(horizontal = if (isDense) 4.dp else 6.dp, vertical = if (isDense) 2.dp else 3.dp)
                     ) {
                         Text(
                             text = item.rating,
                             color = Color.White,
-                            fontSize = 10.sp,
+                            fontSize = if (isDense) 8.sp else 10.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -1404,12 +1416,12 @@ private fun TvMovieCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
+                    .padding(if (isDense) 5.dp else 8.dp)
             ) {
                 Text(
                     text = item.title,
                     color = CinemaTextWhite,
-                    fontSize = 12.sp,
+                    fontSize = if (isUltraDense) 9.sp else if (isDense) 10.sp else 12.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -1418,7 +1430,7 @@ private fun TvMovieCard(
                 Text(
                     text = item.subtitle,
                     color = CinemaTextGray,
-                    fontSize = 10.sp,
+                    fontSize = if (isUltraDense) 7.sp else if (isDense) 8.sp else 10.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )

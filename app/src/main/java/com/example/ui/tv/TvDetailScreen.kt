@@ -85,6 +85,7 @@ fun TvDetailContent(
     onBack: () -> Unit,
     onAppendNextCommentsPage: () -> Unit = {},
     onNavigateToMovie: (RezkaItem) -> Unit = {},
+    onNavigateToThematic: (String, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -581,7 +582,17 @@ fun TvDetailContent(
                                 )
                             }
 
-                            if (detail.director.isNotEmpty()) {
+                            if (detail.directorsList.isNotEmpty()) {
+                                TvDetailMetaRowWithLinks(
+                                    icon = Icons.Default.MovieFilter,
+                                    label = "Режиссёр:",
+                                    links = detail.directorsList,
+                                    onLinkClick = { link ->
+                                        onNavigateToThematic(link.name, link.url)
+                                    },
+                                    lazyListState = rightScrollState
+                                )
+                            } else if (detail.director.isNotEmpty()) {
                                 DetailMetaRow(
                                     icon = Icons.Default.MovieFilter,
                                     label = "Режиссёр:",
@@ -605,11 +616,38 @@ fun TvDetailContent(
                                 )
                             }
 
-                            if (detail.seriesCollection.isNotEmpty()) {
+                            if (detail.seriesCollectionList.isNotEmpty()) {
+                                TvDetailMetaRowWithLinks(
+                                    icon = Icons.Default.CollectionsBookmark,
+                                    label = "Из серии:",
+                                    links = detail.seriesCollectionList,
+                                    onLinkClick = { link ->
+                                        onNavigateToThematic(link.name, link.url)
+                                    },
+                                    lazyListState = rightScrollState
+                                )
+                            } else if (detail.seriesCollection.isNotEmpty()) {
                                 DetailMetaRow(
                                     icon = Icons.Default.CollectionsBookmark,
                                     label = "Из серии:",
                                     value = detail.seriesCollection
+                                )
+                            }
+
+                            val collectionsToShow = if (detail.collectionsList.isNotEmpty()) {
+                                detail.collectionsList
+                            } else {
+                                detail.inCollections.map { LinkItem(it, "") }
+                            }
+                            if (collectionsToShow.isNotEmpty()) {
+                                TvDetailMetaRowWithLinks(
+                                    icon = Icons.Default.FormatListBulleted,
+                                    label = "Входит в списки:",
+                                    links = collectionsToShow,
+                                    onLinkClick = { link ->
+                                        onNavigateToThematic(link.name, link.url)
+                                    },
+                                    lazyListState = rightScrollState
                                 )
                             }
 
@@ -620,88 +658,23 @@ fun TvDetailContent(
                                     value = detail.slogan
                                 )
                             }
-
-                            if (effectiveAgeRestriction.isNotEmpty()) {
-                                DetailMetaRow(
-                                    icon = Icons.Default.Explicit,
-                                    label = "Возраст:",
-                                    value = effectiveAgeRestriction
-                                )
-                            }
                         }
                     }
                 }
 
-                // ---- 3. Входит в списки (если есть) ----
-                if (detail.inCollections.isNotEmpty()) {
-                    item {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = "Входит в списки",
-                                color = CinemaTextWhite,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                items(detail.inCollections) { coll ->
-                                    Surface(
-                                        color = CinemaCard,
-                                        shape = RoundedCornerShape(8.dp),
-                                        border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.2f)),
-                                        modifier = Modifier
-                                            .focusProperties {
-                                                left = backButtonFocusRequester
-                                            }
-                                            .onKeyEvent { event ->
-                                                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                                    backButtonFocusRequester.requestFocusSafe()
-                                                    true
-                                                } else false
-                                            }
-                                            .tvFocusableItem(
-                                                onClick = {},
-                                                scaleFactor = 1.05f,
-                                                shape = RoundedCornerShape(8.dp),
-                                                lazyListState = rightScrollState
-                                            )
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                Icons.Default.EmojiEvents,
-                                                contentDescription = null,
-                                                tint = CinemaAmber,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = coll,
-                                                color = CinemaTextWhite,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                // ---- 3. В главных ролях (Актеры, идентично телефону со ссылками и ТВ-фокусом) ----
+                val effectiveActors = if (detail.actorsList.isNotEmpty()) {
+                    detail.actorsList
+                } else {
+                    detail.actors.map { LinkItem(it, "") }
                 }
-
-                // ---- 4. В главных ролях (Актеры, идентично телефону) ----
-                if (detail.actors.isNotEmpty()) {
+                if (effectiveActors.isNotEmpty()) {
                     item {
                         val initialActorCount = 4
-                        val displayActors = if (isActorsExpanded || detail.actors.size <= initialActorCount) {
-                            detail.actors
+                        val displayActors = if (isActorsExpanded || effectiveActors.size <= initialActorCount) {
+                            effectiveActors
                         } else {
-                            detail.actors.take(initialActorCount)
+                            effectiveActors.take(initialActorCount)
                         }
 
                         Card(
@@ -731,7 +704,7 @@ fun TvDetailContent(
                                             shape = RoundedCornerShape(6.dp),
                                             lazyListState = rightScrollState
                                         )
-                                        .clickable(enabled = detail.actors.size > initialActorCount) {
+                                        .clickable(enabled = effectiveActors.size > initialActorCount) {
                                             isActorsExpanded = !isActorsExpanded
                                         },
                                     verticalAlignment = Alignment.CenterVertically,
@@ -746,14 +719,14 @@ fun TvDetailContent(
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = "В главных ролях (${detail.actors.size})",
+                                            text = "В главных ролях (${effectiveActors.size})",
                                             color = CinemaTextWhite,
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold
                                         )
                                     }
 
-                                    if (detail.actors.size > initialActorCount) {
+                                    if (effectiveActors.size > initialActorCount) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
                                             modifier = Modifier.padding(vertical = 2.dp)
@@ -777,25 +750,51 @@ fun TvDetailContent(
                                 Spacer(modifier = Modifier.height(8.dp))
 
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    displayActors.forEach { actor ->
-                                        Row(
+                                    displayActors.forEach { actorLink ->
+                                        val isClickable = actorLink.url.isNotBlank()
+                                        Surface(
+                                            color = Color.Transparent,
+                                            shape = RoundedCornerShape(6.dp),
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(vertical = 2.dp),
-                                            verticalAlignment = Alignment.CenterVertically
+                                                .then(
+                                                    if (isClickable) {
+                                                        Modifier.tvFocusableItem(
+                                                            onClick = { onNavigateToThematic(actorLink.name, actorLink.url) },
+                                                            scaleFactor = 1.02f,
+                                                            shape = RoundedCornerShape(6.dp),
+                                                            lazyListState = rightScrollState
+                                                        )
+                                                    } else Modifier
+                                                )
+                                                .padding(vertical = 2.dp, horizontal = 4.dp)
                                         ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(5.dp)
-                                                    .background(CinemaPrimary, CircleShape)
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = actor,
-                                                color = CinemaTextWhite.copy(alpha = 0.9f),
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Normal
-                                            )
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(5.dp)
+                                                        .background(if (isClickable) CinemaPrimary else CinemaTextGray, CircleShape)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = actorLink.name,
+                                                    color = CinemaTextWhite.copy(alpha = 0.95f),
+                                                    fontSize = 13.sp,
+                                                    fontWeight = if (isClickable) FontWeight.Medium else FontWeight.Normal
+                                                )
+                                                if (isClickable) {
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Icon(
+                                                        imageVector = Icons.Default.OpenInNew,
+                                                        contentDescription = null,
+                                                        tint = CinemaPrimary.copy(alpha = 0.7f),
+                                                        modifier = Modifier.size(12.dp)
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1531,6 +1530,93 @@ fun TvDetailContent(
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Оптимизированный для пульта ТВ компонент отображения метаданных со ссылками.
+ * Каждая ссылка фокусируется пультом с помощью tvFocusableItem и мгновенно
+ * переходит по маршруту при нажатии ОК / DPAD_CENTER.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun TvDetailMetaRowWithLinks(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    links: List<LinkItem>,
+    onLinkClick: (LinkItem) -> Unit,
+    lazyListState: androidx.compose.foundation.lazy.LazyListState? = null,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = CinemaTextGray,
+            modifier = Modifier
+                .padding(top = 2.dp)
+                .size(15.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = label,
+            color = CinemaTextGray,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.width(110.dp)
+        )
+        androidx.compose.foundation.layout.FlowRow(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            links.forEach { link ->
+                val isClickable = link.url.isNotBlank()
+                Surface(
+                    color = CinemaCard,
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isClickable) CinemaPrimary.copy(alpha = 0.35f) else CinemaBorder
+                    ),
+                    modifier = Modifier
+                        .then(
+                            if (isClickable) {
+                                Modifier.tvFocusableItem(
+                                    onClick = { onLinkClick(link) },
+                                    scaleFactor = 1.05f,
+                                    shape = RoundedCornerShape(6.dp),
+                                    lazyListState = lazyListState
+                                )
+                            } else Modifier
+                        )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = link.name,
+                            color = CinemaTextWhite,
+                            fontSize = 12.sp,
+                            fontWeight = if (isClickable) FontWeight.SemiBold else FontWeight.Normal
+                        )
+                        if (isClickable) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = Icons.Default.OpenInNew,
+                                contentDescription = null,
+                                tint = CinemaPrimary,
+                                modifier = Modifier.size(11.dp)
+                            )
                         }
                     }
                 }

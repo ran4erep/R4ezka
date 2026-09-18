@@ -464,7 +464,7 @@ object FirebaseSyncManager {
     }
 
     /**
-     * Сохранение настроек приложения (зеркало, качество видео, автопереключение серии, субтитры, масштаб) в облако
+     * Сохранение настроек приложения (зеркало, качество видео, автопереключение серии, субтитры, масштаб, режим интерфейса и сетка карточек) в облако
      */
     fun onSettingsUpdated(
         mirror: String = RezkaService.currentMirror.value,
@@ -472,7 +472,9 @@ object FirebaseSyncManager {
         autoNextEpisode: Boolean = RezkaService.autoNextEpisode.value,
         preferredSubtitleLang: String = RezkaService.preferredSubtitleLang.value,
         subtitleTextScale: Float = RezkaService.subtitleTextScale.value,
-        resizeMode: String = RezkaService.defaultResizeMode.value
+        resizeMode: String = RezkaService.defaultResizeMode.value,
+        tvMode: String = RezkaService.tvModePreference.value,
+        cardGridMode: String = RezkaService.cardGridMode.value
     ) {
         val key = _userKey.value ?: return
         scope.launch {
@@ -484,6 +486,8 @@ object FirebaseSyncManager {
                     put("preferredSubtitleLang", preferredSubtitleLang)
                     put("subtitleTextScale", subtitleTextScale.toDouble())
                     put("resizeMode", resizeMode)
+                    put("tvMode", tvMode)
+                    put("cardGridMode", cardGridMode)
                     put("updatedAt", System.currentTimeMillis())
                 }
                 val request = Request.Builder()
@@ -491,7 +495,7 @@ object FirebaseSyncManager {
                     .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 httpClient.newCall(request).execute().close()
-                Log.d(TAG, "Settings synced to cloud: mirror=$mirror, quality=$quality, autoNext=$autoNextEpisode, sub=$preferredSubtitleLang, subScale=$subtitleTextScale, resize=$resizeMode")
+                Log.d(TAG, "Settings synced to cloud: mirror=$mirror, quality=$quality, autoNext=$autoNextEpisode, sub=$preferredSubtitleLang, subScale=$subtitleTextScale, resize=$resizeMode, tvMode=$tvMode, cardGridMode=$cardGridMode")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync settings to Firebase: ${e.message}")
             }
@@ -762,6 +766,8 @@ object FirebaseSyncManager {
                         val remoteSubLang = setJson.optString("preferredSubtitleLang", "")
                         val remoteSubScale = if (setJson.has("subtitleTextScale")) setJson.optDouble("subtitleTextScale").toFloat() else null
                         val remoteResize = setJson.optString("resizeMode", "")
+                        val remoteTvMode = setJson.optString("tvMode", "")
+                        val remoteGridMode = setJson.optString("cardGridMode", "")
 
                         if (remoteMirror.isNotBlank() && remoteMirror != RezkaService.currentMirror.value) {
                             withContext(Dispatchers.Main) {
@@ -791,6 +797,16 @@ object FirebaseSyncManager {
                         if (remoteResize.isNotBlank() && remoteResize != RezkaService.defaultResizeMode.value) {
                             withContext(Dispatchers.Main) {
                                 RezkaService.setDefaultResizeMode(remoteResize)
+                            }
+                        }
+                        if (remoteTvMode.isNotBlank() && remoteTvMode != RezkaService.tvModePreference.value) {
+                            withContext(Dispatchers.Main) {
+                                RezkaService.setTvModePreference(remoteTvMode)
+                            }
+                        }
+                        if (remoteGridMode.isNotBlank() && remoteGridMode != RezkaService.cardGridMode.value) {
+                            withContext(Dispatchers.Main) {
+                                RezkaService.setCardGridMode(remoteGridMode)
                             }
                         }
                     } else {

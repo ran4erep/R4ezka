@@ -1,8 +1,10 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CloudOff
@@ -11,6 +13,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -20,6 +24,8 @@ import com.example.data.RezkaItem
 import com.example.data.RezkaService
 import com.example.ui.theme.*
 import com.example.ui.tv.dpadScrollable
+import com.example.ui.tv.requestFocusSafe
+import com.example.ui.tv.tvFocusableItem
 import kotlinx.coroutines.launch
 
 sealed interface ThematicState {
@@ -84,6 +90,15 @@ fun ThematicListScreen(
         }
     }
 
+    BackHandler(onBack = onBack)
+
+    val backFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        if (isTvMode) {
+            backFocusRequester.requestFocusSafe()
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -101,12 +116,46 @@ fun ThematicListScreen(
                 )
             },
             navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Назад",
-                        tint = CinemaTextWhite
-                    )
+                if (isTvMode) {
+                    Surface(
+                        color = CinemaCard,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .padding(start = 12.dp, end = 4.dp)
+                            .focusRequester(backFocusRequester)
+                            .tvFocusableItem(
+                                onClick = onBack,
+                                scaleFactor = 1.08f,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Назад",
+                                tint = CinemaTextWhite,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Назад",
+                                color = CinemaTextWhite,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                } else {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Назад",
+                            tint = CinemaTextWhite
+                        )
+                    }
                 }
             },
             colors = TopAppBarDefaults.topAppBarColors(
@@ -210,7 +259,7 @@ fun ThematicListScreen(
                         }
 
                         LazyVerticalGrid(
-                            columns = GridCells.Fixed(2),
+                            columns = if (isTvMode) GridCells.Adaptive(minSize = 135.dp) else GridCells.Fixed(2),
                             state = gridState,
                             contentPadding = PaddingValues(16.dp),
                             horizontalArrangement = Arrangement.spacedBy(14.dp),
