@@ -160,14 +160,19 @@ fun DetailScreen(
     var isDecryptingStreams by remember { mutableStateOf(false) }
     var playbackJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
-    // Ensure screen orientation is restored to portrait whenever leaving DetailScreen (if not in TV mode)
+    // Ensure screen orientation is restored to unspecified whenever leaving DetailScreen (if not in TV mode)
     DisposableEffect(isTvMode) {
         onDispose {
             playbackJob?.cancel()
+            viewModel.setPlayerActive(false)
             if (!isTvMode) {
-                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             }
         }
+    }
+
+    LaunchedEffect(isPlayerOpen) {
+        viewModel.setPlayerActive(isPlayerOpen)
     }
 
     // Dialog state for "Ask" quality mode
@@ -210,11 +215,7 @@ fun DetailScreen(
         isPlayerOpen = false
         activePlayerStreams = null
         isDecryptingStreams = false
-        if (!isTvMode) {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        } else {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
     // Handle manual back button on movie detail screen
@@ -224,11 +225,7 @@ fun DetailScreen(
             isPlayerOpen = false
             activePlayerStreams = null
             isDecryptingStreams = false
-            if (!isTvMode) {
-                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            } else {
-                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            }
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         } else {
             viewModel.clearDetail()
             onBack()
@@ -355,11 +352,7 @@ fun DetailScreen(
                     Toast.makeText(context, "Не удалось получить ссылки на видео", Toast.LENGTH_SHORT).show()
                     isPlayerOpen = false
                     activePlayerStreams = null
-                    if (!isTvMode) {
-                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    } else {
-                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                    }
+                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 }
             } catch (e: Exception) {
                 if (e !is kotlinx.coroutines.CancellationException) {
@@ -367,11 +360,7 @@ fun DetailScreen(
                     Toast.makeText(context, "Ошибка сети при загрузке плеера", Toast.LENGTH_SHORT).show()
                     isPlayerOpen = false
                     activePlayerStreams = null
-                    if (!isTvMode) {
-                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    } else {
-                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                    }
+                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 }
             }
         }
@@ -2094,11 +2083,7 @@ fun DetailScreen(
                         pendingStreamsForDialog = null
                         if (activePlayerStreams == null) {
                             isPlayerOpen = false
-                            if (!isTvMode) {
-                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                            } else {
-                                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                            }
+                            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                         }
                     }) {
                         Text("Отмена", color = CinemaTextGray)
@@ -2250,11 +2235,7 @@ fun DetailScreen(
                     isPlayerOpen = false
                     activePlayerStreams = null
                     isDecryptingStreams = false
-                    if (!isTvMode) {
-                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    } else {
-                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                    }
+                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                     FirebaseSyncManager.flushPendingProgress()
                 },
                 onProgressUpdate = { pos, duration ->
