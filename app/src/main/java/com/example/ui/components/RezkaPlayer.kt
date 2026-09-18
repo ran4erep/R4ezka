@@ -66,9 +66,13 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.view.KeyEvent
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -80,6 +84,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.session.MediaSession
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
@@ -374,7 +379,13 @@ fun RezkaPlayer(
 
         val mediaSourceFactory = DefaultMediaSourceFactory(httpDataSourceFactory)
 
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
+
         ExoPlayer.Builder(context, renderersFactory)
+            .setAudioAttributes(audioAttributes, true)
             .setTrackSelector(trackSelector)
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
@@ -403,10 +414,19 @@ fun RezkaPlayer(
         }
     }
 
-    // Helper to build proper MediaItem with correct container MIME type and attached subtitles
+    // Helper to build proper MediaItem with correct container MIME type, metadata and attached subtitles
     fun buildMediaItem(rawUrl: String, subTracks: List<SubtitleTrack>): MediaItem {
         val uri = rawUrl.trim()
-        val builder = MediaItem.Builder().setUri(uri)
+        val mediaMetadata = MediaMetadata.Builder()
+            .setTitle(title)
+            .setSubtitle(subtitle)
+            .setDisplayTitle(title)
+            .setArtist("Rezka")
+            .build()
+
+        val builder = MediaItem.Builder()
+            .setUri(uri)
+            .setMediaMetadata(mediaMetadata)
         if (uri.contains(".m3u8") || uri.contains(":hls:manifest.m3u8")) {
             builder.setMimeType(MimeTypes.APPLICATION_M3U8)
         } else if (uri.endsWith(".mp4") || uri.contains(".mp4?")) {
@@ -711,6 +731,102 @@ fun RezkaPlayer(
     // Controller Visibility State & Interaction Key
     var showControls by remember { mutableStateOf(true) }
     var controlsInteractionKey by remember { mutableIntStateOf(0) }
+
+    // Media3 MediaSession to intercept and handle system and Bluetooth headset/speaker media buttons
+    val mediaSession = remember(exoPlayer) {
+        val callback = object : MediaSession.Callback {
+            override fun onMediaButtonEvent(
+                session: MediaSession,
+                controllerInfo: MediaSession.ControllerInfo,
+                intent: Intent
+            ): Boolean {
+                val keyEvent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
+                }
+                if (keyEvent != null && keyEvent.action == KeyEvent.ACTION_DOWN) {
+                    when (keyEvent.keyCode) {
+                        KeyEvent.KEYCODE_HEADSETHOOK,
+                        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                        KeyEvent.KEYCODE_SPACE -> {
+                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            showControls = true
+                            controlsInteractionKey++
+                            return true
+                        }
+                        KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                            exoPlayer.play()
+                            showControls = true
+                            controlsInteractionKey++
+                            return true
+                        }
+                        KeyEvent.KEYCODE_MEDIA_PAUSE,
+                        KeyEvent.KEYCODE_MEDIA_STOP -> {
+                            exoPlayer.pause()
+                            showControls = true
+                            controlsInteractionKey++
+                            return true
+                        }
+                        KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                            if (isSeries && hasNextEpisode && onNextEpisode != null) {
+                                onNextEpisode.invoke()
+                            } else {
+                                val cur = exoPlayer.currentPosition
+                                val dur = exoPlayer.duration.coerceAtLeast(0L)
+                                exoPlayer.seekTo((cur + 10000L).coerceAtMost(dur))
+                            }
+                            showControls = true
+                            controlsInteractionKey++
+                            return true
+                        }
+                        KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                            if (isSeries && hasPreviousEpisode && onPreviousEpisode != null) {
+                                onPreviousEpisode.invoke()
+                            } else {
+                                val cur = exoPlayer.currentPosition
+                                exoPlayer.seekTo((cur - 10000L).coerceAtLeast(0L))
+                            }
+                            showControls = true
+                            controlsInteractionKey++
+                            return true
+                        }
+                        KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                            val cur = exoPlayer.currentPosition
+                            val dur = exoPlayer.duration.coerceAtLeast(0L)
+                            exoPlayer.seekTo((cur + 10000L).coerceAtMost(dur))
+                            showControls = true
+                            controlsInteractionKey++
+                            return true
+                        }
+                        KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                            val cur = exoPlayer.currentPosition
+                            exoPlayer.seekTo((cur - 10000L).coerceAtLeast(0L))
+                            showControls = true
+                            controlsInteractionKey++
+                            return true
+                        }
+                    }
+                }
+                return super.onMediaButtonEvent(session, controllerInfo, intent)
+            }
+        }
+        MediaSession.Builder(context, exoPlayer)
+            .setId("RezkaMediaSession_${System.currentTimeMillis()}")
+            .setCallback(callback)
+            .build()
+    }
+
+    DisposableEffect(mediaSession) {
+        onDispose {
+            try {
+                mediaSession.release()
+            } catch (e: Exception) {
+                Log.e("RezkaPlayer", "Error releasing MediaSession", e)
+            }
+        }
+    }
 
     // Remote Control (D-Pad) 3-tier Navigation State
     var currentFocusArea by remember { mutableStateOf(PlayerFocusArea.MAIN) }
@@ -1158,6 +1274,7 @@ fun RezkaPlayer(
                                     }
                                     true
                                 }
+                                android.view.KeyEvent.KEYCODE_HEADSETHOOK,
                                 android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
                                 android.view.KeyEvent.KEYCODE_SPACE -> {
                                     if (isPlaying) exoPlayer.pause() else exoPlayer.play()
@@ -1171,10 +1288,52 @@ fun RezkaPlayer(
                                     controlsInteractionKey++
                                     true
                                 }
-                                android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                                android.view.KeyEvent.KEYCODE_MEDIA_PAUSE,
+                                android.view.KeyEvent.KEYCODE_MEDIA_STOP -> {
                                     exoPlayer.pause()
                                     showControls = true
                                     controlsInteractionKey++
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                                    if (isSeries && hasNextEpisode && onNextEpisode != null) {
+                                        onNextEpisode.invoke()
+                                    } else {
+                                        val cur = exoPlayer.currentPosition
+                                        val dur = exoPlayer.duration.coerceAtLeast(0L)
+                                        val target = (cur + 10000L).coerceAtMost(dur)
+                                        exoPlayer.seekTo(target)
+                                        currentPosition = target
+                                        activeSeekSide = SeekSide.RIGHT
+                                        accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
+                                        showControls = true
+                                        controlsInteractionKey++
+                                        scope.launch {
+                                            delay(900)
+                                            activeSeekSide = SeekSide.NONE
+                                            accumulatedSeekSeconds = 0
+                                        }
+                                    }
+                                    true
+                                }
+                                android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                                    if (isSeries && hasPreviousEpisode && onPreviousEpisode != null) {
+                                        onPreviousEpisode.invoke()
+                                    } else {
+                                        val cur = exoPlayer.currentPosition
+                                        val target = (cur - 10000L).coerceAtLeast(0L)
+                                        exoPlayer.seekTo(target)
+                                        currentPosition = target
+                                        activeSeekSide = SeekSide.LEFT
+                                        accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
+                                        showControls = true
+                                        controlsInteractionKey++
+                                        scope.launch {
+                                            delay(900)
+                                            activeSeekSide = SeekSide.NONE
+                                            accumulatedSeekSeconds = 0
+                                        }
+                                    }
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {

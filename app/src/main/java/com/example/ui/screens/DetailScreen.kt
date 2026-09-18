@@ -270,15 +270,25 @@ fun DetailScreen(
             try {
                 val targetId = currentDetail?.numericPostId?.ifEmpty { null } ?: item.id
 
+                // Calculate display episode number and index for robust history matching
+                val effectiveSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else (currentDetail?.seasons ?: emptyList())
+                val curSeason = effectiveSeasons.find { it.id == effectiveSeason } ?: effectiveSeasons.firstOrNull()
+                val curEpisodes = curSeason?.episodes ?: emptyList()
+                val curEpisodeIndex = curEpisodes.indexOfFirst { it.id == effectiveEpisode }
+                val curEpisode = curEpisodes.find { it.id == effectiveEpisode }
+                    ?: findMatchingEpisode(effectiveEpisode, effectiveEpisode, curEpisodes)
+                val displayEpNumber = curEpisode?.id ?: if (effectiveEpisode.isNotBlank() && effectiveEpisode != "0") effectiveEpisode else "1"
+
                 // Check for saved watch progress for this exact season/episode or general movie progress
                 val savedHistory = viewModel.getSavedProgressForEpisode(item.id, effectiveSeason, effectiveEpisode)
+                    ?: viewModel.getSavedProgressForEpisode(item.id, effectiveSeason, displayEpNumber)
                     ?: viewModel.getSavedProgress(item.id)
 
                 val startPos = if (customStartPos != null) {
                     customStartPos
                 } else if (savedHistory != null && 
                     (savedHistory.season == effectiveSeason || !isSeries) && 
-                    (savedHistory.episode == effectiveEpisode || !isSeries)) {
+                    (savedHistory.episode == effectiveEpisode || savedHistory.episode == displayEpNumber || !isSeries)) {
                     if (savedHistory.durationMs > 0 && savedHistory.progressMs >= savedHistory.durationMs - 5000L) {
                         0L // Reset to start if near end of video
                     } else {
@@ -286,6 +296,35 @@ fun DetailScreen(
                     }
                 } else {
                     0L
+                }
+
+                // Immediately update history so active episode is saved as the latest entry
+                if (isSeries) {
+                    val priorEpCount = if (curSeason != null) {
+                        effectiveSeasons.takeWhile { it.id != curSeason.id }.sumOf { it.episodes.size }
+                    } else 0
+                    val epNum = curEpisode?.id?.let { id -> Regex("""\d+""").findAll(id).mapNotNull { it.value.toIntOrNull() }.maxOrNull() }
+                        ?: Regex("""\d+""").findAll(displayEpNumber).mapNotNull { it.value.toIntOrNull() }.maxOrNull()
+                        ?: (if (curEpisodeIndex >= 0) curEpisodeIndex + 1 else 1)
+                    val calculatedEpIndex = (priorEpCount + epNum).coerceAtLeast(1)
+                    val totalEpCount = effectiveSeasons.sumOf { it.episodes.size }.coerceAtLeast(1)
+
+                    viewModel.saveWatchProgress(
+                        itemId = item.id,
+                        title = item.title,
+                        imageUrl = item.imageUrl,
+                        subtitle = "Сезон ${curSeason?.id ?: effectiveSeason}, Серия $displayEpNumber",
+                        url = item.url,
+                        translatorId = translator.id,
+                        translatorName = translator.name,
+                        season = curSeason?.id ?: effectiveSeason,
+                        episode = displayEpNumber,
+                        progressMs = startPos,
+                        durationMs = savedHistory?.durationMs ?: 0L,
+                        totalEpisodes = totalEpCount,
+                        episodeIndex = calculatedEpIndex,
+                        totalSeasons = effectiveSeasons.size.coerceAtLeast(1)
+                    )
                 }
 
                 val streams = viewModel.getStreamUrls(
@@ -463,7 +502,7 @@ fun DetailScreen(
                                 }
                             }
 
-                            // 2. Restore Season & Episode for series
+                            // 2. Restore Season & Episode for series with multi-stage fallback matching
                             if (detail.type == RezkaType.SERIES) {
                                 val effectiveSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else detail.seasons
                                 if (effectiveSeasons.isNotEmpty()) {
@@ -471,8 +510,22 @@ fun DetailScreen(
                                     val matchedSeason = effectiveSeasons.find { it.id == savedSeasonId } ?: effectiveSeasons.firstOrNull()
                                     if (matchedSeason != null) {
                                         selectedSeasonId = matchedSeason.id
-                                        val savedEpId = savedHistory.episode
-                                        val matchedEp = matchedSeason.episodes.find { it.id == savedEpId } ?: matchedSeason.episodes.firstOrNull()
+                                        val savedEpStr = savedHistory.episode
+
+                                        val matchedEp = matchedSeason.episodes.find { it.id == savedEpStr }
+                                            ?: findMatchingEpisode(savedEpStr, savedEpStr, matchedSeason.episodes)
+                                            ?: run {
+                                                val savedNum = savedEpStr.filter { it.isDigit() }.toIntOrNull()
+                                                if (savedNum != null && savedNum > 0) {
+                                                    matchedSeason.episodes.getOrNull(savedNum - 1)
+                                                        ?: matchedSeason.episodes.find { ep ->
+                                                            ep.name.filter { it.isDigit() }.toIntOrNull() == savedNum ||
+                                                            ep.id.filter { it.isDigit() }.toIntOrNull() == savedNum
+                                                        }
+                                                } else null
+                                            }
+                                            ?: matchedSeason.episodes.firstOrNull()
+
                                         if (matchedEp != null) {
                                             selectedEpisodeId = matchedEp.id
                                         }
@@ -2215,31 +2268,25 @@ fun DetailScreen(
 
                         val curSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.firstOrNull()
                         val curEpisodes = curSeason?.episodes ?: emptyList()
-                        val curEpisodeIndex = curEpisodes.indexOfFirst { it.id == selectedEpisodeId }
+                        val curEpisode = curEpisodes.find { it.id == selectedEpisodeId }
+                            ?: findMatchingEpisode(selectedEpisodeId.orEmpty(), selectedEpisodeId.orEmpty(), curEpisodes)
+                        val curEpisodeIndex = curEpisodes.indexOfFirst { it.id == (curEpisode?.id ?: selectedEpisodeId) }
 
                         val priorEpCount = if (isSeries && curSeason != null) {
                             effectiveSeasons.takeWhile { it.id != curSeason.id }.sumOf { it.episodes.size }
                         } else 0
 
-                        val epNumberInSeason = if (curEpisodeIndex >= 0) {
-                            curEpisodeIndex + 1
-                        } else {
-                            val parsedNum = selectedEpisodeId?.filter { it.isDigit() }?.toIntOrNull() ?: 1
-                            if (parsedNum > 2500) 1 else parsedNum
-                        }
+                        val displayEpNumber = curEpisode?.id ?: selectedEpisodeId?.ifEmpty { "1" } ?: "1"
+
+                        val epNum = curEpisode?.id?.let { id -> Regex("""\d+""").findAll(id).mapNotNull { it.value.toIntOrNull() }.maxOrNull() }
+                            ?: Regex("""\d+""").findAll(displayEpNumber).mapNotNull { it.value.toIntOrNull() }.maxOrNull()
+                            ?: (if (curEpisodeIndex >= 0) curEpisodeIndex + 1 else 1)
 
                         val calculatedEpisodeIndex = if (isSeries) {
-                            (priorEpCount + epNumberInSeason).coerceAtLeast(1)
+                            (priorEpCount + epNum).coerceAtLeast(1)
                         } else 1
 
                         val totalSeasonsCount = if (isSeries) effectiveSeasons.size else 1
-
-                        val displayEpNumber = if (curEpisodeIndex >= 0) {
-                            "${curEpisodeIndex + 1}"
-                        } else {
-                            val parsedNum = selectedEpisodeId?.filter { it.isDigit() }?.toIntOrNull() ?: 1
-                            if (parsedNum > 2500) "1" else "$parsedNum"
-                        }
 
                         viewModel.saveWatchProgress(
                             itemId = item.id,

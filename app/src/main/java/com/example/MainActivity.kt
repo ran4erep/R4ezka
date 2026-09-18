@@ -51,6 +51,7 @@ import com.example.ui.theme.CinemaTextWhite
 import com.example.ui.tv.TvDetector
 import com.example.ui.tv.TvMainScreen
 import com.example.ui.tv.TvModePreference
+import com.example.ui.tv.LocalTvShowCursor
 
 enum class NavTab {
     FEED, FAVORITES, HISTORY
@@ -129,15 +130,30 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     val currentUserAvatar by viewModel.currentUserAvatar.collectAsState()
     var showAuthDialog by remember { mutableStateOf(false) }
 
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
     val context = LocalContext.current
     val tvModePrefString by viewModel.tvModePreference.collectAsState()
-    val isTvMode = remember(context, tvModePrefString) {
+    val isTvMode = remember(context, tvModePrefString, isLandscape) {
         val pref = when (tvModePrefString) {
             "force_tv" -> TvModePreference.FORCE_TV
             "force_mobile" -> TvModePreference.FORCE_MOBILE
             else -> TvModePreference.AUTO
         }
-        TvDetector.shouldShowTvInterface(context, pref)
+        when (pref) {
+            TvModePreference.FORCE_TV -> true
+            TvModePreference.FORCE_MOBILE -> false
+            TvModePreference.AUTO -> TvDetector.isRunningOnTv(context) || isLandscape
+        }
+    }
+
+    val showTvCursor = remember(context, tvModePrefString, isLandscape) {
+        when (tvModePrefString) {
+            "force_tv" -> true
+            "force_mobile" -> false
+            else -> TvDetector.isRunningOnTv(context)
+        }
     }
 
     if (showAuthDialog) {
@@ -156,11 +172,12 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(CinemaBlack)
-    ) {
+    CompositionLocalProvider(LocalTvShowCursor provides showTvCursor) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(CinemaBlack)
+        ) {
         if (isTvMode) {
             // Режим Android TV: строго изолированный рендеринг активного экрана
             // Никаких скрытых мобильных Scaffold, фоновых сеток каталога или полей ввода!
@@ -437,4 +454,5 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
             }
         }
     }
+}
 }

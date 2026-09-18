@@ -39,6 +39,8 @@ import androidx.compose.ui.zIndex
 import com.example.ui.theme.CinemaPrimary
 import kotlinx.coroutines.launch
 
+val LocalTvShowCursor = staticCompositionLocalOf { true }
+
 /**
  * Мерцающая/пульсирующая светящаяся рамочка вокруг выбранного элемента (ТВ-курсор).
  *
@@ -55,7 +57,7 @@ fun Modifier.tvPulsingFocusBorder(
     shape: Shape = RoundedCornerShape(12.dp),
     baseBorderWidth: Dp = 2.5.dp
 ): Modifier {
-    if (!isFocused) return this
+    if (!isFocused || !LocalTvShowCursor.current) return this
 
     val infiniteTransition = rememberInfiniteTransition(label = "tv_cursor_pulse")
 
