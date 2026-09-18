@@ -771,6 +771,10 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
+        private fun parseEpisodeNumber(epStr: String): Int {
+            return Regex("""\d+""").findAll(epStr).mapNotNull { it.value.toIntOrNull() }.maxOrNull() ?: 1
+        }
+
         /**
          * Высокопроизводительный движок вычисления прогресса сериала по последней просмотренной серии.
          * Учитывает сквозной номер серии из общего числа, прогресс текущей серии и структуру сезонов.
@@ -780,7 +784,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             items: List<WatchHistoryEntity>
         ): SeriesProgressCalculation {
             val latestSeason = latest.season.coerceAtLeast(1)
-            val rawEpNum = latest.episode.filter { it.isDigit() }.toIntOrNull() ?: 1
+            val rawEpNum = parseEpisodeNumber(latest.episode)
             val latestEpNumber = if (rawEpNum > 2500) 1 else rawEpNum
 
             val rawCurrentEpProgress = if (latest.durationMs > 0) {
@@ -813,13 +817,13 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     absoluteEpisodeIndex = maxOf(1, priorEpisodes + latestEpNumber)
                     estimatedTotalEpisodes = maxOf(storedTotalEpisodes, absoluteEpisodeIndex)
                 } else if (storedTotalEpisodes > 0) {
-                    val maxEpSeen = items.mapNotNull { it.episode.filter { c -> c.isDigit() }.toIntOrNull()?.takeIf { e -> e in 1..2500 } }.maxOrNull()?.coerceAtLeast(1) ?: latestEpNumber
+                    val maxEpSeen = items.mapNotNull { parseEpisodeNumber(it.episode).takeIf { e -> e in 1..2500 } }.maxOrNull()?.coerceAtLeast(1) ?: latestEpNumber
                     val epsPerSeason = maxOf(maxEpSeen, latestEpNumber)
                     val priorEpisodes = (latestSeason - 1) * epsPerSeason
                     absoluteEpisodeIndex = maxOf(1, priorEpisodes + latestEpNumber)
                     estimatedTotalEpisodes = maxOf(storedTotalEpisodes, absoluteEpisodeIndex)
                 } else {
-                    val maxEpSeen = items.mapNotNull { it.episode.filter { c -> c.isDigit() }.toIntOrNull()?.takeIf { e -> e in 1..2500 } }.maxOrNull()?.coerceAtLeast(1) ?: latestEpNumber
+                    val maxEpSeen = items.mapNotNull { parseEpisodeNumber(it.episode).takeIf { e -> e in 1..2500 } }.maxOrNull()?.coerceAtLeast(1) ?: latestEpNumber
                     val maxSeasonSeen = maxOf(latestSeason, items.mapNotNull { it.season.takeIf { s -> s in 1..100 } }.maxOrNull() ?: 1)
                     val epsPerSeason = maxOf(maxEpSeen, latestEpNumber)
                     val priorEpisodes = (latestSeason - 1) * epsPerSeason
@@ -828,20 +832,18 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // Количество завершенных серий до текущей
+            // Количество уникальных просмотренных/достигнутых серий в базе
+            val distinctEpisodesCount = items.map { "${it.season}_${it.episode}" }.distinct().size
+
+            // Отражаем реальную серию, на которой находится/которую смотрит пользователь,
+            // исключая искусственное вычитание 1 при прогрессе < 85%
+            val watchedEpisodesCount = maxOf(absoluteEpisodeIndex, distinctEpisodesCount, 1)
+
+            val totalEpisodesCount = maxOf(estimatedTotalEpisodes, watchedEpisodesCount, 1)
+
+            // Суммарный прогресс сериала в диапазоне от 0.0 до 1.0 (заполнение прогресс-бара)
             val priorCompletedCount = (absoluteEpisodeIndex - 1).coerceAtLeast(0)
-
-            // Засчитываем текущую серию как просмотренную, если посмотрели >= 85%
-            val watchedEpisodesCount = if (currentEpProgress >= 0.85f) {
-                absoluteEpisodeIndex
-            } else {
-                priorCompletedCount
-            }
-
-            val totalEpisodesCount = maxOf(estimatedTotalEpisodes, absoluteEpisodeIndex, 1)
-
-            // Суммарный прогресс сериала в диапазоне от 0.0 до 1.0
-            val totalProgressFraction = if (watchedEpisodesCount >= totalEpisodesCount) {
+            val totalProgressFraction = if (watchedEpisodesCount >= totalEpisodesCount && currentEpProgress >= 0.85f) {
                 1.0f
             } else {
                 ((priorCompletedCount.toFloat() + currentEpProgress) / totalEpisodesCount.toFloat()).coerceIn(0f, 1f)
