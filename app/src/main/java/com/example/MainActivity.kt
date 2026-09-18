@@ -135,7 +135,9 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
 
     val context = LocalContext.current
     val tvModePrefString by viewModel.tvModePreference.collectAsState()
-    val isTvMode = remember(context, tvModePrefString, isLandscape) {
+    val isPlayerActive by viewModel.isPlayerActive.collectAsState()
+
+    val targetIsTvMode = remember(context, tvModePrefString, isLandscape) {
         val pref = when (tvModePrefString) {
             "force_tv" -> TvModePreference.FORCE_TV
             "force_mobile" -> TvModePreference.FORCE_MOBILE
@@ -145,6 +147,14 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
             TvModePreference.FORCE_TV -> true
             TvModePreference.FORCE_MOBILE -> false
             TvModePreference.AUTO -> TvDetector.isRunningOnTv(context) || isLandscape
+        }
+    }
+
+    var isTvMode by remember { mutableStateOf(targetIsTvMode) }
+
+    LaunchedEffect(targetIsTvMode, isPlayerActive) {
+        if (!isPlayerActive) {
+            isTvMode = targetIsTvMode
         }
     }
 

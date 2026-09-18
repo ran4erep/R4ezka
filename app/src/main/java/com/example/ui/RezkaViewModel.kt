@@ -142,6 +142,13 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val _pendingDeepLink = MutableStateFlow<ParsedRezkaLink?>(null)
     val pendingDeepLink: StateFlow<ParsedRezkaLink?> = _pendingDeepLink.asStateFlow()
 
+    private val _isPlayerActive = MutableStateFlow(false)
+    val isPlayerActive: StateFlow<Boolean> = _isPlayerActive.asStateFlow()
+
+    fun setPlayerActive(active: Boolean) {
+        _isPlayerActive.value = active
+    }
+
     fun handleIncomingIntent(intent: Intent?) {
         if (intent == null) return
         val parsed = RezkaService.parseIntent(intent)
