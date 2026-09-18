@@ -127,6 +127,7 @@ fun Modifier.tvFocusCursor(
 fun Modifier.tvFocusableItem(
     onClick: () -> Unit,
     onFocused: (() -> Unit)? = null,
+    onFocusChanged: ((Boolean) -> Unit)? = null,
     scaleFactor: Float = 1.06f,
     focusedBorderColor: Color = CinemaPrimary,
     focusedBorderWidth: Dp = 2.5.dp,
@@ -165,6 +166,7 @@ fun Modifier.tvFocusableItem(
         )
         .onFocusChanged { focusState ->
             isFocused = focusState.isFocused
+            onFocusChanged?.invoke(focusState.isFocused)
             if (focusState.isFocused) {
                 onFocused?.invoke()
                 scrollJob?.cancel()

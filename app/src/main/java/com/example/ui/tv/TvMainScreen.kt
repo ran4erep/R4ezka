@@ -735,7 +735,21 @@ private fun TvCatalogFiltersBar(
     onFocusGrid: () -> Unit,
     sidebarFocusRequester: FocusRequester
 ) {
-    var isSearchEditing by remember { mutableStateOf(false) }
+    var isSearchInputFocused by remember { mutableStateOf(false) }
+    var focusedHistoryIndex by remember { mutableStateOf<Int?>(null) }
+    val isSearchAreaFocused = isSearchInputFocused || (focusedHistoryIndex != null)
+
+    var isHistoryVisible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isSearchAreaFocused) {
+        if (isSearchAreaFocused) {
+            isHistoryVisible = true
+        } else {
+            kotlinx.coroutines.delay(2000L)
+            isHistoryVisible = false
+        }
+    }
+
     val firstHistoryFocusRequester = remember { FocusRequester() }
 
     Column(
@@ -751,19 +765,19 @@ private fun TvCatalogFiltersBar(
             searchBarFocusRequester = searchBarFocusRequester,
             onLeft = { sidebarFocusRequester.requestFocusSafe() },
             onDown = {
-                if (isSearchEditing && searchHistory.isNotEmpty()) {
+                if (searchHistory.isNotEmpty() && isHistoryVisible) {
                     firstHistoryFocusRequester.requestFocusSafe()
                 } else {
                     categoryFocusRequester.requestFocusSafe()
                 }
             },
             onSearchCommit = onSearchCommit,
-            onEditingChange = { editing -> isSearchEditing = editing },
+            onFocusChanged = { focused -> isSearchInputFocused = focused },
             modifier = Modifier.fillMaxWidth()
         )
 
-        // Подсказки недавних запросов из истории поиска для ТВ (отображаются ТОЛЬКО по клику в поисковую строку)
-        if (isSearchEditing && searchHistory.isNotEmpty()) {
+        // Подсказки недавних запросов из истории поиска для ТВ (автоматическое скрытие через 2 секунды после увода фокуса)
+        if (isHistoryVisible && searchHistory.isNotEmpty()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -798,7 +812,13 @@ private fun TvCatalogFiltersBar(
                                 onClick = {
                                     onSearchQueryChanged(histItem)
                                     onSearchCommit?.invoke()
-                                    isSearchEditing = false
+                                },
+                                onFocusChanged = { focused ->
+                                    if (focused) {
+                                        focusedHistoryIndex = index
+                                    } else if (focusedHistoryIndex == index) {
+                                        focusedHistoryIndex = null
+                                    }
                                 },
                                 scaleFactor = 1.05f,
                                 shape = RoundedCornerShape(6.dp)
@@ -912,13 +932,15 @@ fun <T> TvRezkaDropdown(
     lazyListState: androidx.compose.foundation.lazy.LazyListState? = null
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var wasExpanded by remember { mutableStateOf(false) }
     val triggerRequester = focusRequester ?: remember { FocusRequester() }
     val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(expanded) {
-        if (!expanded) {
+        if (wasExpanded && !expanded) {
             triggerRequester.requestFocusSafe()
         }
+        wasExpanded = expanded
     }
 
     Box(modifier = modifier) {
@@ -1131,7 +1153,7 @@ fun TvCompactSearchBar(
     onLeft: (() -> Unit)? = null,
     onDown: (() -> Unit)? = null,
     onSearchCommit: (() -> Unit)? = null,
-    onEditingChange: ((Boolean) -> Unit)? = null
+    onFocusChanged: ((Boolean) -> Unit)? = null
 ) {
     var isEditing by remember { mutableStateOf(false) }
     var hasBeenFocused by remember { mutableStateOf(false) }
@@ -1139,19 +1161,19 @@ fun TvCompactSearchBar(
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
 
-    // При изменении состояния редактирования убираем или показываем историю поиска
+    // При выходе из режима редактирования гарантированно восстанавливаем фокус на строке поиска
     LaunchedEffect(isEditing) {
-        onEditingChange?.invoke(isEditing)
         if (!isEditing) {
             hasBeenFocused = false
             searchBarFocusRequester?.requestFocusSafe()
+        } else {
+            onFocusChanged?.invoke(true)
         }
     }
 
-    // При нажатии кнопки Назад пульта выходим из режима поиска и скрываем историю
+    // При открытой клавиатуре по кнопке Назад пульта скрываем клавиатуру и сохраняем фокус на строке поиска
     BackHandler(enabled = isEditing) {
         isEditing = false
-        onEditingChange?.invoke(false)
         keyboardController?.hide()
     }
 
@@ -1168,6 +1190,9 @@ fun TvCompactSearchBar(
                 // Запрещаем переход фокуса ВВЕРХ с поисковой строки в боковое меню.
                 up = FocusRequester.Cancel
             }
+            .onFocusChanged { focusState ->
+                onFocusChanged?.invoke(focusState.isFocused || isEditing)
+            }
             .onKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyDown) {
                     when (keyEvent.nativeKeyEvent.keyCode) {
@@ -1178,7 +1203,7 @@ fun TvCompactSearchBar(
                             } else false
                         }
                         AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                            if (onDown != null) {
+                            if (!isEditing && onDown != null) {
                                 onDown()
                                 true
                             } else false
@@ -1193,7 +1218,9 @@ fun TvCompactSearchBar(
                         onClick = {
                             isEditing = true
                             hasBeenFocused = false
-                            onEditingChange?.invoke(true)
+                        },
+                        onFocused = {
+                            onFocusChanged?.invoke(true)
                         },
                         scaleFactor = 1.02f,
                         focusedBorderWidth = 2.dp,

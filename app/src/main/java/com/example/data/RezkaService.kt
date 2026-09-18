@@ -1555,7 +1555,7 @@ object RezkaService {
 
                         val rawUrl = linkEl.attr("href")
                         if (rawUrl.isEmpty() || rawUrl.startsWith("javascript:")) continue
-                        val itemUrl = if (rawUrl.startsWith("/")) "$currentBaseUrl$rawUrl" else rawUrl
+                        val itemUrl = adjustUrlToCurrentMirror(rawUrl)
 
                         var title = linkEl.text().trim()
                         if (title.isEmpty()) {
@@ -1576,7 +1576,7 @@ object RezkaService {
                         val ratingEl = el.selectFirst(".b-category-bestrating, .rating, .num, .b-content__inline_item-cover .info, i.imdb, i.kp, .info")
                         val rating = ratingEl?.text()?.trim()?.removeSurrounding("(", ")") ?: ""
 
-                        val id = el.attr("data-id").ifEmpty { extractIdFromUrl(itemUrl) }
+                        val id = extractIdFromUrl(itemUrl)
 
                         val itemType = when {
                             itemUrl.contains("/series/") -> RezkaType.SERIES
@@ -1618,7 +1618,7 @@ object RezkaService {
 
                         val rawUrl = linkEl.attr("href")
                         if (rawUrl.isEmpty() || rawUrl.startsWith("javascript:")) continue
-                        val itemUrl = if (rawUrl.startsWith("/")) "$currentBaseUrl$rawUrl" else rawUrl
+                        val itemUrl = adjustUrlToCurrentMirror(rawUrl)
 
                         var title = linkEl.text().trim()
                         if (title.isEmpty()) {
@@ -1639,7 +1639,7 @@ object RezkaService {
                         val ratingEl = el.selectFirst(".b-category-bestrating, .rating, .num, .b-content__inline_item-cover .info, i.imdb, i.kp, .info")
                         val rating = ratingEl?.text()?.trim()?.removeSurrounding("(", ")") ?: ""
 
-                        val id = el.attr("data-id").ifEmpty { extractIdFromUrl(itemUrl) }
+                        val id = extractIdFromUrl(itemUrl)
 
                         val itemType = when {
                             itemUrl.contains("/series/") -> RezkaType.SERIES

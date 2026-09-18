@@ -15,8 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.key.*
-import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -260,55 +258,24 @@ fun ThematicListScreen(
                             }
                         }
 
-                        val columnsCount = if (isTvMode) 4 else 2
-                        val gridFocusRequesters = remember(loadedItems.size) { List(loadedItems.size) { FocusRequester() } }
-
                         LazyVerticalGrid(
-                            columns = GridCells.Fixed(columnsCount),
+                            columns = if (isTvMode) GridCells.Adaptive(minSize = 135.dp) else GridCells.Fixed(2),
                             state = gridState,
                             contentPadding = PaddingValues(16.dp),
                             horizontalArrangement = Arrangement.spacedBy(14.dp),
                             verticalArrangement = Arrangement.spacedBy(16.dp),
                             modifier = Modifier
                                 .fillMaxSize()
+                                .dpadScrollable(gridState)
                                 .testTag("thematic_items_grid")
                         ) {
-                            itemsIndexed(
+                            items(
                                 items = loadedItems,
-                                key = { _, item -> item.id }
-                            ) { index, item ->
-                                val itemFocusRequester = gridFocusRequesters.getOrNull(index) ?: remember { FocusRequester() }
-                                val itemModifier = if (isTvMode) {
-                                    Modifier
-                                        .focusRequester(itemFocusRequester)
-                                        .onKeyEvent { keyEvent ->
-                                            if (keyEvent.type == KeyEventType.KeyDown) {
-                                                when (keyEvent.nativeKeyEvent.keyCode) {
-                                                    AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                                        val nextIndex = index + columnsCount
-                                                        if (nextIndex < loadedItems.size) {
-                                                            gridFocusRequesters.getOrNull(nextIndex)?.requestFocusSafe()
-                                                            true
-                                                        } else false
-                                                    }
-                                                    AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                                                        val prevIndex = index - columnsCount
-                                                        if (prevIndex >= 0) {
-                                                            gridFocusRequesters.getOrNull(prevIndex)?.requestFocusSafe()
-                                                            true
-                                                        } else false
-                                                    }
-                                                    else -> false
-                                                }
-                                            } else false
-                                        }
-                                } else Modifier
-
+                                key = { it.id }
+                            ) { item ->
                                 RezkaItemCard(
                                     item = item,
-                                    onClick = { onNavigateToDetail(item) },
-                                    columnsCount = columnsCount,
-                                    modifier = itemModifier
+                                    onClick = { onNavigateToDetail(item) }
                                 )
                             }
 
