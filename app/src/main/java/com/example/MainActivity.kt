@@ -52,6 +52,14 @@ import com.example.ui.tv.TvDetector
 import com.example.ui.tv.TvMainScreen
 import com.example.ui.tv.TvModePreference
 import com.example.ui.tv.LocalTvShowCursor
+import com.example.BuildConfig
+import com.example.data.UpdateManager
+import com.example.data.UpdateState
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import kotlinx.coroutines.launch
 
 enum class NavTab {
     FEED, FAVORITES, HISTORY
@@ -123,6 +131,10 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
             pushToStack(ScreenState.Detail(item = link.item, initialTranslatorId = link.translatorId))
         }
         viewModel.consumePendingDeepLink()
+    }
+
+    LaunchedEffect(Unit) {
+        UpdateManager.checkForUpdates(BuildConfig.VERSION_NAME)
     }
 
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
@@ -464,7 +476,222 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                     }
                 }
             }
+            } // Close else mobile branch
+            if (!isPlayerActive) {
+                UpdateBanner(
+                    isBottomBarVisible = navigationStack.isEmpty() && !isSettingsOpen && !isTvMode,
+                    modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+                )
+            }
         }
     }
 }
+
+@Composable
+fun UpdateBanner(
+    isBottomBarVisible: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val updateState by UpdateManager.updateState.collectAsState()
+    var isExpanded by remember { mutableStateOf(false) }
+
+    if (updateState is UpdateState.Idle) return
+
+    val bottomPadding = if (isBottomBarVisible) 88.dp else 16.dp
+
+    LaunchedEffect(updateState) {
+        val state = updateState
+        if (state is UpdateState.ReadyToInstall) {
+            UpdateManager.installApk(context, state.apkFile)
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = bottomPadding)
+            .navigationBarsPadding()
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("update_banner"),
+            shape = MaterialTheme.shapes.medium,
+            color = CinemaDark,
+            border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+            shadowElevation = 6.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SystemUpdate,
+                            contentDescription = "Обновление",
+                            tint = CinemaPrimary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            when (val state = updateState) {
+                                is UpdateState.UpdateAvailable -> {
+                                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                        Text(
+                                            text = "Обновление: ${state.latestVersion}",
+                                            color = CinemaTextWhite,
+                                            fontSize = 13.sp,
+                                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                        )
+                                        if (!state.changelog.isNullOrBlank()) {
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            IconButton(
+                                                onClick = { isExpanded = !isExpanded },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
+                                                    contentDescription = "Подробнее",
+                                                    tint = CinemaPrimary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                is UpdateState.Downloading -> {
+                                    Text(
+                                        text = if (state.progress >= 0f) {
+                                            "Скачивание: ${(state.progress * 100).toInt()}%"
+                                        } else {
+                                            "Скачивание..."
+                                        },
+                                        color = CinemaTextWhite,
+                                        fontSize = 13.sp,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    LinearProgressIndicator(
+                                        progress = { if (state.progress >= 0f) state.progress else 0f },
+                                        modifier = Modifier.fillMaxWidth(0.9f),
+                                        color = CinemaPrimary,
+                                        trackColor = CinemaTextGray.copy(alpha = 0.3f)
+                                    )
+                                }
+                                is UpdateState.ReadyToInstall -> {
+                                    Text(
+                                        text = "Готово к установке",
+                                        color = CinemaTextWhite,
+                                        fontSize = 13.sp,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                    )
+                                }
+                                is UpdateState.Error -> {
+                                    Text(
+                                        text = state.message,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontSize = 11.sp,
+                                        maxLines = 1
+                                    )
+                                }
+                                else -> {}
+                            }
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        when (val state = updateState) {
+                            is UpdateState.UpdateAvailable -> {
+                                Button(
+                                    onClick = {
+                                        scope.launch {
+                                            UpdateManager.startDownload(context, state.downloadUrl)
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Text("Обновить", color = CinemaTextWhite, fontSize = 11.sp)
+                                }
+                            }
+                            is UpdateState.ReadyToInstall -> {
+                                Button(
+                                    onClick = {
+                                        UpdateManager.installApk(context, state.apkFile)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Text("Установить", color = CinemaTextWhite, fontSize = 11.sp)
+                                }
+                            }
+                            is UpdateState.Error -> {
+                                TextButton(
+                                    onClick = { UpdateManager.dismissUpdate() },
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Text("ОК", color = CinemaPrimary, fontSize = 11.sp)
+                                }
+                            }
+                            else -> {}
+                        }
+
+                        if (updateState is UpdateState.UpdateAvailable) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            IconButton(
+                                onClick = { UpdateManager.dismissUpdate() },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Закрыть",
+                                    tint = CinemaTextGray,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (isExpanded && updateState is UpdateState.UpdateAvailable) {
+                    val changelog = (updateState as UpdateState.UpdateAvailable).changelog
+                    if (!changelog.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        androidx.compose.foundation.lazy.LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 120.dp)
+                                .background(CinemaBlack.copy(alpha = 0.3f), MaterialTheme.shapes.small)
+                                .padding(8.dp)
+                        ) {
+                            item {
+                                Text(
+                                    text = changelog,
+                                    color = CinemaTextGray,
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

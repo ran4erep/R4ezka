@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import com.example.data.*
@@ -157,6 +158,33 @@ fun TvMainScreen(
                         onClick = { selectedDestination = dest }
                     )
                 }
+            }
+
+            val updateState by UpdateManager.updateState.collectAsState()
+            val context = LocalContext.current
+            val scope = rememberCoroutineScope()
+
+            if (updateState !is UpdateState.Idle) {
+                TvUpdateSidebarItem(
+                    updateState = updateState,
+                    isExpanded = isSidebarFocused,
+                    onClick = {
+                        scope.launch {
+                            when (val state = updateState) {
+                                is UpdateState.UpdateAvailable -> {
+                                    UpdateManager.startDownload(context, state.downloadUrl)
+                                }
+                                is UpdateState.ReadyToInstall -> {
+                                    UpdateManager.installApk(context, state.apkFile)
+                                }
+                                is UpdateState.Error -> {
+                                    UpdateManager.dismissUpdate()
+                                }
+                                else -> {}
+                            }
+                        }
+                    }
+                )
             }
         }
 
@@ -1480,6 +1508,102 @@ private fun TvMovieCard(
                     text = item.subtitle,
                     color = CinemaTextGray,
                     fontSize = if (isUltraDense) 7.sp else if (isDense) 8.sp else 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvUpdateSidebarItem(
+    updateState: UpdateState,
+    isExpanded: Boolean,
+    onClick: () -> Unit
+) {
+    val bgColor = when (updateState) {
+        is UpdateState.ReadyToInstall -> CinemaPrimary.copy(alpha = 0.3f)
+        is UpdateState.Downloading -> Color.Transparent
+        is UpdateState.Error -> MaterialTheme.colorScheme.error.copy(alpha = 0.2f)
+        else -> CinemaPrimary.copy(alpha = 0.15f)
+    }
+    val contentColor = when (updateState) {
+        is UpdateState.ReadyToInstall -> CinemaPrimary
+        is UpdateState.Error -> MaterialTheme.colorScheme.error
+        else -> CinemaPrimary
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(46.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(bgColor)
+            .tvFocusableItem(
+                onClick = onClick,
+                scaleFactor = 1.04f,
+                focusedBorderWidth = 2.dp,
+                shape = RoundedCornerShape(10.dp)
+            )
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(22.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            if (updateState is UpdateState.Downloading) {
+                CircularProgressIndicator(
+                    color = CinemaPrimary,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(18.dp)
+                )
+            } else {
+                Icon(
+                    imageVector = when (updateState) {
+                        is UpdateState.ReadyToInstall -> Icons.Default.Check
+                        is UpdateState.Error -> Icons.Default.Error
+                        else -> Icons.Default.SystemUpdate
+                    },
+                    contentDescription = "Обновление",
+                    tint = contentColor,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+        if (isExpanded) {
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = when (updateState) {
+                        is UpdateState.UpdateAvailable -> "Обновить"
+                        is UpdateState.Downloading -> {
+                            val pct = (updateState.progress * 100).toInt()
+                            if (pct >= 0) "Загрузка $pct%" else "Загрузка..."
+                        }
+                        is UpdateState.ReadyToInstall -> "Установить"
+                        is UpdateState.Error -> "Ошибка"
+                        else -> "Обновить"
+                    },
+                    color = CinemaTextWhite,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = when (updateState) {
+                        is UpdateState.UpdateAvailable -> updateState.latestVersion
+                        is UpdateState.ReadyToInstall -> "Готово"
+                        is UpdateState.Error -> "Сбросить"
+                        else -> "В процессе"
+                    },
+                    color = CinemaTextGray,
+                    fontSize = 9.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )

@@ -2436,14 +2436,21 @@ object RezkaService {
                             }
                         }
 
-                        // Если список озвучек пуст, ищем в JS-вызовах страницы
-                        if (rawTranslators.isEmpty()) {
-                            var foundId = ""
-                            val jsEventMatch = Regex("""sof\.tv\.initCDN(?:Movies|Series)Events\s*\(\s*['"]?(\d+)['"]?\s*,\s*['"]?(\d+)['"]?""", RegexOption.IGNORE_CASE).find(html)
+                        // Проверяем, вышел ли фильм/сериал (есть ли плеер)
+                        val hasTranslatorsInHtml = rawTranslators.isNotEmpty()
+                        val jsEventMatch = if (!hasTranslatorsInHtml) {
+                            Regex("""sof\.tv\.initCDN(?:Movies|Series)Events\s*\(\s*['"]?(\d+)['"]?\s*,\s*['"]?(\d+)['"]?""", RegexOption.IGNORE_CASE).find(html)
                                 ?: Regex("""initCDN(?:Movies|Series)Events\s*\(\s*['"]?(\d+)['"]?\s*,\s*['"]?(\d+)['"]?""", RegexOption.IGNORE_CASE).find(html)
-                            ?: Regex(""""translator_id"\s*:\s*"?(\d+)"?""", RegexOption.IGNORE_CASE).find(html)
-                            ?: Regex("""data-translator_id=["']?(\d+)["']?""", RegexOption.IGNORE_CASE).find(html)
+                                ?: Regex(""""translator_id"\s*:\s*"?(\d+)"?""", RegexOption.IGNORE_CASE).find(html)
+                                ?: Regex("""data-translator_id=["']?(\d+)["']?""", RegexOption.IGNORE_CASE).find(html)
+                        } else {
+                            null
+                        }
+                        val isReleased = hasTranslatorsInHtml || (jsEventMatch != null)
 
+                        // Если список озвучек пуст, но фильм вышел, ищем в JS-вызовах страницы
+                        if (rawTranslators.isEmpty() && isReleased) {
+                            var foundId = ""
                             if (jsEventMatch != null) {
                                 foundId = if (jsEventMatch.groupValues.size > 2) jsEventMatch.groupValues[2] else jsEventMatch.groupValues[1]
                             }
@@ -2576,7 +2583,8 @@ object RezkaService {
                             type = type,
                             translators = translators,
                             seasons = seasons,
-                            numericPostId = numericPostId
+                            numericPostId = numericPostId,
+                            isReleased = isReleased
                         )
                         detailCache.put(cacheKey, detail)
                         return@withContext detail

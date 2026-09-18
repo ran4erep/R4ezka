@@ -953,11 +953,15 @@ fun TvDetailContent(
                 // ---- 7. КНОПКА "СМОТРЕТЬ" ДЛЯ ФИЛЬМОВ ----
                 if (detail.type != RezkaType.SERIES) {
                     item {
+                        val isPlayEnabled = detail.isReleased
                         Button(
-                            onClick = onPlayMovie,
+                            onClick = { if (isPlayEnabled) onPlayMovie() },
+                            enabled = isPlayEnabled,
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = CinemaPrimary,
-                                contentColor = Color.Black
+                                containerColor = if (isPlayEnabled) CinemaPrimary else Color.Gray.copy(alpha = 0.3f),
+                                contentColor = if (isPlayEnabled) Color.Black else Color.White.copy(alpha = 0.5f),
+                                disabledContainerColor = Color.Gray.copy(alpha = 0.2f),
+                                disabledContentColor = Color.White.copy(alpha = 0.5f)
                             ),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
@@ -985,26 +989,32 @@ fun TvDetailContent(
                                         }
                                     } else false
                                 }
-                                .tvFocusableItem(
-                                    onClick = onPlayMovie,
-                                    scaleFactor = 1.03f,
-                                    focusedBorderColor = Color.White,
-                                    shape = RoundedCornerShape(10.dp),
-                                    focusRequester = mainActionFocusRequester,
-                                    lazyListState = rightScrollState
-                                )
+                                .let {
+                                    if (isPlayEnabled) {
+                                        it.tvFocusableItem(
+                                            onClick = onPlayMovie,
+                                            scaleFactor = 1.03f,
+                                            focusedBorderColor = Color.White,
+                                            shape = RoundedCornerShape(10.dp),
+                                            focusRequester = mainActionFocusRequester,
+                                            lazyListState = rightScrollState
+                                        )
+                                    } else {
+                                        it
+                                    }
+                                }
                                 .testTag("tv_movie_play_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.PlayArrow,
                                 contentDescription = null,
-                                tint = Color.Black,
+                                tint = if (isPlayEnabled) Color.Black else Color.White.copy(alpha = 0.5f),
                                 modifier = Modifier.size(24.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "СМОТРЕТЬ",
-                                color = Color.Black,
+                                text = if (isPlayEnabled) "СМОТРЕТЬ" else "ЕЩЕ НЕ ВЫШЕЛ",
+                                color = if (isPlayEnabled) Color.Black else Color.White.copy(alpha = 0.5f),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -1013,8 +1023,37 @@ fun TvDetailContent(
                 }
 
                 // ---- 8. СЕЗОНЫ И СЕРИИ (для сериалов) ----
-                if (detail.type == RezkaType.SERIES && effectiveSeasons.isNotEmpty()) {
-                    // Сезоны (выпадающий список для ТВ)
+                if (detail.type == RezkaType.SERIES) {
+                    if (!detail.isReleased || effectiveSeasons.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(CinemaDark)
+                                    .padding(16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = CinemaPrimary,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "Сериал еще не вышел или нет доступных серий",
+                                        color = CinemaTextWhite,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        // Сезоны (выпадающий список для ТВ)
                     val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
 
                     item {
@@ -1206,6 +1245,7 @@ fun TvDetailContent(
                                 }
                             }
                         }
+                    }
                     }
                 }
 

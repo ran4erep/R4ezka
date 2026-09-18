@@ -1247,8 +1247,39 @@ fun DetailScreen(
 
                     // 6. Series Navigation Panel (Seasons & Episodes Grid)
                     val effectiveSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else detail.seasons
-                    if (detail.type == RezkaType.SERIES && effectiveSeasons.isNotEmpty()) {
-                        // Seasons Dropdown Selector
+                    if (detail.type == RezkaType.SERIES) {
+                        if (!detail.isReleased || effectiveSeasons.isEmpty()) {
+                            item {
+                                Spacer(modifier = Modifier.height(20.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(CinemaDark)
+                                        .padding(16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Icon(
+                                            imageVector = Icons.Default.Info,
+                                            contentDescription = null,
+                                            tint = CinemaPrimary,
+                                            modifier = Modifier.size(32.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = "Сериал еще не вышел или нет доступных серий",
+                                            color = CinemaTextWhite,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            // Seasons Dropdown Selector
                         item {
                             Column(
                                 modifier = Modifier
@@ -1490,6 +1521,7 @@ fun DetailScreen(
                             }
                         }
                     }
+                }
 
                     // 7. Cinema Play Movie button & Trailer button
                     if (detail.type == RezkaType.MOVIE) {
@@ -1502,28 +1534,49 @@ fun DetailScreen(
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Button(
-                                    onClick = {
-                                        val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
-                                        startPlayback(translator, 0, "")
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier
-                                        .weight(1.35f)
-                                        .height(52.dp)
-                                        .tvFocusableItem(
-                                            onClick = {
-                                                val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
-                                                startPlayback(translator, 0, "")
-                                            },
-                                            shape = RoundedCornerShape(10.dp)
-                                        )
-                                        .testTag("movie_play_button")
-                                ) {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(22.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("СМОТРЕТЬ", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                if (detail.isReleased) {
+                                    Button(
+                                        onClick = {
+                                            val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
+                                            startPlayback(translator, 0, "")
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier
+                                            .weight(1.35f)
+                                            .height(52.dp)
+                                            .tvFocusableItem(
+                                                onClick = {
+                                                    val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
+                                                    startPlayback(translator, 0, "")
+                                                },
+                                                shape = RoundedCornerShape(10.dp)
+                                            )
+                                            .testTag("movie_play_button")
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(22.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("СМОТРЕТЬ", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = {},
+                                        enabled = false,
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = androidx.compose.ui.graphics.Color.Gray.copy(alpha = 0.3f),
+                                            disabledContainerColor = androidx.compose.ui.graphics.Color.Gray.copy(alpha = 0.2f),
+                                            disabledContentColor = CinemaTextWhite.copy(alpha = 0.5f)
+                                        ),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier
+                                            .weight(1.35f)
+                                            .height(52.dp)
+                                            .testTag("movie_play_button_disabled")
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(22.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("ЕЩЕ НЕ ВЫШЕЛ", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    }
                                 }
 
                                  Surface(

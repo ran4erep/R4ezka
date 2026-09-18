@@ -107,7 +107,8 @@ data class RezkaDetail(
     val type: RezkaType,
     val translators: List<Translator> = emptyList(),
     val seasons: List<Season> = emptyList(),
-    val numericPostId: String = ""
+    val numericPostId: String = "",
+    val isReleased: Boolean = true
 ) : Serializable
 
 data class FranchiseItem(
