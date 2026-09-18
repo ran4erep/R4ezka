@@ -735,7 +735,7 @@ private fun TvCatalogFiltersBar(
     onFocusGrid: () -> Unit,
     sidebarFocusRequester: FocusRequester
 ) {
-    var isSearchAreaFocused by remember { mutableStateOf(false) }
+    var isSearchEditing by remember { mutableStateOf(false) }
     val firstHistoryFocusRequester = remember { FocusRequester() }
 
     Column(
@@ -751,19 +751,19 @@ private fun TvCatalogFiltersBar(
             searchBarFocusRequester = searchBarFocusRequester,
             onLeft = { sidebarFocusRequester.requestFocusSafe() },
             onDown = {
-                if (searchHistory.isNotEmpty()) {
+                if (isSearchEditing && searchHistory.isNotEmpty()) {
                     firstHistoryFocusRequester.requestFocusSafe()
                 } else {
                     categoryFocusRequester.requestFocusSafe()
                 }
             },
             onSearchCommit = onSearchCommit,
-            onFocusChanged = { focused -> isSearchAreaFocused = focused },
+            onEditingChange = { editing -> isSearchEditing = editing },
             modifier = Modifier.fillMaxWidth()
         )
 
-        // Подсказки недавних запросов из истории поиска для ТВ (отображаются при фокусе в поиске)
-        if ((isSearchAreaFocused || searchQuery.isNotEmpty()) && searchHistory.isNotEmpty()) {
+        // Подсказки недавних запросов из истории поиска для ТВ (отображаются ТОЛЬКО по клику в поисковую строку)
+        if (isSearchEditing && searchHistory.isNotEmpty()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -788,11 +788,6 @@ private fun TvCatalogFiltersBar(
                         border = BorderStroke(1.dp, CinemaBorder),
                         modifier = Modifier
                             .then(if (index == 0) Modifier.focusRequester(firstHistoryFocusRequester) else Modifier)
-                            .onFocusChanged { focusState ->
-                                if (focusState.isFocused) {
-                                    isSearchAreaFocused = true
-                                }
-                            }
                             .onKeyEvent { keyEvent ->
                                 if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_DOWN) {
                                     categoryFocusRequester.requestFocusSafe()
@@ -803,6 +798,7 @@ private fun TvCatalogFiltersBar(
                                 onClick = {
                                     onSearchQueryChanged(histItem)
                                     onSearchCommit?.invoke()
+                                    isSearchEditing = false
                                 },
                                 scaleFactor = 1.05f,
                                 shape = RoundedCornerShape(6.dp)
@@ -1135,7 +1131,7 @@ fun TvCompactSearchBar(
     onLeft: (() -> Unit)? = null,
     onDown: (() -> Unit)? = null,
     onSearchCommit: (() -> Unit)? = null,
-    onFocusChanged: ((Boolean) -> Unit)? = null
+    onEditingChange: ((Boolean) -> Unit)? = null
 ) {
     var isEditing by remember { mutableStateOf(false) }
     var hasBeenFocused by remember { mutableStateOf(false) }
@@ -1143,19 +1139,19 @@ fun TvCompactSearchBar(
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
 
-    // При выходе из режима редактирования гарантированно восстанавливаем фокус на строке поиска
+    // При изменении состояния редактирования убираем или показываем историю поиска
     LaunchedEffect(isEditing) {
+        onEditingChange?.invoke(isEditing)
         if (!isEditing) {
             hasBeenFocused = false
             searchBarFocusRequester?.requestFocusSafe()
-        } else {
-            onFocusChanged?.invoke(true)
         }
     }
 
-    // При открытой клавиатуре по кнопке Назад пульта скрываем клавиатуру и сохраняем фокус на строке поиска
+    // При нажатии кнопки Назад пульта выходим из режима поиска и скрываем историю
     BackHandler(enabled = isEditing) {
         isEditing = false
+        onEditingChange?.invoke(false)
         keyboardController?.hide()
     }
 
@@ -1172,9 +1168,6 @@ fun TvCompactSearchBar(
                 // Запрещаем переход фокуса ВВЕРХ с поисковой строки в боковое меню.
                 up = FocusRequester.Cancel
             }
-            .onFocusChanged { focusState ->
-                onFocusChanged?.invoke(focusState.isFocused || isEditing)
-            }
             .onKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyDown) {
                     when (keyEvent.nativeKeyEvent.keyCode) {
@@ -1185,7 +1178,7 @@ fun TvCompactSearchBar(
                             } else false
                         }
                         AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                            if (!isEditing && onDown != null) {
+                            if (onDown != null) {
                                 onDown()
                                 true
                             } else false
@@ -1200,9 +1193,7 @@ fun TvCompactSearchBar(
                         onClick = {
                             isEditing = true
                             hasBeenFocused = false
-                        },
-                        onFocused = {
-                            onFocusChanged?.invoke(true)
+                            onEditingChange?.invoke(true)
                         },
                         scaleFactor = 1.02f,
                         focusedBorderWidth = 2.dp,
