@@ -713,6 +713,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     val subtitleTextScale: StateFlow<Float> = RezkaService.subtitleTextScale
     val defaultResizeMode: StateFlow<String> = RezkaService.defaultResizeMode
     val tvModePreference: StateFlow<String> = RezkaService.tvModePreference
+    val cardGridMode: StateFlow<String> = RezkaService.cardGridMode
 
     fun setDefaultQuality(quality: String) {
         RezkaService.setDefaultQuality(quality)
@@ -741,6 +742,12 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setTvModePreference(mode: String) {
         RezkaService.setTvModePreference(mode)
+        FirebaseSyncManager.onSettingsUpdated(tvMode = mode)
+    }
+
+    fun setCardGridMode(mode: String) {
+        RezkaService.setCardGridMode(mode)
+        FirebaseSyncManager.onSettingsUpdated(cardGridMode = mode)
     }
 
     fun setMirror(newUrl: String): Boolean {

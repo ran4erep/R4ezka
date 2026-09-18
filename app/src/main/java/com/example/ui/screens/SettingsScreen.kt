@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -7,13 +9,16 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,14 +26,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.example.R
 import com.example.data.RezkaService
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
@@ -52,6 +63,7 @@ fun SettingsScreen(
     val autoNextEpisode by viewModel.autoNextEpisode.collectAsState()
     val defaultResizeMode by viewModel.defaultResizeMode.collectAsState()
     val tvModePreference by viewModel.tvModePreference.collectAsState()
+    val cardGridMode by viewModel.cardGridMode.collectAsState()
     val presetMirrors = viewModel.presetMirrors
 
     var customMirrorInput by remember(currentMirror) { mutableStateOf(currentMirror) }
@@ -62,6 +74,10 @@ fun SettingsScreen(
     var isMirrorsExpanded by remember { mutableStateOf(false) }
     var isPlaybackExpanded by remember { mutableStateOf(false) }
     var isTvExpanded by remember { mutableStateOf(false) }
+
+    var tvModeDropdownExpanded by remember { mutableStateOf(false) }
+    var gridDropdownExpanded by remember { mutableStateOf(false) }
+    var showCustomGridDialog by remember { mutableStateOf(false) }
 
     val mirrorArrowRotation by animateFloatAsState(
         targetValue = if (isMirrorsExpanded) 180f else 0f,
@@ -81,10 +97,16 @@ fun SettingsScreen(
             .fillMaxSize()
             .background(CinemaBlack)
             .statusBarsPadding()
-            .verticalScroll(scrollState)
-            .dpadScrollable(scrollState)
-            .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
+        // Прокручиваемая область настроек
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(scrollState)
+                .dpadScrollable(scrollState)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
         // Header with Back Button
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -747,12 +769,13 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // ---- SECTION: TV & REMOTE CONTROL ----
-        val isDeviceActuallyTv = remember { TvDetector.isRunningOnTv(context) }
+        // ---- SECTION: INTERFACE & GRID ----
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = CinemaDark),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("interface_category_card")
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
@@ -778,7 +801,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Режим интерфейса",
+                            text = "Интерфейс",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = CinemaTextWhite
@@ -810,84 +833,590 @@ fun SettingsScreen(
                         HorizontalDivider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
                         Spacer(modifier = Modifier.height(14.dp))
 
+                        // 1. ВЫПАДАЮЩИЙ СПИСОК: РЕЖИМ ИНТЕРФЕЙСА
+                        Text(
+                            text = "РЕЖИМ ИНТЕРФЕЙСА",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = CinemaTextGray,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
                         val tvModes = listOf(
-                            TvModePreference.AUTO to "Автоопределение (Рекомендуется)",
-                            TvModePreference.FORCE_TV to "Телевизор",
-                            TvModePreference.FORCE_MOBILE to "Телефон/Планшет"
+                            TvModePreference.AUTO to ("Автоопределение (Рекомендуется)" to "Автоматический выбор под тип устройства"),
+                            TvModePreference.FORCE_TV to ("Телевизор" to "Полноэкранный ТВ-интерфейс под пульт D-Pad"),
+                            TvModePreference.FORCE_MOBILE to ("Телефон/Планшет" to "Сенсорный мобильный интерфейс с вкладками")
                         )
 
-                        tvModes.forEach { (mode, title) ->
-                            val isSelected = tvModePreference == mode.id
+                        val currentTvMode = tvModes.find { it.first.id == tvModePreference } ?: tvModes[0]
+
+                        Box(modifier = Modifier.fillMaxWidth()) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(if (isSelected) CinemaPrimary.copy(alpha = 0.15f) else Color.Transparent)
-                                    .clickable {
-                                        viewModel.setTvModePreference(mode.id)
-                                        Toast.makeText(context, "Режим: $title", Toast.LENGTH_SHORT).show()
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    .background(CinemaCard)
+                                    .tvFocusableItem(
+                                        onClick = { tvModeDropdownExpanded = true },
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.02f
+                                    )
+                                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                                    .testTag("tv_mode_dropdown_trigger"),
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                RadioButton(
-                                    selected = isSelected,
-                                    onClick = {
-                                        viewModel.setTvModePreference(mode.id)
-                                        Toast.makeText(context, "Режим: $title", Toast.LENGTH_SHORT).show()
-                                    },
-                                    colors = RadioButtonDefaults.colors(
-                                        selectedColor = CinemaPrimary,
-                                        unselectedColor = CinemaTextGray
-                                    )
+                                Text(
+                                    text = currentTvMode.second.first,
+                                    color = CinemaTextWhite,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.weight(1f, fill = false)
                                 )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column {
-                                    Text(
-                                        text = title,
-                                        color = if (isSelected) CinemaTextWhite else CinemaTextGray,
-                                        fontSize = 13.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Icon(
+                                    imageVector = if (tvModeDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                    contentDescription = "Выбор режима интерфейса",
+                                    tint = CinemaPrimary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
+                            DropdownMenu(
+                                expanded = tvModeDropdownExpanded,
+                                onDismissRequest = { tvModeDropdownExpanded = false },
+                                modifier = Modifier
+                                    .background(CinemaDark)
+                                    .fillMaxWidth(0.85f)
+                            ) {
+                                tvModes.forEach { (mode, info) ->
+                                    val (title, _) = info
+                                    val isSelected = tvModePreference == mode.id
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = title,
+                                                color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        },
+                                        onClick = {
+                                            tvModeDropdownExpanded = false
+                                            if (!isSelected) {
+                                                viewModel.setTvModePreference(mode.id)
+                                                Toast.makeText(context, "Режим: $title", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        colors = MenuDefaults.itemColors(textColor = CinemaTextWhite)
                                     )
                                 }
                             }
-                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+                        HorizontalDivider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // 2. ВЫПАДАЮЩИЙ СПИСОК: СЕТКА КАРТОЧЕК
+                        Text(
+                            text = "СЕТКА КАРТОЧЕК",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = CinemaTextGray,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        val parsedCurrentGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
+                        val presetGridOptions = listOf(
+                            "auto" to "Авто",
+                            "2x2" to "2 x 2",
+                            "2x3" to "2 x 3",
+                            "3x2" to "3 x 2",
+                            "3x3" to "3 x 3",
+                            "4x2" to "4 x 2",
+                            "4x3" to "4 x 3",
+                            "5x2" to "5 x 2",
+                            "5x3" to "5 x 3",
+                            "6x2" to "6 x 2",
+                            "7x2" to "7 x 2",
+                            "8x2" to "8 x 2",
+                            "10x2" to "10 x 2",
+                            "10x5" to "10 x 5"
+                        )
+
+                        val currentGridTitle = if (cardGridMode == "auto" || parsedCurrentGrid == null) {
+                            "Авто"
+                        } else {
+                            "${parsedCurrentGrid.columns} x ${parsedCurrentGrid.rows}"
+                        }
+
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(CinemaCard)
+                                    .tvFocusableItem(
+                                        onClick = { gridDropdownExpanded = true },
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.02f
+                                    )
+                                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                                    .testTag("card_grid_dropdown_trigger"),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = currentGridTitle,
+                                    color = CinemaTextWhite,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Icon(
+                                    imageVector = if (gridDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                    contentDescription = "Выбор сетки карточек",
+                                    tint = CinemaPrimary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
+                            DropdownMenu(
+                                expanded = gridDropdownExpanded,
+                                onDismissRequest = { gridDropdownExpanded = false },
+                                modifier = Modifier
+                                    .background(CinemaDark)
+                                    .fillMaxWidth(0.85f)
+                                    .heightIn(max = 320.dp)
+                            ) {
+                                if (cardGridMode != "auto" && presetGridOptions.none { it.first == cardGridMode } && parsedCurrentGrid != null) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = "${parsedCurrentGrid.columns} x ${parsedCurrentGrid.rows}",
+                                                color = CinemaPrimary,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        },
+                                        onClick = { gridDropdownExpanded = false },
+                                        colors = MenuDefaults.itemColors(textColor = CinemaTextWhite)
+                                    )
+                                }
+
+                                presetGridOptions.forEach { (key, title) ->
+                                    val isSelected = cardGridMode == key
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = title,
+                                                color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        },
+                                        onClick = {
+                                            gridDropdownExpanded = false
+                                            if (!isSelected) {
+                                                viewModel.setCardGridMode(key)
+                                                Toast.makeText(context, "Сетка: $title", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        colors = MenuDefaults.itemColors(textColor = CinemaTextWhite)
+                                    )
+                                }
+
+                                HorizontalDivider(color = CinemaMuted.copy(alpha = 0.4f), thickness = 1.dp)
+
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.Tune,
+                                                contentDescription = null,
+                                                tint = CinemaPrimary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Своя сетка...",
+                                                color = CinemaPrimary,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        gridDropdownExpanded = false
+                                        showCustomGridDialog = true
+                                    },
+                                    colors = MenuDefaults.itemColors(textColor = CinemaTextWhite)
+                                )
+                            }
                         }
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        // Диалог точной настройки сетки (до 10x5)
+        if (showCustomGridDialog) {
+            val initialGrid = RezkaService.parseCardGrid(cardGridMode)
+            CustomGridDialog(
+                initialCols = initialGrid?.columns ?: 7,
+                initialRows = initialGrid?.rows ?: 2,
+                onDismiss = { showCustomGridDialog = false },
+                onConfirm = { cols, rows ->
+                    val newMode = "${cols}x${rows}"
+                    viewModel.setCardGridMode(newMode)
+                    Toast.makeText(context, "Сетка: $newMode", Toast.LENGTH_SHORT).show()
+                    showCustomGridDialog = false
+                }
+            )
+        }
 
-        // ---- SECTION: DEVELOPER ----
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = CinemaDark.copy(alpha = 0.6f)),
-            modifier = Modifier.fillMaxWidth()
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        // ---- НИЖНЯЯ ПАНЕЛЬ: ВСЕГДА ВНИЗУ ЭКРАНА (ОТДЕЛЬНО ОТ НАСТРОЕК) ----
+        val supportUrl = stringResource(R.string.support_project_url)
+        val supportTitle = stringResource(R.string.support_project)
+        val supportDisplay = stringResource(R.string.support_project_link_display)
+        val supportIconUrl = stringResource(R.string.support_project_icon_url)
+        val supportIconDesc = stringResource(R.string.support_project_icon_desc)
+        val errorOpenLinkText = stringResource(R.string.error_cannot_open_link)
+        val developerLabel = stringResource(R.string.developer_label)
+        val developerName = stringResource(R.string.developer_name)
+
+        Surface(
+            color = CinemaDark.copy(alpha = 0.98f),
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+            border = BorderStroke(1.dp, CinemaMuted.copy(alpha = 0.35f)),
+            shadowElevation = 10.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                // Карточка поддержки Buy Me a Coffee
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = CinemaCard),
+                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.25f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .tvFocusableItem(
+                            onClick = {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(supportUrl)).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                runCatching {
+                                    context.startActivity(intent)
+                                }.onFailure {
+                                    Toast.makeText(context, errorOpenLinkText, Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            scaleFactor = 1.02f
+                        )
+                        .testTag("support_project_card")
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        // Иконка Buy Me a Coffee непосредственно с сайта
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFFFFDD00)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(context)
+                                    .data(supportIconUrl)
+                                    .crossfade(200)
+                                    .build(),
+                                contentDescription = supportIconDesc,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column(
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = supportTitle,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = CinemaTextWhite
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = supportDisplay,
+                                fontSize = 12.sp,
+                                color = CinemaPrimary,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = stringResource(R.string.support_project_open_desc),
+                            tint = CinemaPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Разработчик
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp)
+                ) {
+                    Text(
+                        text = developerLabel,
+                        fontSize = 13.sp,
+                        color = CinemaTextGray
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = developerName,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = CinemaPrimary
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Премиальный диалог ручной настройки сетки каталога.
+ * Высокопроизводительный, с живым матричным превью и полноценной поддержкой пульта TV (D-Pad).
+ */
+@Composable
+private fun CustomGridDialog(
+    initialCols: Int,
+    initialRows: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (cols: Int, rows: Int) -> Unit
+) {
+    var tempCols by remember { mutableStateOf(initialCols.coerceIn(1, 10)) }
+    var tempRows by remember { mutableStateOf(initialRows.coerceIn(1, 5)) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CinemaDark,
+        shape = RoundedCornerShape(16.dp),
+        title = {
+            Text(
+                text = "Сетка карточек",
+                color = CinemaTextWhite,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // По ширине (1..10)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "По ширине:",
+                        color = CinemaTextWhite,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (tempCols > 1) CinemaCard else CinemaCard.copy(alpha = 0.4f))
+                                .tvFocusableItem(
+                                    onClick = { if (tempCols > 1) tempCols-- },
+                                    shape = RoundedCornerShape(8.dp),
+                                    scaleFactor = 1.1f
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Remove,
+                                contentDescription = "Уменьшить ширину",
+                                tint = if (tempCols > 1) CinemaPrimary else CinemaTextGray.copy(alpha = 0.4f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Text(
+                            text = "$tempCols",
+                            color = CinemaTextWhite,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.width(36.dp)
+                        )
+
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (tempCols < 10) CinemaCard else CinemaCard.copy(alpha = 0.4f))
+                                .tvFocusableItem(
+                                    onClick = { if (tempCols < 10) tempCols++ },
+                                    shape = RoundedCornerShape(8.dp),
+                                    scaleFactor = 1.1f
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Увеличить ширину",
+                                tint = if (tempCols < 10) CinemaPrimary else CinemaTextGray.copy(alpha = 0.4f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+
+                // По высоте (1..5)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "По высоте:",
+                        color = CinemaTextWhite,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (tempRows > 1) CinemaCard else CinemaCard.copy(alpha = 0.4f))
+                                .tvFocusableItem(
+                                    onClick = { if (tempRows > 1) tempRows-- },
+                                    shape = RoundedCornerShape(8.dp),
+                                    scaleFactor = 1.1f
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Remove,
+                                contentDescription = "Уменьшить высоту",
+                                tint = if (tempRows > 1) CinemaPrimary else CinemaTextGray.copy(alpha = 0.4f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Text(
+                            text = "$tempRows",
+                            color = CinemaTextWhite,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.width(36.dp)
+                        )
+
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (tempRows < 5) CinemaCard else CinemaCard.copy(alpha = 0.4f))
+                                .tvFocusableItem(
+                                    onClick = { if (tempRows < 5) tempRows++ },
+                                    shape = RoundedCornerShape(8.dp),
+                                    scaleFactor = 1.1f
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Увеличить высоту",
+                                tint = if (tempRows < 5) CinemaPrimary else CinemaTextGray.copy(alpha = 0.4f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(tempCols, tempRows) },
+                colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.tvFocusableItem(
+                    onClick = { onConfirm(tempCols, tempRows) },
+                    shape = RoundedCornerShape(8.dp),
+                    scaleFactor = 1.05f
+                )
             ) {
                 Text(
-                    text = "Разработчик:",
-                    fontSize = 14.sp,
-                    color = CinemaTextGray
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "ran4erep",
-                    fontSize = 14.sp,
+                    text = "Применить",
+                    color = Color.Black,
                     fontWeight = FontWeight.Bold,
-                    color = CinemaPrimary
+                    fontSize = 14.sp
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.tvFocusableItem(
+                    onClick = onDismiss,
+                    shape = RoundedCornerShape(8.dp),
+                    scaleFactor = 1.05f
+                )
+            ) {
+                Text(
+                    text = "Отмена",
+                    color = CinemaTextGray,
+                    fontSize = 14.sp
                 )
             }
         }
-
-        Spacer(modifier = Modifier.height(32.dp))
-    }
+    )
 }
 

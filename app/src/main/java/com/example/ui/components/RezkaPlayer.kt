@@ -1718,73 +1718,6 @@ fun RezkaPlayer(
                     }
             )
 
-            // Buffering Indicator: плавающие черепки отображаются ТОЛЬКО при первой буферизации (запуск фильма или серии)
-            // При перемотке или последующей подгрузке черепки НЕ отображаются, используется легкий спиннер
-            if ((isBuffering || isLoading) && playerErrorMessage == null) {
-                if (!hasInitialPlayStarted) {
-                    FallingSkullsBufferingOverlay(
-                        text = "Буферизация... Приятного просмотра!"
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(
-                            color = CinemaPrimary,
-                            strokeWidth = 3.5.dp,
-                            modifier = Modifier.size(52.dp)
-                        )
-                    }
-                }
-            }
-
-            // Top Bar with Back button and Title during buffering or when streams are loading
-            if ((isLoading || (isBuffering && playbackState != Player.STATE_READY)) && playerErrorMessage == null && !showControls) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.TopStart)
-                        .statusBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(
-                        onClick = onBack,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                            .testTag("player_buffering_back_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Назад",
-                            tint = CinemaTextWhite
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = title,
-                            color = CinemaTextWhite,
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (subtitle.isNotEmpty()) {
-                            Text(
-                                text = subtitle,
-                                color = CinemaTextGray,
-                                fontSize = 12.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-            }
-
             // Not loading and no streams found
             if (!isLoading && streams.isEmpty() && playerErrorMessage == null) {
                 Box(
@@ -2551,6 +2484,102 @@ fun RezkaPlayer(
                                 )
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // ---- BUFFERING OVERLAY (ПЕРЕКРЫВАЕТ КНОПКИ ПЛЕЕРА) ----
+        // Расположен выше контролов в Z-order, благодаря чему крутящееся колечко буферизации
+        // гарантированно перекрывает кнопки в плеере (включая кнопку паузы/воспроизведения в центре)
+        if ((isBuffering || isLoading) && playerErrorMessage == null) {
+            if (!hasInitialPlayStarted) {
+                FallingSkullsBufferingOverlay(
+                    text = "Буферизация... Приятного просмотра!"
+                )
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Контрастная круглая подложка поверх кнопок плеера (в частности Play/Pause кнопки),
+                    // гарантирующая идеальную читаемость и видимость крутящегося колечка буферизации
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = 0.75f),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+                        shadowElevation = 8.dp,
+                        modifier = Modifier
+                            .size(76.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                controlsInteractionKey++
+                                if (isPlaying) {
+                                    exoPlayer.pause()
+                                } else {
+                                    exoPlayer.play()
+                                }
+                            }
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            CircularProgressIndicator(
+                                color = CinemaPrimary,
+                                trackColor = Color.White.copy(alpha = 0.15f),
+                                strokeWidth = 3.5.dp,
+                                modifier = Modifier.size(48.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Top Bar with Back button and Title during buffering or when streams are loading
+        if ((isLoading || (isBuffering && playbackState != Player.STATE_READY)) && playerErrorMessage == null && !showControls) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                        .testTag("player_buffering_back_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Назад",
+                        tint = CinemaTextWhite
+                    )
+                }
+                Spacer(modifier = Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        color = CinemaTextWhite,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (subtitle.isNotEmpty()) {
+                        Text(
+                            text = subtitle,
+                            color = CinemaTextGray,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }

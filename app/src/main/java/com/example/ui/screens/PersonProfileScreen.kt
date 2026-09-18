@@ -1,12 +1,17 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -15,6 +20,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -32,6 +39,8 @@ import com.example.data.RezkaPerson
 import com.example.data.RezkaService
 import com.example.ui.theme.*
 import com.example.ui.tv.dpadScrollable
+import com.example.ui.tv.requestFocusSafe
+import com.example.ui.tv.tvFocusableItem
 
 sealed interface PersonState {
     object Loading : PersonState
@@ -59,6 +68,82 @@ fun PersonProfileScreen(
         } catch (e: Exception) {
             state = PersonState.Error(e.message ?: "Ошибка загрузки профиля")
         }
+    }
+
+    BackHandler(onBack = onBack)
+
+    if (isTvMode) {
+        when (val currentState = state) {
+            is PersonState.Loading -> {
+                Box(
+                    modifier = modifier
+                        .fillMaxSize()
+                        .background(CinemaBlack),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(56.dp), strokeWidth = 4.dp)
+                }
+            }
+            is PersonState.Error -> {
+                Column(
+                    modifier = modifier
+                        .fillMaxSize()
+                        .background(CinemaBlack)
+                        .padding(32.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CloudOff,
+                        contentDescription = null,
+                        tint = CinemaPrimary,
+                        modifier = Modifier.size(64.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = currentState.message,
+                        color = CinemaTextWhite,
+                        textAlign = TextAlign.Center,
+                        fontSize = 16.sp
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Surface(
+                            color = CinemaPrimary,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.tvFocusableItem(
+                                onClick = {
+                                    state = PersonState.Loading
+                                },
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        ) {
+                            Text("Повторить", color = CinemaTextWhite, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
+                        }
+                        Surface(
+                            color = CinemaCard,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, CinemaBorder),
+                            modifier = Modifier.tvFocusableItem(
+                                onClick = onBack,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        ) {
+                            Text("Назад", color = CinemaTextWhite, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
+                        }
+                    }
+                }
+            }
+            is PersonState.Success -> {
+                TvPersonProfileContent(
+                    person = currentState.person,
+                    onBack = onBack,
+                    onNavigateToDetail = onNavigateToDetail,
+                    modifier = modifier
+                )
+            }
+        }
+        return
     }
 
     Column(
@@ -431,3 +516,329 @@ fun PersonProfileScreen(
         }
     }
 }
+
+/**
+ * Высокопроизводительный двухпанельный интерфейс фильмографии персоны для Android TV.
+ * - Слева: профиль персоны, фото, метаданные и кнопка "Назад к фильму" с автофокусом.
+ * - Справа: интерактивные фильтры ролей (чипы с ТВ-фокусом) и кинематографичная сетка работ.
+ */
+@Composable
+private fun TvPersonProfileContent(
+    person: RezkaPerson,
+    onBack: () -> Unit,
+    onNavigateToDetail: (RezkaItem) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val backFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        backFocusRequester.requestFocusSafe()
+    }
+
+    var selectedSectionIndex by remember(person.id) { mutableIntStateOf(-1) }
+    val displayedItems = remember(selectedSectionIndex, person) {
+        if (selectedSectionIndex == -1 || person.careerSections.isEmpty()) {
+            person.filmography
+        } else {
+            person.careerSections.getOrNull(selectedSectionIndex)?.items ?: person.filmography
+        }
+    }
+
+    val totalCareerWorks = remember(person) {
+        if (person.careerSections.isNotEmpty()) {
+            person.careerSections.sumOf { it.items.size }
+        } else {
+            person.filmography.size
+        }
+    }
+
+    Row(
+        modifier = modifier
+            .fillMaxSize()
+            .background(CinemaBlack)
+            .padding(16.dp)
+    ) {
+        // ---- ЛЕВАЯ ПАНЕЛЬ: Инфо о персоне ----
+        Column(
+            modifier = Modifier
+                .width(320.dp)
+                .fillMaxHeight()
+                .verticalScroll(rememberScrollState())
+                .padding(end = 16.dp)
+        ) {
+            // Кнопка назад к фильму с автофокусом для пульта
+            Surface(
+                color = CinemaCard,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, CinemaBorder),
+                modifier = Modifier
+                    .focusRequester(backFocusRequester)
+                    .tvFocusableItem(
+                        onClick = onBack,
+                        scaleFactor = 1.05f,
+                        shape = RoundedCornerShape(10.dp)
+                    )
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Назад",
+                        tint = CinemaTextWhite,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Назад к фильму",
+                        color = CinemaTextWhite,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Портрет / фото персоны
+            if (person.photoUrl.isNotEmpty()) {
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, CinemaBorder),
+                    modifier = Modifier
+                        .width(135.dp)
+                        .aspectRatio(0.7f)
+                ) {
+                    AsyncImage(
+                        model = person.photoUrl,
+                        contentDescription = person.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            // Имя персоны
+            Text(
+                text = person.name,
+                color = CinemaTextWhite,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            if (person.originalName.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                    text = person.originalName,
+                    color = CinemaTextGray,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Normal
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Surface(
+                color = CinemaPrimary.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    text = "Всего $totalCareerWorks работ",
+                    color = CinemaPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Метаданные персоны
+            if (person.info.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        person.info.forEach { (label, value) ->
+                            val metaIcon = when {
+                                label.contains("карьер", ignoreCase = true) -> Icons.Default.WorkOutline
+                                label.contains("рост", ignoreCase = true) -> Icons.Default.Straighten
+                                label.contains("рождения", ignoreCase = true) || label.contains("возраст", ignoreCase = true) -> Icons.Default.Cake
+                                label.contains("место", ignoreCase = true) -> Icons.Default.Place
+                                label.contains("жанр", ignoreCase = true) -> Icons.Default.Category
+                                label.contains("фильм", ignoreCase = true) || label.contains("базе", ignoreCase = true) -> Icons.Default.Movie
+                                else -> Icons.Default.Info
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Icon(
+                                    imageVector = metaIcon,
+                                    contentDescription = null,
+                                    tint = CinemaTextGray,
+                                    modifier = Modifier
+                                        .padding(top = 2.dp)
+                                        .size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "$label:",
+                                    color = CinemaTextGray,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.width(95.dp)
+                                )
+                                Text(
+                                    text = value,
+                                    color = CinemaTextWhite,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Normal,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- ПРАВАЯ ПАНЕЛЬ: Фильмография персоны ----
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+        ) {
+            val currentSectionTitle = if (selectedSectionIndex == -1) {
+                "Все работы"
+            } else {
+                person.careerSections.getOrNull(selectedSectionIndex)?.title ?: "Работы"
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = currentSectionTitle,
+                    color = CinemaTextWhite,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "${displayedItems.size} фильмов",
+                    color = CinemaTextGray,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            // Фильтры категорий ролей (Актёр, Режиссёр, Сценарист...)
+            if (person.careerSections.size > 1) {
+                Spacer(modifier = Modifier.height(10.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    item {
+                        val isSelected = selectedSectionIndex == -1
+                        Surface(
+                            color = if (isSelected) CinemaPrimary else CinemaDark,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isSelected) CinemaPrimary else CinemaBorder
+                            ),
+                            modifier = Modifier.tvFocusableItem(
+                                onClick = { selectedSectionIndex = -1 },
+                                scaleFactor = 1.05f,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        ) {
+                            Text(
+                                text = "Все ($totalCareerWorks)",
+                                color = if (isSelected) CinemaTextWhite else CinemaTextGray,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+
+                    itemsIndexed(person.careerSections) { index, section ->
+                        val isSelected = selectedSectionIndex == index
+                        Surface(
+                            color = if (isSelected) CinemaPrimary else CinemaDark,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isSelected) CinemaPrimary else CinemaBorder
+                            ),
+                            modifier = Modifier.tvFocusableItem(
+                                onClick = { selectedSectionIndex = index },
+                                scaleFactor = 1.05f,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        ) {
+                            Text(
+                                text = "${section.title} (${section.items.size})",
+                                color = if (isSelected) CinemaTextWhite else CinemaTextGray,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Сетка фильмов
+            if (displayedItems.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Список работ пуст",
+                        color = CinemaTextGray,
+                        fontSize = 14.sp
+                    )
+                }
+            } else {
+                val tvGridState = rememberLazyGridState()
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 130.dp),
+                    state = tvGridState,
+                    contentPadding = PaddingValues(bottom = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .dpadScrollable(tvGridState)
+                        .testTag("person_tv_grid")
+                ) {
+                    items(displayedItems, key = { "${it.id}_${selectedSectionIndex}" }) { item ->
+                        RezkaItemCard(
+                            item = item,
+                            onClick = { onNavigateToDetail(item) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+

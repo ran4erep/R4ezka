@@ -66,6 +66,8 @@ fun CatalogScreen(
     val genresList by viewModel.genresList.collectAsState()
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val isEndReached by viewModel.isEndReached.collectAsState()
+    val cardGridMode by viewModel.cardGridMode.collectAsState()
+    val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
     var searchInput by remember { mutableStateOf(viewModel.searchQuery) }
     val searchHistory by viewModel.searchHistory.collectAsState()
     var isSearchFocused by remember { mutableStateOf(false) }
@@ -399,12 +401,13 @@ fun CatalogScreen(
                             }
                         }
 
+                        val columnsCount = parsedCardGrid?.columns ?: 2
                         LazyVerticalGrid(
-                            columns = GridCells.Fixed(2),
+                            columns = GridCells.Fixed(columnsCount),
                             state = gridState,
                             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(if (columnsCount >= 6) 8.dp else 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(if (columnsCount >= 6) 10.dp else 16.dp),
                             modifier = Modifier
                                 .fillMaxSize()
                                 .dpadScrollable(gridState)
@@ -416,6 +419,7 @@ fun CatalogScreen(
                             ) { item ->
                                 RezkaItemCard(
                                     item = item,
+                                    columnsCount = columnsCount,
                                     onClick = {
                                         viewModel.commitSearchQuery(searchInput)
                                         keyboardController?.hide()
@@ -453,7 +457,8 @@ fun CatalogScreen(
 fun RezkaItemCard(
     item: RezkaItem,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    columnsCount: Int = 2
 ) {
     val bottomFadeBrush = remember {
         Brush.verticalGradient(
@@ -462,13 +467,15 @@ fun RezkaItemCard(
         )
     }
 
+    val isDense = columnsCount >= 5
+
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .tvFocusableItem(onClick = onClick, scaleFactor = 1.05f, shape = RoundedCornerShape(12.dp))
+            .tvFocusableItem(onClick = onClick, scaleFactor = 1.05f, shape = RoundedCornerShape(if (isDense) 8.dp else 12.dp))
             .testTag("movie_card_${item.id}"),
         colors = CardDefaults.cardColors(containerColor = CinemaDark),
-        shape = RoundedCornerShape(12.dp)
+        shape = RoundedCornerShape(if (isDense) 8.dp else 12.dp)
     ) {
         Column {
             Box(
@@ -495,14 +502,14 @@ fun RezkaItemCard(
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(8.dp)
-                            .background(CinemaPrimary, RoundedCornerShape(6.dp))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .padding(if (isDense) 4.dp else 8.dp)
+                            .background(CinemaPrimary, RoundedCornerShape(if (isDense) 4.dp else 6.dp))
+                            .padding(horizontal = if (isDense) 5.dp else 8.dp, vertical = if (isDense) 2.dp else 4.dp)
                     ) {
                         Text(
                             text = item.rating,
                             color = CinemaTextWhite,
-                            fontSize = 11.sp,
+                            fontSize = if (isDense) 9.sp else 11.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -513,12 +520,12 @@ fun RezkaItemCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(10.dp)
+                    .padding(if (isDense) 6.dp else 10.dp)
             ) {
                 Text(
                     text = item.title,
                     color = CinemaTextWhite,
-                    fontSize = 13.sp,
+                    fontSize = if (columnsCount >= 7) 10.sp else if (isDense) 11.sp else 13.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -527,7 +534,7 @@ fun RezkaItemCard(
                 Text(
                     text = item.subtitle,
                     color = CinemaTextGray,
-                    fontSize = 10.sp,
+                    fontSize = if (columnsCount >= 7) 8.sp else if (isDense) 9.sp else 10.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )

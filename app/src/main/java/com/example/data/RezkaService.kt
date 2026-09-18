@@ -781,6 +781,30 @@ object RezkaService {
     private val _tvModePreference = MutableStateFlow("auto")
     val tvModePreference: StateFlow<String> = _tvModePreference.asStateFlow()
 
+    // Сетка карточек в каталоге (auto или "WxH", где W in 1..10, H in 1..5)
+    const val GRID_MODE_AUTO = "auto"
+    data class CardGridLayout(val columns: Int, val rows: Int) {
+        val key: String get() = "${columns}x${rows}"
+        val displayName: String get() = "$columns x $rows ($columns в ряд, $rows по высоте)"
+    }
+
+    /**
+     * Парсер конфигурации сетки карточек.
+     * Возвращает CardGridLayout для валидных значений WxH (W in 1..10, H in 1..5) или null для "auto".
+     */
+    fun parseCardGrid(mode: String): CardGridLayout? {
+        if (mode.isBlank() || mode.equals(GRID_MODE_AUTO, ignoreCase = true)) return null
+        val parts = mode.lowercase().trim().split("x")
+        if (parts.size != 2) return null
+        val cols = parts[0].trim().toIntOrNull() ?: return null
+        val rows = parts[1].trim().toIntOrNull() ?: return null
+        if (cols !in 1..10 || rows !in 1..5) return null
+        return CardGridLayout(cols, rows)
+    }
+
+    private val _cardGridMode = MutableStateFlow(GRID_MODE_AUTO)
+    val cardGridMode: StateFlow<String> = _cardGridMode.asStateFlow()
+
     private var prefs: SharedPreferences? = null
 
     fun init(context: Context) {
@@ -811,6 +835,9 @@ object RezkaService {
 
         val savedTvMode = prefs?.getString("tv_mode_preference", "auto") ?: "auto"
         _tvModePreference.value = savedTvMode
+
+        val savedGridMode = prefs?.getString("card_grid_mode", GRID_MODE_AUTO) ?: GRID_MODE_AUTO
+        _cardGridMode.value = if (savedGridMode == GRID_MODE_AUTO || parseCardGrid(savedGridMode) != null) savedGridMode else GRID_MODE_AUTO
     }
 
     fun setDefaultQuality(quality: String) {
@@ -841,6 +868,13 @@ object RezkaService {
     fun setTvModePreference(mode: String) {
         _tvModePreference.value = mode
         prefs?.edit()?.putString("tv_mode_preference", mode)?.apply()
+    }
+
+    fun setCardGridMode(mode: String) {
+        val clean = mode.trim().lowercase()
+        val validMode = if (clean == GRID_MODE_AUTO || parseCardGrid(clean) != null) clean else GRID_MODE_AUTO
+        _cardGridMode.value = validMode
+        prefs?.edit()?.putString("card_grid_mode", validMode)?.apply()
     }
 
     /**

@@ -1,3 +1,12 @@
 <resources>
     <string name="app_name">r4ezka</string>
+    <string name="support_project">Поддержать проект</string>
+    <string name="support_project_url">https://buymeacoffee.com/ran4erep</string>
+    <string name="support_project_link_display">buymeacoffee.com/ran4erep</string>
+    <string name="support_project_icon_url">https://cdn.buymeacoffee.com/assets/homepage/meta/apple-icon-120x120.png</string>
+    <string name="support_project_icon_desc">Buy Me a Coffee</string>
+    <string name="support_project_open_desc">Открыть страницу поддержки</string>
+    <string name="error_cannot_open_link">Не удалось открыть браузер</string>
+    <string name="developer_label">Разработчик:</string>
+    <string name="developer_name">ran4erep</string>
 </resources>
