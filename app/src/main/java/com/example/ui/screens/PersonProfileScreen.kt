@@ -557,12 +557,11 @@ private fun TvPersonProfileContent(
             .background(CinemaBlack)
             .padding(16.dp)
     ) {
-        // ---- ЛЕВАЯ ПАНЕЛЬ: Инфо о персоне ----
+        // ---- ЛЕВАЯ ПАНЕЛЬ: Инфо о персоне (компактное умное расположение без прокрутки) ----
         Column(
             modifier = Modifier
-                .width(320.dp)
+                .width(340.dp)
                 .fillMaxHeight()
-                .verticalScroll(rememberScrollState())
                 .padding(end = 16.dp)
         ) {
             // Кнопка назад к фильму с автофокусом для пульта
@@ -574,136 +573,149 @@ private fun TvPersonProfileContent(
                     .focusRequester(backFocusRequester)
                     .tvFocusableItem(
                         onClick = onBack,
-                        scaleFactor = 1.05f,
+                        scaleFactor = 1.04f,
                         shape = RoundedCornerShape(10.dp)
                     )
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Назад",
                         tint = CinemaTextWhite,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(16.dp)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Назад к фильму",
                         color = CinemaTextWhite,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // Портрет / фото персоны
-            if (person.photoUrl.isNotEmpty()) {
-                Card(
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, CinemaBorder),
-                    modifier = Modifier
-                        .width(135.dp)
-                        .aspectRatio(0.7f)
-                ) {
-                    AsyncImage(
-                        model = person.photoUrl,
-                        contentDescription = person.name,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-            }
-
-            // Имя персоны
-            Text(
-                text = person.name,
-                color = CinemaTextWhite,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            if (person.originalName.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(3.dp))
-                Text(
-                    text = person.originalName,
-                    color = CinemaTextGray,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Normal
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Surface(
-                color = CinemaPrimary.copy(alpha = 0.15f),
-                shape = RoundedCornerShape(8.dp)
+            // Карточка с портретом, именем и бейджем работ
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, CinemaBorder)
             ) {
-                Text(
-                    text = "Всего $totalCareerWorks работ",
-                    color = CinemaPrimary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Метаданные персоны
-            if (person.info.isNotEmpty()) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = CinemaDark),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                Column(modifier = Modifier.padding(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top
                     ) {
-                        person.info.forEach { (label, value) ->
-                            val metaIcon = when {
-                                label.contains("карьер", ignoreCase = true) -> Icons.Default.WorkOutline
-                                label.contains("рост", ignoreCase = true) -> Icons.Default.Straighten
-                                label.contains("рождения", ignoreCase = true) || label.contains("возраст", ignoreCase = true) -> Icons.Default.Cake
-                                label.contains("место", ignoreCase = true) -> Icons.Default.Place
-                                label.contains("жанр", ignoreCase = true) -> Icons.Default.Category
-                                label.contains("фильм", ignoreCase = true) || label.contains("базе", ignoreCase = true) -> Icons.Default.Movie
-                                else -> Icons.Default.Info
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.Top
+                        // 1. Компактное портретное фото
+                        if (person.photoUrl.isNotEmpty()) {
+                            Card(
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, CinemaBorder),
+                                modifier = Modifier
+                                    .width(80.dp)
+                                    .aspectRatio(0.7f)
                             ) {
-                                Icon(
-                                    imageVector = metaIcon,
-                                    contentDescription = null,
-                                    tint = CinemaTextGray,
-                                    modifier = Modifier
-                                        .padding(top = 2.dp)
-                                        .size(13.dp)
+                                AsyncImage(
+                                    model = person.photoUrl,
+                                    contentDescription = person.name,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                        }
+
+                        // 2. Имя и статистика
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = person.name,
+                                color = CinemaTextWhite,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+
+                            if (person.originalName.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "$label:",
+                                    text = person.originalName,
                                     color = CinemaTextGray,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    modifier = Modifier.width(95.dp)
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            Surface(
+                                color = CinemaPrimary.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
                                 Text(
-                                    text = value,
-                                    color = CinemaTextWhite,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Normal,
-                                    modifier = Modifier.weight(1f)
+                                    text = "Всего $totalCareerWorks работ",
+                                    color = CinemaPrimary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                                 )
+                            }
+                        }
+                    }
+
+                    // 3. Метаданные персоны
+                    if (person.info.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        HorizontalDivider(color = CinemaBorder, thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            person.info.forEach { (label, value) ->
+                                val metaIcon = when {
+                                    label.contains("карьер", ignoreCase = true) -> Icons.Default.WorkOutline
+                                    label.contains("рост", ignoreCase = true) -> Icons.Default.Straighten
+                                    label.contains("рождения", ignoreCase = true) || label.contains("возраст", ignoreCase = true) -> Icons.Default.Cake
+                                    label.contains("место", ignoreCase = true) -> Icons.Default.Place
+                                    label.contains("жанр", ignoreCase = true) -> Icons.Default.Category
+                                    label.contains("фильм", ignoreCase = true) || label.contains("базе", ignoreCase = true) -> Icons.Default.Movie
+                                    else -> Icons.Default.Info
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    Icon(
+                                        imageVector = metaIcon,
+                                        contentDescription = null,
+                                        tint = CinemaTextGray,
+                                        modifier = Modifier
+                                            .padding(top = 2.dp)
+                                            .size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text(
+                                        text = "$label:",
+                                        color = CinemaTextGray,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.width(90.dp)
+                                    )
+                                    Text(
+                                        text = value,
+                                        color = CinemaTextWhite,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Normal,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     }

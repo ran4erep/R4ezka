@@ -316,7 +316,6 @@ fun Modifier.dpadScrollable(
     this.onKeyEvent { keyEvent ->
         if (keyEvent.type == KeyEventType.KeyDown) {
             when (keyEvent.nativeKeyEvent.keyCode) {
-                android.view.KeyEvent.KEYCODE_DPAD_DOWN,
                 android.view.KeyEvent.KEYCODE_PAGE_DOWN -> {
                     coroutineScope.launch {
                         try {
@@ -325,9 +324,8 @@ fun Modifier.dpadScrollable(
                             }
                         } catch (_: Exception) {}
                     }
-                    false
+                    true
                 }
-                android.view.KeyEvent.KEYCODE_DPAD_UP,
                 android.view.KeyEvent.KEYCODE_PAGE_UP -> {
                     coroutineScope.launch {
                         try {
@@ -336,7 +334,7 @@ fun Modifier.dpadScrollable(
                             }
                         } catch (_: Exception) {}
                     }
-                    false
+                    true
                 }
                 else -> false
             }

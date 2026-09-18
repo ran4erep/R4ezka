@@ -785,15 +785,6 @@ fun TvDetailContent(
                                                     fontSize = 13.sp,
                                                     fontWeight = if (isClickable) FontWeight.Medium else FontWeight.Normal
                                                 )
-                                                if (isClickable) {
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Icon(
-                                                        imageVector = Icons.Default.OpenInNew,
-                                                        contentDescription = null,
-                                                        tint = CinemaPrimary.copy(alpha = 0.7f),
-                                                        modifier = Modifier.size(12.dp)
-                                                    )
-                                                }
                                             }
                                         }
                                     }
@@ -1581,12 +1572,9 @@ fun TvDetailMetaRowWithLinks(
             links.forEach { link ->
                 val isClickable = link.url.isNotBlank()
                 Surface(
-                    color = CinemaCard,
+                    color = CinemaDark,
                     shape = RoundedCornerShape(6.dp),
-                    border = BorderStroke(
-                        1.dp,
-                        if (isClickable) CinemaPrimary.copy(alpha = 0.35f) else CinemaBorder
-                    ),
+                    border = BorderStroke(1.dp, CinemaBorder),
                     modifier = Modifier
                         .then(
                             if (isClickable) {
@@ -1599,26 +1587,13 @@ fun TvDetailMetaRowWithLinks(
                             } else Modifier
                         )
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = link.name,
-                            color = CinemaTextWhite,
-                            fontSize = 12.sp,
-                            fontWeight = if (isClickable) FontWeight.SemiBold else FontWeight.Normal
-                        )
-                        if (isClickable) {
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Icon(
-                                imageVector = Icons.Default.OpenInNew,
-                                contentDescription = null,
-                                tint = CinemaPrimary,
-                                modifier = Modifier.size(11.dp)
-                            )
-                        }
-                    }
+                    Text(
+                        text = link.name,
+                        color = CinemaTextWhite,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
                 }
             }
         }
