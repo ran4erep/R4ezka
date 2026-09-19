@@ -646,6 +646,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 repository.addSubscription(subscription)
                 FirebaseSyncManager.onSubscriptionAdded(subscription)
+                com.example.data.SeriesUpdateScheduler.schedulePeriodicCheck(context = getApplication<Application>())
                 onResult?.invoke(true, maxSeason, maxEpisode)
             }
         }
@@ -731,9 +732,9 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             )
 
             val msg = if (targetSeason == 0 && targetEpisode == 0) {
-                "Статус сериала '${sub.title}' изменён на 'Ожидается' (0/0)"
+                "Сериал '${sub.title}' переведён в 'Ожидается'. Фоновая проверка через 10 сек."
             } else {
-                "'${sub.title}': установлена серия S${targetSeason}E${targetEpisode}. Запустите проверку для теста!"
+                "'${sub.title}': откат на S${targetSeason}E${targetEpisode}. Фоновая проверка через 10 сек (сверните/закройте приложение)!"
             }
             withContext(Dispatchers.Main) {
                 onResult?.invoke(msg)
