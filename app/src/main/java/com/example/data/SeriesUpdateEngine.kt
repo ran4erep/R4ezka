@@ -341,6 +341,12 @@ object SeriesUpdateEngine {
         repository: RezkaRepository,
         onUpdateFound: ((SeriesSubscriptionEntity, Int, Int, String) -> Unit)? = null
     ): List<SeriesSubscriptionEntity> = withContext(Dispatchers.IO) {
+        RezkaService.init(context)
+        val notifManager = NotificationManagerCompat.from(context)
+        if (!notifManager.areNotificationsEnabled()) {
+            Log.w(TAG, "ВНИМАНИЕ: Системные уведомления отключены в настройках Android! Включите уведомления в настройках системы.")
+        }
+
         val subscriptions = repository.getAllSubscriptionsList()
         if (subscriptions.isEmpty()) {
             return@withContext emptyList()
@@ -353,12 +359,27 @@ object SeriesUpdateEngine {
             try {
                 semaphore.withPermit {
                     // Точечный быстрый AJAX запрос (1-2 КБ), если numericPostId известен. Фолбэк на HTML страницу.
-                    val scanResult = if (sub.numericPostId.isNotBlank()) {
+                    var scanResult = if (sub.numericPostId.isNotBlank()) {
                         val ajaxRes = fetchSeriesLatestEpisodeAjax(sub.numericPostId, sub.translatorId)
                         if (ajaxRes.isSuccess) ajaxRes else fetchSeriesLatestEpisode(sub.url)
                     } else {
                         fetchSeriesLatestEpisode(sub.url)
                     }
+
+                    // Если сканирование не удалось (например, текущее зеркало заблокировано), пробуем запасное зеркало
+                    if (!scanResult.isSuccess && (scanResult.isAntiBot || scanResult.errorMessage?.contains("HTTP") == true || scanResult.errorMessage?.contains("timeout", ignoreCase = true) == true)) {
+                        for (fallbackMirror in RezkaService.PRESET_MIRRORS) {
+                            if (fallbackMirror != RezkaService.currentMirror.value) {
+                                val altUrl = sub.url.replace(RezkaService.currentBaseUrl, fallbackMirror)
+                                val altResult = fetchSeriesLatestEpisode(altUrl)
+                                if (altResult.isSuccess) {
+                                    scanResult = altResult
+                                    break
+                                }
+                            }
+                        }
+                    }
+
                     val now = System.currentTimeMillis()
 
                     if (scanResult.isSuccess) {
@@ -436,6 +457,9 @@ object SeriesUpdateEngine {
             val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
                 description = descriptionText
                 enableVibration(true)
+                enableLights(true)
+                lightColor = 0xFFFF2D55.toInt()
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
                 setShowBadge(true)
             }
             val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
@@ -494,7 +518,10 @@ object SeriesUpdateEngine {
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText("$text\nНажмите чтобы начать просмотр"))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
 
@@ -502,13 +529,15 @@ object SeriesUpdateEngine {
         try {
             var largeIconBitmap: Bitmap? = null
             if (!subscription.imageUrl.isNullOrBlank()) {
-                val imageLoader = coil.Coil.imageLoader(context)
-                val request = ImageRequest.Builder(context)
-                    .data(subscription.imageUrl)
-                    .allowHardware(false)
-                    .build()
-                val result = (imageLoader.execute(request) as? SuccessResult)?.drawable
-                largeIconBitmap = (result as? BitmapDrawable)?.bitmap
+                kotlinx.coroutines.withTimeoutOrNull(3500L) {
+                    val imageLoader = coil.Coil.imageLoader(context)
+                    val request = ImageRequest.Builder(context)
+                        .data(subscription.imageUrl)
+                        .allowHardware(false)
+                        .build()
+                    val result = (imageLoader.execute(request) as? SuccessResult)?.drawable
+                    largeIconBitmap = (result as? BitmapDrawable)?.bitmap
+                }
             }
             if (largeIconBitmap == null) {
                 largeIconBitmap = BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher)
@@ -522,11 +551,15 @@ object SeriesUpdateEngine {
 
         try {
             val notificationManager = NotificationManagerCompat.from(context)
+            if (!notificationManager.areNotificationsEnabled()) {
+                Log.w(TAG, "ВНИМАНИЕ! Системные уведомления ОТКЛЮЧЕНЫ в настройках телефона.")
+            }
             notificationManager.notify(subscription.id.hashCode(), builder.build())
+            Log.i(TAG, "Уведомление успешно доставлено в шторку: $title ($text)")
         } catch (e: SecurityException) {
             Log.w(TAG, "Нет разрешения POST_NOTIFICATIONS для отправки уведомления: ${e.message}")
         } catch (e: Exception) {
-            Log.w(TAG, "Не удалось отправить уведомление: ${e.message}")
+            Log.e(TAG, "Не удалось отправить уведомление: ${e.message}", e)
         }
     }
 }
