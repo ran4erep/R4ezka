@@ -582,22 +582,35 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 FirebaseSyncManager.onSubscriptionRemoved(item.id)
                 onResult?.invoke(false, 0, 0)
             } else {
+                val isUnreleased = detail?.isReleased == false
+                val isMovie = (detail?.type ?: item.type) == RezkaType.MOVIE
+
                 var maxSeason = 1
                 var maxEpisode = 1
                 var lastEpName = "Серия 1"
 
-                val effectiveSeasons = detail?.seasons.orEmpty()
-                if (effectiveSeasons.isNotEmpty()) {
-                    maxSeason = effectiveSeasons.maxOfOrNull { it.id } ?: 1
-                    val seasonObj = effectiveSeasons.find { it.id == maxSeason }
-                    val eps = seasonObj?.episodes.orEmpty()
-                    if (eps.isNotEmpty()) {
-                        val parsedMax = eps.mapNotNull { ep ->
-                            Regex("""\d+""").find(ep.id)?.value?.toIntOrNull()
-                                ?: Regex("""\d+""").find(ep.name)?.value?.toIntOrNull()
-                        }.maxOrNull() ?: eps.size
-                        maxEpisode = parsedMax
-                        lastEpName = eps.lastOrNull()?.name ?: "Серия $maxEpisode"
+                if (isUnreleased) {
+                    maxSeason = 0
+                    maxEpisode = 0
+                    lastEpName = if (isMovie) "Фильм еще не вышел" else "Еще не вышел"
+                } else {
+                    val effectiveSeasons = detail?.seasons.orEmpty()
+                    if (effectiveSeasons.isNotEmpty()) {
+                        maxSeason = effectiveSeasons.maxOfOrNull { it.id } ?: 1
+                        val seasonObj = effectiveSeasons.find { it.id == maxSeason }
+                        val eps = seasonObj?.episodes.orEmpty()
+                        if (eps.isNotEmpty()) {
+                            val parsedMax = eps.mapNotNull { ep ->
+                                Regex("""\d+""").find(ep.id)?.value?.toIntOrNull()
+                                    ?: Regex("""\d+""").find(ep.name)?.value?.toIntOrNull()
+                            }.maxOrNull() ?: eps.size
+                            maxEpisode = parsedMax
+                            lastEpName = eps.lastOrNull()?.name ?: "Серия $maxEpisode"
+                        }
+                    } else if (isMovie) {
+                        maxSeason = 1
+                        maxEpisode = 1
+                        lastEpName = "Фильм вышел"
                     }
                 }
 

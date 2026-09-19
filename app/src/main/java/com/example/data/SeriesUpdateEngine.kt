@@ -5,11 +5,16 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import coil.request.ImageRequest
+import coil.request.SuccessResult
 import com.example.MainActivity
 import com.example.R
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +79,18 @@ object SeriesUpdateEngine {
     )
 
     private val HTML_TAG_STRIP_REGEX = Regex("""<[^>]+>""")
+
+    private val MOVIE_RELEASED_REGEX = Regex(
+        """class=["'][^"']*?b-translator__item[^"']*?["']|sof\.tv\.initCDN(?:Movies|Series)Events|initCDN(?:Movies|Series)Events|data-translator_id=["']?\d+|"translator_id"\s*:\s*"?\d+"""",
+        RegexOption.IGNORE_CASE
+    )
+
+    fun isItemReleasedFromHtml(html: String): Boolean {
+        if (html.isBlank()) return false
+        return MOVIE_RELEASED_REGEX.containsMatchIn(html) ||
+                EPISODE_TAG_REGEX.containsMatchIn(html) ||
+                EPISODE_TAG_ALT_REGEX.containsMatchIn(html)
+    }
 
     /**
      * Сверхбыстрый разбор последнего сезона и серии из строки HTML без создания DOM-дерева.
@@ -230,7 +247,21 @@ object SeriesUpdateEngine {
                     return@withContext SeriesScanResult(0, 0, "", false, isAntiBot = true, errorMessage = "Anti-Bot")
                 }
 
-                return@withContext parseLatestEpisodeFromHtml(html)
+                val parseRes = parseLatestEpisodeFromHtml(html)
+                if (parseRes.isSuccess) {
+                    return@withContext parseRes
+                }
+
+                if (isItemReleasedFromHtml(html)) {
+                    return@withContext SeriesScanResult(
+                        latestSeason = 1,
+                        latestEpisode = 1,
+                        latestEpisodeName = "Фильм вышел",
+                        isSuccess = true
+                    )
+                }
+
+                return@withContext parseRes
             }
         } catch (e: Exception) {
             Log.w(TAG, "Сбой при проверке $adjustedUrl: ${e.message}")
@@ -416,7 +447,7 @@ object SeriesUpdateEngine {
      * Отправляет красивое системное уведомление о выходе новой серии.
      * При нажатии открывает приложение прямо на странице сериала.
      */
-    fun showNewEpisodeNotification(
+    suspend fun showNewEpisodeNotification(
         context: Context,
         subscription: SeriesSubscriptionEntity,
         season: Int,
@@ -439,22 +470,55 @@ object SeriesUpdateEngine {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val title = "Вышла новая серия: ${subscription.title}"
-        val text = buildString {
-            append("$season сезон, $episode серия")
-            if (episodeName.isNotBlank() && !episodeName.equals("Серия $episode", ignoreCase = true)) {
-                append(" («$episodeName»)")
+        val isMovieRelease = subscription.lastKnownSeason == 0 || subscription.type.equals("MOVIE", ignoreCase = true)
+        val title = if (isMovieRelease) {
+            "Фильм вышел: ${subscription.title}"
+        } else {
+            "Вышла новая серия: ${subscription.title}"
+        }
+
+        val text = if (isMovieRelease) {
+            "Появился видеофайл на странице фильма."
+        } else {
+            buildString {
+                append("$season сезон, $episode серия")
+                if (episodeName.isNotBlank() && !episodeName.equals("Серия $episode", ignoreCase = true)) {
+                    append(" («$episodeName»)")
+                }
             }
         }
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(0xFFFF2D55.toInt())
             .setContentTitle(title)
             .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText("$text\nНажмите, чтобы открыть сериал и начать просмотр."))
+            .setStyle(NotificationCompat.BigTextStyle().bigText("$text\nНажмите чтобы начать просмотр"))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
+
+        // Загружаем постер сериала или цветную иконку приложения в качестве LargeIcon для карточки в шторке
+        try {
+            var largeIconBitmap: Bitmap? = null
+            if (!subscription.imageUrl.isNullOrBlank()) {
+                val imageLoader = coil.Coil.imageLoader(context)
+                val request = ImageRequest.Builder(context)
+                    .data(subscription.imageUrl)
+                    .allowHardware(false)
+                    .build()
+                val result = (imageLoader.execute(request) as? SuccessResult)?.drawable
+                largeIconBitmap = (result as? BitmapDrawable)?.bitmap
+            }
+            if (largeIconBitmap == null) {
+                largeIconBitmap = BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher)
+            }
+            if (largeIconBitmap != null) {
+                builder.setLargeIcon(largeIconBitmap)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Не удалось сформировать LargeIcon для уведомления: ${e.message}")
+        }
 
         try {
             val notificationManager = NotificationManagerCompat.from(context)

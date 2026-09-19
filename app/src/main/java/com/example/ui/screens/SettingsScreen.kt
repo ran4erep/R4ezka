@@ -181,13 +181,13 @@ fun SettingsScreen(
                     Box(
                         modifier = Modifier
                             .size(36.dp)
-                            .background(CinemaPrimary.copy(alpha = 0.15f), RoundedCornerShape(10.dp)),
+                            .background(CinemaMuted.copy(alpha = 0.2f), RoundedCornerShape(10.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Language,
                             contentDescription = null,
-                            tint = CinemaPrimary,
+                            tint = CinemaTextGray,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -521,13 +521,13 @@ fun SettingsScreen(
                     Box(
                         modifier = Modifier
                             .size(36.dp)
-                            .background(CinemaPrimary.copy(alpha = 0.15f), RoundedCornerShape(10.dp)),
+                            .background(CinemaMuted.copy(alpha = 0.2f), RoundedCornerShape(10.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.PlayCircle,
                             contentDescription = null,
-                            tint = CinemaPrimary,
+                            tint = CinemaTextGray,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -731,18 +731,12 @@ fun SettingsScreen(
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "FIT — оригинал с полосами, ZOOM — кадрирование без полос, FILL — растянуть",
-                            color = CinemaTextGray,
-                            fontSize = 11.sp
-                        )
                         Spacer(modifier = Modifier.height(8.dp))
 
                         val resizeOptions = listOf(
-                            "FIT" to "Оригинал (FIT)",
-                            "ZOOM" to "Заполнить (ZOOM)",
-                            "FILL" to "Растянуть (FILL)"
+                            "FIT" to "Оригинал",
+                            "ZOOM" to "Заполнить",
+                            "FILL" to "Растянуть"
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -797,13 +791,13 @@ fun SettingsScreen(
                     Box(
                         modifier = Modifier
                             .size(36.dp)
-                            .background(CinemaPrimary.copy(alpha = 0.15f), RoundedCornerShape(10.dp)),
+                            .background(CinemaMuted.copy(alpha = 0.2f), RoundedCornerShape(10.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Tv,
                             contentDescription = null,
-                            tint = CinemaPrimary,
+                            tint = CinemaTextGray,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -1080,7 +1074,7 @@ fun SettingsScreen(
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = CinemaDark),
-            border = BorderStroke(1.dp, if (isSubscriptionsExpanded) CinemaPrimary.copy(alpha = 0.5f) else CinemaMuted.copy(alpha = 0.25f)),
+            border = BorderStroke(1.dp, CinemaMuted.copy(alpha = 0.25f)),
             modifier = Modifier
                 .fillMaxWidth()
                 .animateContentSize()
@@ -1108,13 +1102,13 @@ fun SettingsScreen(
                             modifier = Modifier
                                 .size(36.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(CinemaPrimary.copy(alpha = 0.15f)),
+                                .background(CinemaMuted.copy(alpha = 0.2f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.NotificationsActive,
                                 contentDescription = null,
-                                tint = CinemaPrimary,
+                                tint = CinemaTextGray,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -1128,7 +1122,7 @@ fun SettingsScreen(
                                 letterSpacing = 1.sp
                             )
                             Text(
-                                text = if (subscriptions.isEmpty()) "Нет активных подписок" else "Активных сериалов: ${subscriptions.size}",
+                                text = if (subscriptions.isEmpty()) "Нет активных подписок" else "Активных подписок: ${subscriptions.size}",
                                 fontSize = 11.sp,
                                 color = if (subscriptions.isEmpty()) CinemaTextGray else CinemaPrimary,
                                 fontWeight = FontWeight.Medium
@@ -1139,7 +1133,7 @@ fun SettingsScreen(
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowDown,
                         contentDescription = null,
-                        tint = CinemaPrimary,
+                        tint = CinemaTextGray,
                         modifier = Modifier
                             .size(22.dp)
                             .rotate(subscriptionsArrowRotation)
@@ -1199,7 +1193,7 @@ fun SettingsScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Проверить новые серии",
+                                    text = "Проверить обновления",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp
                                 )
@@ -1223,7 +1217,7 @@ fun SettingsScreen(
                             }
                         } else {
                             Text(
-                                text = "СПИСОК ОТСЛЕЖИВАЕМЫХ СЕРИАЛОВ",
+                                text = "СПИСОК ОТСЛЕЖИВАЕМЫХ ТАЙТЛОВ",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = CinemaTextGray,
@@ -1273,15 +1267,25 @@ fun SettingsScreen(
                                                         overflow = TextOverflow.Ellipsis
                                                     )
                                                     Spacer(modifier = Modifier.height(2.dp))
+                                                    val statusText = if (sub.lastKnownSeason == 0 && sub.lastKnownEpisode == 0) {
+                                                        "Ожидается выход фильма"
+                                                    } else {
+                                                        "Текущая: Сезон ${sub.lastKnownSeason}, серия ${sub.lastKnownEpisode}"
+                                                    }
                                                     Text(
-                                                        text = "Текущая: Сезон ${sub.lastKnownSeason}, серия ${sub.lastKnownEpisode}",
+                                                        text = statusText,
                                                         color = CinemaPrimary,
                                                         fontSize = 11.sp,
                                                         fontWeight = FontWeight.Medium
                                                     )
                                                     if (sub.hasUnseenUpdate) {
+                                                        val unseenText = if (sub.lastKnownSeason == 0 || sub.type.equals("MOVIE", ignoreCase = true)) {
+                                                            "Фильм вышел!"
+                                                        } else {
+                                                            "Есть новые серии!"
+                                                        }
                                                         Text(
-                                                            text = "Есть новые серии!",
+                                                            text = unseenText,
                                                             color = CinemaAmber,
                                                             fontSize = 10.sp,
                                                             fontWeight = FontWeight.Bold
