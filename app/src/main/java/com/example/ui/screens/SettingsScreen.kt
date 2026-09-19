@@ -1200,6 +1200,37 @@ fun SettingsScreen(
                             }
                         }
 
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Подсказка для тестирования уведомлений
+                        Surface(
+                            color = CinemaCard.copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, CinemaAmber.copy(alpha = 0.25f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Science,
+                                    contentDescription = null,
+                                    tint = CinemaAmber,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Для теста уведомлений нажмите ➖ возле сериала (понизит серию на -1), затем запустите проверку.",
+                                    fontSize = 11.sp,
+                                    color = CinemaTextGray,
+                                    lineHeight = 15.sp
+                                )
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(16.dp))
 
                         if (subscriptions.isEmpty()) {
@@ -1278,7 +1309,7 @@ fun SettingsScreen(
                                                         fontSize = 11.sp,
                                                         fontWeight = FontWeight.Medium
                                                     )
-                                                    if (sub.hasUnseenUpdate) {
+                                                     if (sub.hasUnseenUpdate) {
                                                         val unseenText = if (sub.lastKnownSeason == 0 || sub.type.equals("MOVIE", ignoreCase = true)) {
                                                             "Фильм вышел!"
                                                         } else {
@@ -1294,16 +1325,39 @@ fun SettingsScreen(
                                                 }
                                             }
 
-                                            IconButton(
-                                                onClick = { viewModel.removeSubscription(sub.id) },
-                                                modifier = Modifier.size(36.dp)
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(2.dp)
                                             ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.DeleteOutline,
-                                                    contentDescription = "Отписаться",
-                                                    tint = CinemaTextGray,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
+                                                IconButton(
+                                                    onClick = {
+                                                        viewModel.simulatePreviousEpisodeForTest(sub.id) { message ->
+                                                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    },
+                                                    modifier = Modifier
+                                                        .size(36.dp)
+                                                        .testTag("test_decrement_series_${sub.id}")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.RemoveCircleOutline,
+                                                        contentDescription = "Понизить серию на -1 для теста",
+                                                        tint = CinemaAmber,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+
+                                                IconButton(
+                                                    onClick = { viewModel.removeSubscription(sub.id) },
+                                                    modifier = Modifier.size(36.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.DeleteOutline,
+                                                        contentDescription = "Отписаться",
+                                                        tint = CinemaTextGray,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
                                             }
                                         }
                                     }
