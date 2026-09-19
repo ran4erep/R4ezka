@@ -154,7 +154,9 @@ fun DetailScreen(
             val transId = selectedTranslator?.id ?: currentDetail?.translators?.firstOrNull()?.id
             viewModel.toggleSubscription(item, currentDetail, transId, false) { isSubNow, _, _ ->
                 if (isSubNow) {
-                    Toast.makeText(context, "Подписка оформлена", Toast.LENGTH_SHORT).show()
+                    val isSeries = currentDetail?.type == RezkaType.SERIES || item.type == RezkaType.SERIES
+                    val toastMsg = if (isSeries) "Подписка оформлена (уведомления о новых сериях)" else "Подписка оформлена: сообщим, как только фильм выйдет!"
+                    Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
                 }
             }
         } else {
@@ -178,7 +180,7 @@ fun DetailScreen(
                 viewModel.toggleSubscription(item, currentDetail, transId, false) { isSubNow, _, _ ->
                     if (isSubNow) {
                         val isSeries = currentDetail?.type == RezkaType.SERIES || item.type == RezkaType.SERIES
-                        val toastMsg = if (isSeries) "Подписка оформлена (уведомления о новых сериях)" else "Подписка оформлена (уведомление о выходе фильма)"
+                        val toastMsg = if (isSeries) "Подписка оформлена (уведомления о новых сериях)" else "Подписка оформлена: сообщим, как только фильм выйдет!"
                         Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
                     }
                 }

@@ -209,6 +209,16 @@ data class SeriesSubscriptionEntity(
     val lastNotifiedEpisode: Int = 0
 ) : Serializable
 
+fun SeriesSubscriptionEntity.isMovie(): Boolean {
+    val typeUpper = type.trim().uppercase()
+    if (typeUpper == "MOVIE") return true
+    if (url.contains("/films/")) return true
+    if (lastEpisodeName.contains("фильм", ignoreCase = true)) return true
+    if (url.contains("/series/")) return false
+    if (lastKnownSeason > 1 || lastKnownEpisode > 1) return false
+    return typeUpper != "SERIES"
+}
+
 data class AggregatedHistoryItem(
     val itemId: String,
     val title: String,
