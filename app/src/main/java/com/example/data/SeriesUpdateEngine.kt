@@ -81,21 +81,55 @@ object SeriesUpdateEngine {
     private val HTML_TAG_STRIP_REGEX = Regex("""<[^>]+>""")
 
     private val MOVIE_RELEASED_REGEX = Regex(
-        """class=["'][^"']*?b-translator__item[^"']*?["']|sof\.tv\.initCDN(?:Movies|Series)Events|initCDN(?:Movies|Series)Events|data-translator_id=["']?\d+|"translator_id"\s*:\s*"?\d+"|id=["']?cdn-player["']?|id=["']?player["']?|class=["'][^"']*?b-post__video[^"']*?["']|class=["'][^"']*?b-player[^"']*?["']|data-cdn_url=["']?[^"'\s>]+""",
+        """class=["'][^"']*?b-translator__item[^"']*?["']|sof\.tv\.initCDN(?:Movies?|Series)Events|initCDN(?:Movies?|Series)Events|data-translator_id=["']?\d+|"translator_id"\s*:\s*"?\d+"|id=["']?cdn-player["']?|id=["']?player["']?|class=["'][^"']*?b-post__video[^"']*?["']|class=["'][^"']*?b-player[^"']*?["']|data-cdn_url=["']?[^"'\s>]+|data-post_id=["']?\d+""",
         RegexOption.IGNORE_CASE
     )
 
     fun isItemReleasedFromHtml(html: String): Boolean {
         if (html.isBlank()) return false
-        val isUnreleasedText = html.contains("Скоро на сайте", ignoreCase = true) ||
-                html.contains("Фильм еще не вышел", ignoreCase = true) ||
-                html.contains("Сериал еще не вышел", ignoreCase = true)
 
-        val hasPlayerOrTranslators = MOVIE_RELEASED_REGEX.containsMatchIn(html) ||
-                EPISODE_TAG_REGEX.containsMatchIn(html) ||
-                EPISODE_TAG_ALT_REGEX.containsMatchIn(html)
+        try {
+            val doc = Jsoup.parse(html)
 
-        return hasPlayerOrTranslators && (!isUnreleasedText || MOVIE_RELEASED_REGEX.containsMatchIn(html))
+            // 1. Поиск элементов плеера, озвучек или CDN-событий HDRezka
+            val hasTranslators = doc.selectFirst(".b-translator__item, #translators-list li, .b-translators__list li, [data-translator_id]") != null
+            val hasPlayer = doc.selectFirst("#cdn-player, #player, .b-player, .b-post__video, iframe, video") != null
+            val hasCdnScript = html.contains("initCDN", ignoreCase = true) ||
+                    html.contains("data-cdn_url", ignoreCase = true) ||
+                    html.contains("data-translator_id", ignoreCase = true) ||
+                    html.contains("cdn-player", ignoreCase = true) ||
+                    html.contains("b-player", ignoreCase = true) ||
+                    html.contains("sof.tv.initCDN", ignoreCase = true)
+
+            if (hasTranslators || hasPlayer || hasCdnScript) {
+                return true
+            }
+
+            // 2. Поиск явных надписей "Скоро на сайте" / "Фильм еще не вышел" в блоке информации о фильме
+            val infoBlock = doc.selectFirst(".b-post__info, .b-post__status, .b-post__status_list, .b-post__title")
+            val infoText = infoBlock?.text().orEmpty()
+
+            if (infoText.contains("Скоро на сайте", ignoreCase = true) ||
+                infoText.contains("Фильм еще не вышел", ignoreCase = true) ||
+                infoText.contains("Сериал еще не вышел", ignoreCase = true) ||
+                infoText.contains("Анонс", ignoreCase = true)
+            ) {
+                return false
+            }
+
+            // 3. Проверка наличия карточки контента на странице
+            val hasPostTitle = doc.selectFirst(".b-post__title, h1") != null
+            if (hasPostTitle) {
+                // Если страница фильма открылась и на ней нет блока анонса — фильм вышел
+                return true
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Ошибка Jsoup проверки статуса выхода фильма: ${e.message}")
+        }
+
+        val isUnreleased = html.contains("Скоро на сайте", ignoreCase = true) ||
+                html.contains("Фильм еще не вышел", ignoreCase = true)
+        return !isUnreleased
     }
 
     /**
@@ -502,6 +536,8 @@ object SeriesUpdateEngine {
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText("$text\nНажмите чтобы начать просмотр"))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setOnlyAlertOnce(false)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
 
