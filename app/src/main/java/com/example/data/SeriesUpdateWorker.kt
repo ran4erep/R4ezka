@@ -75,4 +75,25 @@ object SeriesUpdateScheduler {
             oneTimeRequest
         )
     }
+
+    /**
+     * Запланировать фоновую проверку со сдвигом по времени (например, через 10 секунд).
+     * Позволяет протестировать получение системных уведомлений при полностью закрытом приложении.
+     */
+    fun scheduleDelayedCheck(context: Context, delaySeconds: Long = 10) {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val testRequest = OneTimeWorkRequestBuilder<SeriesUpdateWorker>()
+            .setConstraints(constraints)
+            .setInitialDelay(delaySeconds, TimeUnit.SECONDS)
+            .build()
+
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "rezka_series_test_delayed_check",
+            ExistingWorkPolicy.REPLACE,
+            testRequest
+        )
+    }
 }

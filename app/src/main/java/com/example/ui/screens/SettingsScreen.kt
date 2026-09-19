@@ -1223,7 +1223,7 @@ fun SettingsScreen(
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Text(
-                                    text = "Для теста уведомлений нажмите ➖ возле сериала (понизит серию на -1), затем запустите проверку.",
+                                    text = "Для теста: нажмите ➖ возле сериала и скройте/закройте приложение. Через 10 сек фоновый WorkManager проверит обнову и пришлёт пуш.",
                                     fontSize = 11.sp,
                                     color = CinemaTextGray,
                                     lineHeight = 15.sp
@@ -1332,7 +1332,8 @@ fun SettingsScreen(
                                                 IconButton(
                                                     onClick = {
                                                         viewModel.simulatePreviousEpisodeForTest(sub.id) { message ->
-                                                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                                            com.example.data.SeriesUpdateScheduler.scheduleDelayedCheck(context, 10)
+                                                            Toast.makeText(context, "$message\nСверните приложение! Фоновая проверка сработает через 10 секунд.", Toast.LENGTH_LONG).show()
                                                         }
                                                     },
                                                     modifier = Modifier
