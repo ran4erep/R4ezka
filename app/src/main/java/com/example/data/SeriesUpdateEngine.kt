@@ -363,9 +363,15 @@ object SeriesUpdateEngine {
         for (sub in subscriptions) {
             try {
                 semaphore.withPermit {
-                    // Точечный быстрый AJAX запрос (1-2 КБ), если numericPostId известен. Фолбэк на HTML страницу.
-                    var scanResult = if (sub.numericPostId.isNotBlank()) {
-                        val ajaxRes = fetchSeriesLatestEpisodeAjax(sub.numericPostId, sub.translatorId)
+                    // Точечный быстрый AJAX запрос (1-2 КБ), если numericPostId известен или извлекается из URL. Фолбэк на HTML страницу.
+                    val effectivePostId = if (sub.numericPostId.isNotBlank()) {
+                        sub.numericPostId
+                    } else {
+                        Regex("""/(\d+)-[^/]+\.html""").find(sub.url)?.groupValues?.get(1).orEmpty()
+                    }
+
+                    var scanResult = if (effectivePostId.isNotBlank()) {
+                        val ajaxRes = fetchSeriesLatestEpisodeAjax(effectivePostId, sub.translatorId)
                         if (ajaxRes.isSuccess) ajaxRes else fetchSeriesLatestEpisode(sub.url)
                     } else {
                         fetchSeriesLatestEpisode(sub.url)
@@ -375,7 +381,7 @@ object SeriesUpdateEngine {
                     if (!scanResult.isSuccess && (scanResult.isAntiBot || scanResult.errorMessage?.contains("HTTP") == true || scanResult.errorMessage?.contains("timeout", ignoreCase = true) == true)) {
                         for (fallbackMirror in RezkaService.PRESET_MIRRORS) {
                             if (fallbackMirror != RezkaService.currentMirror.value) {
-                                val altUrl = sub.url.replace(RezkaService.currentBaseUrl, fallbackMirror)
+                                val altUrl = Regex("""^https?://[^/]+""").replace(sub.url, fallbackMirror)
                                 val altResult = fetchSeriesLatestEpisode(altUrl)
                                 if (altResult.isSuccess) {
                                     scanResult = altResult
@@ -525,6 +531,7 @@ object SeriesUpdateEngine {
             .setStyle(NotificationCompat.BigTextStyle().bigText("$text\nНажмите чтобы начать просмотр"))
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setOnlyAlertOnce(false)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
             .setContentIntent(pendingIntent)
@@ -559,7 +566,12 @@ object SeriesUpdateEngine {
             if (!notificationManager.areNotificationsEnabled()) {
                 Log.w(TAG, "ВНИМАНИЕ! Системные уведомления ОТКЛЮЧЕНЫ в настройках телефона.")
             }
-            notificationManager.notify(subscription.id.hashCode(), builder.build())
+            // Отменяем предыдущее уведомление с этим ID, чтобы Android принудительно воспроизвел звук,
+            // вибрацию и показал Heads-Up баннер даже при многократных тестах подряд
+            val notificationId = subscription.id.hashCode()
+            notificationManager.cancel(notificationId)
+            kotlinx.coroutines.delay(50)
+            notificationManager.notify(notificationId, builder.build())
             Log.i(TAG, "Уведомление успешно доставлено в шторку: $title ($text)")
         } catch (e: SecurityException) {
             Log.w(TAG, "Нет разрешения POST_NOTIFICATIONS для отправки уведомления: ${e.message}")

@@ -69,10 +69,10 @@ class SeriesUpdateReceiver : BroadcastReceiver() {
                     } catch (e: Exception) {
                         Log.e(TAG, "Ошибка фоновой проверки в ресивере: ${e.message}", e)
                     } finally {
-                        // Если это была регулярная периодическая проверка через Alarm, планируем следующий интервал
-                        if (!isTest) {
-                            SeriesUpdateScheduler.scheduleAlarmCheck(context)
-                        }
+                        // Гарантируем, что следующий регулярный интервал фоновой проверки (каждый 1 час)
+                        // всегда активен и запланирован в системе
+                        SeriesUpdateScheduler.scheduleAlarmCheck(context)
+
                         try {
                             if (wakeLock?.isHeld == true) {
                                 wakeLock.release()
