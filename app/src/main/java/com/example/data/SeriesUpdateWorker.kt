@@ -102,6 +102,7 @@ object SeriesUpdateScheduler {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
             val intent = Intent(context, SeriesUpdateReceiver::class.java).apply {
                 action = SeriesUpdateReceiver.ACTION_CHECK_SERIES_UPDATES
+                setPackage(context.packageName)
             }
             val pendingIntent = PendingIntent.getBroadcast(
                 context,
@@ -112,7 +113,14 @@ object SeriesUpdateScheduler {
 
             val triggerAtMillis = System.currentTimeMillis() + TimeUnit.HOURS.toMillis(intervalHours)
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // На Android 12+ проверяем право на точный будильник. Если нет - используем setAndAllowWhileIdle
+                if (alarmManager.canScheduleExactAlarms()) {
+                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                } else {
+                    alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
             } else {
                 alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
@@ -120,6 +128,28 @@ object SeriesUpdateScheduler {
             Log.i(TAG, "AlarmManager запланирован на +$intervalHours ч. (через ${TimeUnit.HOURS.toMinutes(intervalHours)} мин.)")
         } catch (e: Exception) {
             Log.w(TAG, "Не удалось запланировать проверку в AlarmManager: ${e.message}")
+            // Надежный фоллбэк без точного будильника, гарантированно срабатывающий даже при запретах
+            try {
+                val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                val intent = Intent(context, SeriesUpdateReceiver::class.java).apply {
+                    action = SeriesUpdateReceiver.ACTION_CHECK_SERIES_UPDATES
+                    setPackage(context.packageName)
+                }
+                val pendingIntent = PendingIntent.getBroadcast(
+                    context,
+                    ALARM_REQUEST_CODE_PERIODIC,
+                    intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val triggerAtMillis = System.currentTimeMillis() + TimeUnit.HOURS.toMillis(intervalHours)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager?.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                } else {
+                    alarmManager?.set(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                }
+            } catch (fallbackEx: Exception) {
+                Log.e(TAG, "Сбой и в фоллбэке AlarmManager: ${fallbackEx.message}")
+            }
         }
     }
 
@@ -157,6 +187,7 @@ object SeriesUpdateScheduler {
             if (alarmManager != null) {
                 val intent = Intent(context, SeriesUpdateReceiver::class.java).apply {
                     action = SeriesUpdateReceiver.ACTION_DELAYED_TEST_CHECK
+                    setPackage(context.packageName)
                 }
                 val pendingIntent = PendingIntent.getBroadcast(
                     context,
@@ -166,7 +197,13 @@ object SeriesUpdateScheduler {
                 )
                 val triggerAtMillis = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(safeDelay)
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (alarmManager.canScheduleExactAlarms()) {
+                        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                    } else {
+                        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                    }
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
                 } else {
                     alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
@@ -175,6 +212,23 @@ object SeriesUpdateScheduler {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Ошибка планирования тестового AlarmManager: ${e.message}")
+            try {
+                val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                val intent = Intent(context, SeriesUpdateReceiver::class.java).apply {
+                    action = SeriesUpdateReceiver.ACTION_DELAYED_TEST_CHECK
+                    setPackage(context.packageName)
+                }
+                val pendingIntent = PendingIntent.getBroadcast(
+                    context,
+                    ALARM_REQUEST_CODE_TEST,
+                    intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val triggerAtMillis = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(safeDelay)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager?.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                }
+            } catch (_: Exception) {}
         }
 
         // 2. Дополнительный WorkManager

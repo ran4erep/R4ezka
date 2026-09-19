@@ -286,50 +286,55 @@ object SeriesUpdateEngine {
 
         val baseUrl = RezkaService.currentBaseUrl
         val endpoint = "$baseUrl/ajax/get_cdn_series/"
-        val cleanTransId = translatorId.ifBlank { "0" }
 
-        val formBody = FormBody.Builder()
-            .add("id", cleanPostId)
-            .add("translator_id", cleanTransId)
-            .add("action", "get_episodes")
-            .build()
-
-        val request = Request.Builder()
-            .url(endpoint)
-            .post(formBody)
-            .header("User-Agent", RezkaService.USER_AGENT)
-            .header("X-Requested-With", "XMLHttpRequest")
-            .header("Referer", "$baseUrl/")
-            .header("Origin", baseUrl)
-            .header("Accept", "application/json, text/javascript, */*; q=0.01")
-            .build()
-
-        try {
-            RezkaService.client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "HTTP ${response.code}")
-                }
-                val bodyStr = response.body?.string().orEmpty()
-                if (bodyStr.isBlank()) {
-                    return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "Пустой AJAX ответ")
-                }
-
-                val json = JSONObject(bodyStr)
-                if (!json.optBoolean("success", false)) {
-                    return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "AJAX success=false")
-                }
-
-                val episodesHtml = json.optString("episodes", "")
-                if (episodesHtml.isBlank()) {
-                    return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "Пустой блок episodes")
-                }
-
-                return@withContext parseLatestEpisodeFromHtml(episodesHtml)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Сбой точечного AJAX запроса для $cleanPostId: ${e.message}")
-            return@withContext SeriesScanResult(0, 0, "", false, errorMessage = e.message)
+        // Пробуем сначала с переданным translatorId, если не пустой. Иначе пробуем "0"
+        val transIdsToTry = if (translatorId.isNotBlank() && translatorId != "0") {
+            listOf(translatorId, "0")
+        } else {
+            listOf("0")
         }
+
+        for (transId in transIdsToTry) {
+            val formBody = FormBody.Builder()
+                .add("id", cleanPostId)
+                .add("translator_id", transId)
+                .add("action", "get_episodes")
+                .build()
+
+            val request = Request.Builder()
+                .url(endpoint)
+                .post(formBody)
+                .header("User-Agent", RezkaService.USER_AGENT)
+                .header("X-Requested-With", "XMLHttpRequest")
+                .header("Referer", "$baseUrl/")
+                .header("Origin", baseUrl)
+                .header("Accept", "application/json, text/javascript, */*; q=0.01")
+                .build()
+
+            try {
+                RezkaService.client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val bodyStr = response.body?.string().orEmpty()
+                        if (bodyStr.isNotBlank()) {
+                            val json = JSONObject(bodyStr)
+                            if (json.optBoolean("success", false)) {
+                                val episodesHtml = json.optString("episodes", "")
+                                if (episodesHtml.isNotBlank()) {
+                                    val parsed = parseLatestEpisodeFromHtml(episodesHtml)
+                                    if (parsed.isSuccess) {
+                                        return@withContext parsed
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Сбой AJAX get_episodes для id=$cleanPostId trans=$transId: ${e.message}")
+            }
+        }
+
+        return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "AJAX episodes не найдены")
     }
 
     /**
