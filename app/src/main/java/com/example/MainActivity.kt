@@ -92,11 +92,6 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainContent(viewModel: RezkaViewModel = viewModel()) {
-    val context = LocalContext.current
-    val notificationPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { /* granted / denied */ }
-
     var currentTab by remember { mutableStateOf(NavTab.FEED) }
     val navigationStack = remember { mutableStateListOf<ScreenState>() }
     var isSettingsOpen by remember { mutableStateOf(false) }
@@ -140,15 +135,6 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
 
     LaunchedEffect(Unit) {
         UpdateManager.checkForUpdates(BuildConfig.VERSION_NAME)
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            if (androidx.core.content.ContextCompat.checkSelfPermission(
-                    context,
-                    android.Manifest.permission.POST_NOTIFICATIONS
-                ) != android.content.pm.PackageManager.PERMISSION_GRANTED
-            ) {
-                notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
     }
 
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
@@ -159,6 +145,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
+    val context = LocalContext.current
     val tvModePrefString by viewModel.tvModePreference.collectAsState()
     val isPlayerActive by viewModel.isPlayerActive.collectAsState()
 
