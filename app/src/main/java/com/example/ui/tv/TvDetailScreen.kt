@@ -482,8 +482,8 @@ fun TvDetailContent(
                                 }
                             }
 
-                            // Кнопка подписки на серии (для сериалов)
-                            if (detail.type == RezkaType.SERIES && onToggleSubscription != null) {
+                            // Кнопка подписки (для сериалов или еще не вышедших фильмов/тайтлов)
+                            if ((detail.type == RezkaType.SERIES || !detail.isReleased || isSubscribed) && onToggleSubscription != null) {
                                 Surface(
                                     color = if (isSubscribed) CinemaPrimary.copy(alpha = 0.25f) else CinemaCard,
                                     shape = RoundedCornerShape(6.dp),
@@ -506,7 +506,7 @@ fun TvDetailContent(
                                     ) {
                                         Icon(
                                             imageVector = if (isSubscribed) Icons.Default.NotificationsActive else Icons.Outlined.Notifications,
-                                            contentDescription = "Уведомления о новых сериях",
+                                            contentDescription = if (detail.type == RezkaType.SERIES) "Уведомления о новых сериях" else "Уведомление о выходе фильма",
                                             tint = if (isSubscribed) CinemaPrimary else CinemaTextWhite,
                                             modifier = Modifier.size(16.dp)
                                         )

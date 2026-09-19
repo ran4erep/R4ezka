@@ -177,7 +177,9 @@ fun DetailScreen(
             } else {
                 viewModel.toggleSubscription(item, currentDetail, transId, false) { isSubNow, _, _ ->
                     if (isSubNow) {
-                        Toast.makeText(context, "Подписка оформлена", Toast.LENGTH_SHORT).show()
+                        val isSeries = currentDetail?.type == RezkaType.SERIES || item.type == RezkaType.SERIES
+                        val toastMsg = if (isSeries) "Подписка оформлена (уведомления о новых сериях)" else "Подписка оформлена (уведомление о выходе фильма)"
+                        Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -2097,9 +2099,18 @@ fun DetailScreen(
                         )
                     }
 
-                    // Плавающая кнопка Подписка на новые серии (для сериалов)
-                    val isSeries = (detailState as? DetailState.Success)?.detail?.type == RezkaType.SERIES || item.type == RezkaType.SERIES
-                    if (isSeries) {
+                    // Плавающая кнопка Подписки (для сериалов или ещё не вышедших фильмов/тайтлов)
+                    val detailObj = (detailState as? DetailState.Success)?.detail
+                    val isSeries = detailObj?.type == RezkaType.SERIES || item.type == RezkaType.SERIES
+                    val isUnreleased = detailObj?.isReleased == false
+                    val showSubBtn = isSeries || isUnreleased || isSubscribed
+
+                    if (showSubBtn) {
+                        val subBtnDesc = if (isSubscribed) {
+                            if (isSeries) "Вы подписаны на новые серии" else "Вы подписаны на релиз фильма"
+                        } else {
+                            if (isSeries) "Подписаться на новые серии" else "Уведомить о выходе фильма"
+                        }
                         IconButton(
                             onClick = onToggleSubscriptionClick,
                             modifier = Modifier
@@ -2114,7 +2125,7 @@ fun DetailScreen(
                         ) {
                             Icon(
                                 imageVector = if (isSubscribed) Icons.Default.NotificationsActive else Icons.Outlined.Notifications,
-                                contentDescription = if (isSubscribed) "Вы подписаны на новые серии" else "Подписаться на новые серии",
+                                contentDescription = subBtnDesc,
                                 tint = if (isSubscribed) CinemaPrimary else CinemaTextWhite,
                                 modifier = Modifier.size(22.dp)
                             )
