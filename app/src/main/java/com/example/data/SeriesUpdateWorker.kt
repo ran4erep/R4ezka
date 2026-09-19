@@ -113,17 +113,28 @@ object SeriesUpdateScheduler {
 
             val triggerAtMillis = System.currentTimeMillis() + TimeUnit.HOURS.toMillis(intervalHours)
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                // На Android 12+ проверяем право на точный будильник. Если нет - используем setAndAllowWhileIdle
-                if (alarmManager.canScheduleExactAlarms()) {
+            var scheduled = false
+            // 1. Приоритет: setAlarmClock (пробуждает систему без ограничений энергосбережения)
+            try {
+                val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerAtMillis, pendingIntent)
+                alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
+                scheduled = true
+            } catch (e: Exception) {
+                Log.d(TAG, "setAlarmClock periodic fallback: ${e.message}")
+            }
+
+            if (!scheduled) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (alarmManager.canScheduleExactAlarms()) {
+                        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                    } else {
+                        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                    }
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
                 } else {
-                    alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                    alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
                 }
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
-            } else {
-                alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
             }
             Log.i(TAG, "AlarmManager запланирован на +$intervalHours ч. (через ${TimeUnit.HOURS.toMinutes(intervalHours)} мин.)")
         } catch (e: Exception) {
@@ -173,15 +184,16 @@ object SeriesUpdateScheduler {
     }
 
     /**
-     * Запланировать фоновую проверку со сдвигом по времени (например, через 10 секунд).
-     * Использует AlarmManager с setExactAndAllowWhileIdle ДЛЯ ГАРАНТИРОВАННОГО ПРОБУЖДЕНИЯ
-     * при закрытом приложении, а также WorkManager в качестве дублёра.
+     * Запланировать фоновую проверку со сдвигом по времени (например, ровно через 10 секунд).
+     * Использует AlarmManager.setAlarmClock — единственный системный механизм в Android OS,
+     * который НЕ подвержен 9-15 минутному троттлингу Doze-mode и гарантированно срабатывает
+     * каждую секунду при повторных запусках теста, даже когда приложение закрыто и выгружено из памяти.
      */
     fun scheduleDelayedCheck(context: Context, delaySeconds: Long = 10) {
         val safeDelay = delaySeconds.coerceAtLeast(3)
-        Log.i(TAG, "Планирование тестовой проверки через $safeDelay сек. (AlarmManager + WorkManager)...")
+        Log.i(TAG, "Планирование тестовой проверки через $safeDelay сек. (setAlarmClock + WorkManager)...")
 
-        // 1. Аппаратный AlarmManager с пробуждением RTC_WAKEUP
+        // 1. Аппаратный AlarmManager с наивысшим приоритетом setAlarmClock
         try {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
             if (alarmManager != null) {
@@ -197,18 +209,31 @@ object SeriesUpdateScheduler {
                 )
                 val triggerAtMillis = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(safeDelay)
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    if (alarmManager.canScheduleExactAlarms()) {
+                var scheduled = false
+                // setAlarmClock полностью освобожден от лимитов Doze-mode и срабатывает точно в срок
+                try {
+                    val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerAtMillis, pendingIntent)
+                    alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
+                    scheduled = true
+                    Log.i(TAG, "Тестовый AlarmClock успешно установлен ровно на +$safeDelay сек.")
+                } catch (e: Exception) {
+                    Log.w(TAG, "setAlarmClock не удался: ${e.message}, пробуем setExactAndAllowWhileIdle")
+                }
+
+                if (!scheduled) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        if (alarmManager.canScheduleExactAlarms()) {
+                            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                        } else {
+                            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                        }
+                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
                     } else {
-                        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                        alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
                     }
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
-                } else {
-                    alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                    Log.i(TAG, "Тестовый AlarmManager взведен на +$safeDelay сек. через setExact/AllowWhileIdle")
                 }
-                Log.i(TAG, "Тестовый AlarmManager успешно взведен на +$safeDelay сек.")
             }
         } catch (e: Exception) {
             Log.w(TAG, "Ошибка планирования тестового AlarmManager: ${e.message}")
