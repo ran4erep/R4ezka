@@ -80,58 +80,6 @@ object SeriesUpdateEngine {
 
     private val HTML_TAG_STRIP_REGEX = Regex("""<[^>]+>""")
 
-    private val MOVIE_RELEASED_REGEX = Regex(
-        """class=["'][^"']*?b-translator__item[^"']*?["']|sof\.tv\.initCDN(?:Movies?|Series)Events|initCDN(?:Movies?|Series)Events|data-translator_id=["']?\d+|"translator_id"\s*:\s*"?\d+"|id=["']?cdn-player["']?|id=["']?player["']?|class=["'][^"']*?b-post__video[^"']*?["']|class=["'][^"']*?b-player[^"']*?["']|data-cdn_url=["']?[^"'\s>]+|data-post_id=["']?\d+""",
-        RegexOption.IGNORE_CASE
-    )
-
-    fun isItemReleasedFromHtml(html: String): Boolean {
-        if (html.isBlank()) return false
-
-        try {
-            val doc = Jsoup.parse(html)
-
-            // 1. Поиск элементов плеера, озвучек или CDN-событий HDRezka
-            val hasTranslators = doc.selectFirst(".b-translator__item, #translators-list li, .b-translators__list li, [data-translator_id]") != null
-            val hasPlayer = doc.selectFirst("#cdn-player, #player, .b-player, .b-post__video, iframe, video") != null
-            val hasCdnScript = html.contains("initCDN", ignoreCase = true) ||
-                    html.contains("data-cdn_url", ignoreCase = true) ||
-                    html.contains("data-translator_id", ignoreCase = true) ||
-                    html.contains("cdn-player", ignoreCase = true) ||
-                    html.contains("b-player", ignoreCase = true) ||
-                    html.contains("sof.tv.initCDN", ignoreCase = true)
-
-            if (hasTranslators || hasPlayer || hasCdnScript) {
-                return true
-            }
-
-            // 2. Поиск явных надписей "Скоро на сайте" / "Фильм еще не вышел" в блоке информации о фильме
-            val infoBlock = doc.selectFirst(".b-post__info, .b-post__status, .b-post__status_list, .b-post__title")
-            val infoText = infoBlock?.text().orEmpty()
-
-            if (infoText.contains("Скоро на сайте", ignoreCase = true) ||
-                infoText.contains("Фильм еще не вышел", ignoreCase = true) ||
-                infoText.contains("Сериал еще не вышел", ignoreCase = true) ||
-                infoText.contains("Анонс", ignoreCase = true)
-            ) {
-                return false
-            }
-
-            // 3. Проверка наличия карточки контента на странице
-            val hasPostTitle = doc.selectFirst(".b-post__title, h1") != null
-            if (hasPostTitle) {
-                // Если страница фильма открылась и на ней нет блока анонса — фильм вышел
-                return true
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Ошибка Jsoup проверки статуса выхода фильма: ${e.message}")
-        }
-
-        val isUnreleased = html.contains("Скоро на сайте", ignoreCase = true) ||
-                html.contains("Фильм еще не вышел", ignoreCase = true)
-        return !isUnreleased
-    }
-
     /**
      * Сверхбыстрый разбор последнего сезона и серии из строки HTML без создания DOM-дерева.
      * Выполняется за ~0.2 - 0.5 мс.
@@ -254,9 +202,9 @@ object SeriesUpdateEngine {
     }
 
     /**
-     * Выполняет легковесный сетевой запрос к странице сериала или фильма и сканирует последние серии.
+     * Выполняет легковесный сетевой запрос к странице сериала и сканирует последние серии.
      */
-    suspend fun fetchSeriesLatestEpisode(url: String, isMovie: Boolean = false): SeriesScanResult = withContext(Dispatchers.IO) {
+    suspend fun fetchSeriesLatestEpisode(url: String): SeriesScanResult = withContext(Dispatchers.IO) {
         val cleanUrl = url.trim()
         if (cleanUrl.isEmpty()) {
             return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "Пустой URL")
@@ -288,20 +236,6 @@ object SeriesUpdateEngine {
                 }
 
                 val parseRes = parseLatestEpisodeFromHtml(html)
-                if (parseRes.isSuccess) {
-                    return@withContext parseRes
-                }
-
-                // Только для ФИЛЬМОВ проверяем статус выхода
-                if (isMovie && isItemReleasedFromHtml(html)) {
-                    return@withContext SeriesScanResult(
-                        latestSeason = 1,
-                        latestEpisode = 1,
-                        latestEpisodeName = "Фильм вышел",
-                        isSuccess = true
-                    )
-                }
-
                 return@withContext parseRes
             }
         } catch (e: Exception) {
@@ -390,16 +324,84 @@ object SeriesUpdateEngine {
         val semaphore = Semaphore(2) // Максимум 2 одновременных сетевых соединения
         val updatedList = mutableListOf<SeriesSubscriptionEntity>()
 
-        for (sub in subscriptions) {
+        // Четкое разделение подписок: фильмы и сериалы имеют принципиально разную логику релизов
+        val (movieSubs, seriesSubs) = subscriptions.partition { it.isMovie() }
+
+        // 1. Обработка подписок на фильмы через специализированный движок MovieReleaseEngine
+        for (sub in movieSubs) {
             try {
                 semaphore.withPermit {
-                    // Точечный быстрый AJAX запрос (1-2 КБ) для сериалов. Для фильмов сразу запрашиваем HTML.
-                    val isMovie = sub.type.equals("MOVIE", ignoreCase = true)
-                    val scanResult = if (!isMovie && sub.numericPostId.isNotBlank()) {
+                    val now = System.currentTimeMillis()
+                    val isTestTriggered = sub.lastEpisodeName.contains("[TEST]")
+                    val movieScan = MovieReleaseEngine.checkMovieRelease(sub.url)
+
+                    val wasUnreleased = (sub.lastKnownSeason == 0 && sub.lastKnownEpisode == 0) || isTestTriggered
+                    val shouldNotify = wasUnreleased && (movieScan.isReleased || isTestTriggered)
+
+                    if (shouldNotify) {
+                        Log.i(TAG, "🔥 Ожидаемый фильм '${sub.title}' ВЫШЕЛ! (тест=$isTestTriggered, сеть=${movieScan.isReleased})")
+                        val epName = if (movieScan.translatorName.isNotBlank() && !movieScan.translatorName.equals("HDRezka", ignoreCase = true)) {
+                            "Фильм вышел (${movieScan.translatorName})"
+                        } else {
+                            "Фильм вышел"
+                        }
+
+                        repository.updateSubscriptionProgress(
+                            id = sub.id,
+                            season = 1,
+                            episode = 1,
+                            episodeName = epName,
+                            checkedAt = now,
+                            hasUpdate = true
+                        )
+                        FirebaseSyncManager.onSubscriptionProgressUpdated(
+                            id = sub.id,
+                            season = 1,
+                            episode = 1,
+                            episodeName = epName,
+                            hasUpdate = true
+                        )
+
+                        val updatedSub = sub.copy(
+                            lastKnownSeason = 1,
+                            lastKnownEpisode = 1,
+                            lastEpisodeName = epName,
+                            lastCheckedAt = now,
+                            hasUnseenUpdate = true
+                        )
+                        updatedList.add(updatedSub)
+
+                        MovieReleaseEngine.showMovieReleasedNotification(
+                            context = context,
+                            subscription = updatedSub,
+                            translatorName = movieScan.translatorName
+                        )
+
+                        onUpdateFound?.invoke(
+                            updatedSub,
+                            1,
+                            1,
+                            epName
+                        )
+                    } else if (movieScan.isSuccess) {
+                        repository.updateSubscriptionCheckedTime(sub.id, now)
+                    }
+                    delay(250)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Ошибка проверки фильма '${sub.title}': ${e.message}")
+            }
+        }
+
+        // 2. Обработка подписок на сериалы через точечный AJAX get_episodes или HTML сканер серий
+        for (sub in seriesSubs) {
+            try {
+                semaphore.withPermit {
+                    val scanResult = if (sub.numericPostId.isNotBlank()) {
                         val ajaxRes = fetchSeriesLatestEpisodeAjax(sub.numericPostId, sub.translatorId)
-                        if (ajaxRes.isSuccess) ajaxRes else fetchSeriesLatestEpisode(sub.url, isMovie = false)
+                        if (ajaxRes.isSuccess) ajaxRes else fetchSeriesLatestEpisode(sub.url)
                     } else {
-                        fetchSeriesLatestEpisode(sub.url, isMovie = isMovie)
+                        fetchSeriesLatestEpisode(sub.url)
                     }
                     val now = System.currentTimeMillis()
 
@@ -471,6 +473,9 @@ object SeriesUpdateEngine {
      * Создает канал уведомлений на Android 8.0+
      */
     fun createNotificationChannel(context: Context) {
+        // Создаем канал для релизов фильмов
+        MovieReleaseEngine.createNotificationChannel(context)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val name = "Новые серии сериалов"
             val descriptionText = "Уведомления о появлении новых серий в отслеживаемых сериалах HDRezka"
@@ -495,8 +500,14 @@ object SeriesUpdateEngine {
         season: Int,
         episode: Int,
         episodeName: String
-    ) {
+    ): Boolean {
         createNotificationChannel(context)
+
+        val notificationManager = NotificationManagerCompat.from(context)
+        if (!notificationManager.areNotificationsEnabled()) {
+            Log.w(TAG, "Уведомления отключены в настройках Android для приложения!")
+            return false
+        }
 
         val intent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
@@ -512,7 +523,7 @@ object SeriesUpdateEngine {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val isMovieRelease = subscription.type.equals("MOVIE", ignoreCase = true) || episodeName.equals("Фильм вышел", ignoreCase = true)
+        val isMovieRelease = subscription.lastKnownSeason == 0 || subscription.type.equals("MOVIE", ignoreCase = true)
         val title = if (isMovieRelease) {
             "Фильм вышел: ${subscription.title}"
         } else {
@@ -537,8 +548,6 @@ object SeriesUpdateEngine {
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText("$text\nНажмите чтобы начать просмотр"))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
-            .setOnlyAlertOnce(false)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
 
@@ -564,13 +573,15 @@ object SeriesUpdateEngine {
             Log.w(TAG, "Не удалось сформировать LargeIcon для уведомления: ${e.message}")
         }
 
-        try {
-            val notificationManager = NotificationManagerCompat.from(context)
+        return try {
             notificationManager.notify(subscription.id.hashCode(), builder.build())
+            true
         } catch (e: SecurityException) {
             Log.w(TAG, "Нет разрешения POST_NOTIFICATIONS для отправки уведомления: ${e.message}")
+            false
         } catch (e: Exception) {
             Log.w(TAG, "Не удалось отправить уведомление: ${e.message}")
+            false
         }
     }
 }

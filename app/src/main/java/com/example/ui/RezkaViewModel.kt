@@ -583,35 +583,48 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 FirebaseSyncManager.onSubscriptionRemoved(item.id)
                 onResult?.invoke(false, 0, 0)
             } else {
-                val isUnreleased = detail?.isReleased == false
                 val isMovie = (detail?.type ?: item.type) == RezkaType.MOVIE
+                val isUnreleased = if (detail != null) {
+                    !detail.isReleased
+                } else {
+                    val subText = item.subtitle.lowercase()
+                    subText.contains("скоро") || subText.contains("в ожидании") || subText.contains("ожидается")
+                }
 
                 var maxSeason = 1
                 var maxEpisode = 1
                 var lastEpName = "Серия 1"
 
-                if (isUnreleased) {
-                    maxSeason = 0
-                    maxEpisode = 0
-                    lastEpName = if (isMovie) "Фильм еще не вышел" else "Еще не вышел"
-                } else {
-                    val effectiveSeasons = detail?.seasons.orEmpty()
-                    if (effectiveSeasons.isNotEmpty()) {
-                        maxSeason = effectiveSeasons.maxOfOrNull { it.id } ?: 1
-                        val seasonObj = effectiveSeasons.find { it.id == maxSeason }
-                        val eps = seasonObj?.episodes.orEmpty()
-                        if (eps.isNotEmpty()) {
-                            val parsedMax = eps.mapNotNull { ep ->
-                                Regex("""\d+""").find(ep.id)?.value?.toIntOrNull()
-                                    ?: Regex("""\d+""").find(ep.name)?.value?.toIntOrNull()
-                            }.maxOrNull() ?: eps.size
-                            maxEpisode = parsedMax
-                            lastEpName = eps.lastOrNull()?.name ?: "Серия $maxEpisode"
-                        }
-                    } else if (isMovie) {
+                if (isMovie) {
+                    if (isUnreleased) {
+                        maxSeason = 0
+                        maxEpisode = 0
+                        lastEpName = "Ожидается выход фильма"
+                    } else {
                         maxSeason = 1
                         maxEpisode = 1
                         lastEpName = "Фильм вышел"
+                    }
+                } else {
+                    if (isUnreleased) {
+                        maxSeason = 0
+                        maxEpisode = 0
+                        lastEpName = "Сериал еще не вышел"
+                    } else {
+                        val effectiveSeasons = detail?.seasons.orEmpty()
+                        if (effectiveSeasons.isNotEmpty()) {
+                            maxSeason = effectiveSeasons.maxOfOrNull { it.id } ?: 1
+                            val seasonObj = effectiveSeasons.find { it.id == maxSeason }
+                            val eps = seasonObj?.episodes.orEmpty()
+                            if (eps.isNotEmpty()) {
+                                val parsedMax = eps.mapNotNull { ep ->
+                                    Regex("""\d+""").find(ep.id)?.value?.toIntOrNull()
+                                        ?: Regex("""\d+""").find(ep.name)?.value?.toIntOrNull()
+                                }.maxOrNull() ?: eps.size
+                                maxEpisode = parsedMax
+                                lastEpName = eps.lastOrNull()?.name ?: "Серия $maxEpisode"
+                            }
+                        }
                     }
                 }
 
@@ -687,13 +700,55 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Искусственно понижает номер последней серии на -1 в БД для тестирования работы
-     * автоматической и ручной проверки новых серий. Не отправляет уведомление сразу,
-     * а подготавливает запись для обнаружения обновления при следующей штатной проверке.
+     * Высокоточный детектор типа подписки: фильм или сериал.
      */
-    fun simulatePreviousEpisodeForTest(id: String, onResult: ((String) -> Unit)? = null) {
+    fun isMovieSubscription(sub: SeriesSubscriptionEntity): Boolean = sub.isMovie()
+
+    /**
+     * Тестирование подписок: четко разграничивает логику фильмов и сериалов.
+     * Для фильма: переводит в статус ожидания с тестовым маркером [TEST] для последующей проверки фоновым чекером через 10 секунд.
+     * Для сериала: понижает номер последней серии на -1 для последующего сканирования обновлений через 10 секунд.
+     */
+    fun simulatePreviousEpisodeForTest(
+        id: String,
+        context: Context? = null,
+        onResult: ((String) -> Unit)? = null
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             val sub = repository.getSubscription(id) ?: return@launch
+            val now = System.currentTimeMillis()
+            val isMovie = sub.isMovie()
+
+            if (isMovie) {
+                // Тест фильма: переводим в статус ожидания релиза с тестовым маркером
+                val targetSeason = 0
+                val targetEpisode = 0
+                val epName = "Ожидается выход фильма [TEST]"
+
+                repository.updateSubscriptionProgress(
+                    id = sub.id,
+                    season = targetSeason,
+                    episode = targetEpisode,
+                    episodeName = epName,
+                    checkedAt = now,
+                    hasUpdate = false
+                )
+                FirebaseSyncManager.onSubscriptionProgressUpdated(
+                    id = sub.id,
+                    season = targetSeason,
+                    episode = targetEpisode,
+                    episodeName = epName,
+                    hasUpdate = false
+                )
+
+                val msg = "Фильм '${sub.title}' переведён в статус ожидания для теста."
+                withContext(Dispatchers.Main) {
+                    onResult?.invoke(msg)
+                }
+                return@launch
+            }
+
+            // Сериал: понижение номера серии для теста фонового сканера
             var targetSeason = sub.lastKnownSeason
             var targetEpisode = sub.lastKnownEpisode
 
@@ -712,7 +767,6 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             val epName = if (targetSeason == 0 && targetEpisode == 0) "Ожидает выхода" else "Серия $targetEpisode"
-            val now = System.currentTimeMillis()
 
             repository.updateSubscriptionProgress(
                 id = sub.id,
@@ -733,7 +787,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             val msg = if (targetSeason == 0 && targetEpisode == 0) {
                 "Статус сериала '${sub.title}' изменён на 'Ожидается' (0/0)"
             } else {
-                "'${sub.title}': установлена серия S${targetSeason}E${targetEpisode}. Запустите проверку для теста!"
+                "'${sub.title}': установлена серия S${targetSeason}E${targetEpisode}."
             }
             withContext(Dispatchers.Main) {
                 onResult?.invoke(msg)

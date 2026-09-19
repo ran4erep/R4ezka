@@ -42,6 +42,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.R
 import com.example.data.RezkaService
+import com.example.data.isMovie
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
 import com.example.ui.tv.TvDetector
@@ -1223,7 +1224,7 @@ fun SettingsScreen(
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Text(
-                                    text = "Для теста: нажмите ➖ возле сериала и скройте/закройте приложение. Через 10 сек фоновый WorkManager проверит обнову и пришлёт пуш.",
+                                    text = "Для теста: нажмите ➖ возле сериала или фильма и скройте/закройте приложение. Через 10 сек фоновый чекер проверит обнову и пришлёт пуш.",
                                     fontSize = 11.sp,
                                     color = CinemaTextGray,
                                     lineHeight = 15.sp
@@ -1298,22 +1299,28 @@ fun SettingsScreen(
                                                         overflow = TextOverflow.Ellipsis
                                                     )
                                                     Spacer(modifier = Modifier.height(2.dp))
-                                                    val statusText = if (sub.lastKnownSeason == 0 && sub.lastKnownEpisode == 0) {
-                                                        "Ожидается выход фильма"
+                                                    val isMovie = sub.isMovie()
+                                                    val isWaitingMovie = isMovie && ((sub.lastKnownSeason == 0 && sub.lastKnownEpisode == 0) || sub.lastEpisodeName.contains("[TEST]"))
+                                                    val statusText = if (isWaitingMovie) {
+                                                        "Фильм • Ожидается выход"
+                                                    } else if (isMovie) {
+                                                        "Фильм • Релиз доступен"
+                                                    } else if (sub.lastKnownSeason == 0 && sub.lastKnownEpisode == 0) {
+                                                        "Сериал • Ожидается премьера"
                                                     } else {
                                                         "Текущая: Сезон ${sub.lastKnownSeason}, серия ${sub.lastKnownEpisode}"
                                                     }
                                                     Text(
                                                         text = statusText,
-                                                        color = CinemaPrimary,
+                                                        color = if (isWaitingMovie) CinemaAmber else CinemaPrimary,
                                                         fontSize = 11.sp,
                                                         fontWeight = FontWeight.Medium
                                                     )
-                                                     if (sub.hasUnseenUpdate) {
-                                                        val unseenText = if (sub.lastKnownSeason == 0 || sub.type.equals("MOVIE", ignoreCase = true)) {
+                                                    if (sub.hasUnseenUpdate) {
+                                                        val unseenText = if (isMovie) {
                                                             "Фильм вышел!"
                                                         } else {
-                                                            "Есть новые серии!"
+                                                            "Новая серия: ${sub.lastEpisodeName}"
                                                         }
                                                         Text(
                                                             text = unseenText,
@@ -1329,9 +1336,10 @@ fun SettingsScreen(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(2.dp)
                                             ) {
+                                                val isMovie = sub.isMovie()
                                                 IconButton(
                                                     onClick = {
-                                                        viewModel.simulatePreviousEpisodeForTest(sub.id) { message ->
+                                                        viewModel.simulatePreviousEpisodeForTest(sub.id, context) { message ->
                                                             com.example.data.SeriesUpdateScheduler.scheduleDelayedCheck(context, 10)
                                                             Toast.makeText(context, "$message\nСверните приложение! Фоновая проверка сработает через 10 секунд.", Toast.LENGTH_LONG).show()
                                                         }
@@ -1342,7 +1350,7 @@ fun SettingsScreen(
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Default.RemoveCircleOutline,
-                                                        contentDescription = "Понизить серию на -1 для теста",
+                                                        contentDescription = if (isMovie) "Тестировать уведомление о фильме" else "Понизить серию на -1 для теста",
                                                         tint = CinemaAmber,
                                                         modifier = Modifier.size(20.dp)
                                                     )
