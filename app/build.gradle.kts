@@ -18,7 +18,7 @@ android {
     minSdk = 24
     targetSdk = 36
     versionCode = 4
-    versionName = "1.0.7"
+    versionName = "1.0.8"
   }
 
   signingConfigs {
@@ -120,6 +120,7 @@ dependencies {
   implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  implementation(libs.androidx.work.runtime.ktx)
   implementation(libs.coil.compose)
   implementation(libs.coil.svg)
   implementation(libs.jsoup)

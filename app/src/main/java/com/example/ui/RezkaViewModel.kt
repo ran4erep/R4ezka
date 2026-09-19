@@ -54,6 +54,12 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     val watchHistory: StateFlow<List<WatchHistoryEntity>> = repository.watchHistory
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val subscriptions: StateFlow<List<SeriesSubscriptionEntity>> = repository.subscriptions
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _isCheckingSeriesUpdates = MutableStateFlow(false)
+    val isCheckingSeriesUpdates: StateFlow<Boolean> = _isCheckingSeriesUpdates.asStateFlow()
+
     val aggregatedWatchHistory: StateFlow<List<AggregatedHistoryItem>> = repository.watchHistory
         .map { list ->
             list.groupBy { it.itemId }.map { (itemId, items) ->
@@ -555,6 +561,101 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.removeFavorite(itemId)
             FirebaseSyncManager.onFavoriteRemoved(itemId)
+        }
+    }
+
+    /**
+     * Series episodes subscription management
+     */
+    fun isSubscribedFlow(id: String): Flow<Boolean> = repository.isSubscribedFlow(id)
+
+    fun toggleSubscription(
+        item: RezkaItem,
+        detail: RezkaDetail?,
+        selectedTranslatorId: String? = null,
+        isSubscribed: Boolean,
+        onResult: ((isSubscribedNow: Boolean, season: Int, episode: Int) -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            if (isSubscribed) {
+                repository.removeSubscription(item.id)
+                onResult?.invoke(false, 0, 0)
+            } else {
+                var maxSeason = 1
+                var maxEpisode = 1
+                var lastEpName = "Серия 1"
+
+                val effectiveSeasons = detail?.seasons.orEmpty()
+                if (effectiveSeasons.isNotEmpty()) {
+                    maxSeason = effectiveSeasons.maxOfOrNull { it.id } ?: 1
+                    val seasonObj = effectiveSeasons.find { it.id == maxSeason }
+                    val eps = seasonObj?.episodes.orEmpty()
+                    if (eps.isNotEmpty()) {
+                        val parsedMax = eps.mapNotNull { ep ->
+                            Regex("""\d+""").find(ep.id)?.value?.toIntOrNull()
+                                ?: Regex("""\d+""").find(ep.name)?.value?.toIntOrNull()
+                        }.maxOrNull() ?: eps.size
+                        maxEpisode = parsedMax
+                        lastEpName = eps.lastOrNull()?.name ?: "Серия $maxEpisode"
+                    }
+                }
+
+                val subTitle = detail?.title?.takeIf { it.isNotBlank() } ?: item.title
+                val subImageUrl = detail?.imageUrl?.takeIf { it.isNotBlank() } ?: item.imageUrl
+                val subUrl = item.url
+                val subType = (detail?.type ?: item.type).name
+
+                // Быстрые идентификаторы для прямого точечного AJAX-запроса get_episodes
+                val numericId = detail?.numericPostId?.takeIf { it.isNotBlank() }
+                    ?: RezkaService.extractNumericId(item.url).takeIf { it.isNotBlank() }
+                    ?: RezkaService.extractNumericId(item.id)
+
+                val transId = selectedTranslatorId?.takeIf { it.isNotBlank() }
+                    ?: detail?.translators?.firstOrNull()?.id
+                    ?: ""
+
+                val subscription = SeriesSubscriptionEntity(
+                    id = item.id,
+                    title = subTitle,
+                    imageUrl = subImageUrl,
+                    url = subUrl,
+                    type = subType,
+                    numericPostId = numericId,
+                    translatorId = transId,
+                    lastKnownSeason = maxSeason,
+                    lastKnownEpisode = maxEpisode,
+                    lastEpisodeName = lastEpName,
+                    subscribedAt = System.currentTimeMillis(),
+                    lastCheckedAt = System.currentTimeMillis(),
+                    hasUnseenUpdate = false
+                )
+                repository.addSubscription(subscription)
+                onResult?.invoke(true, maxSeason, maxEpisode)
+            }
+        }
+    }
+
+    fun removeSubscription(id: String) {
+        viewModelScope.launch {
+            repository.removeSubscription(id)
+        }
+    }
+
+    fun markSubscriptionSeen(id: String) {
+        viewModelScope.launch {
+            repository.markSubscriptionSeen(id)
+        }
+    }
+
+    fun triggerManualSeriesCheck(context: Context) {
+        viewModelScope.launch {
+            if (_isCheckingSeriesUpdates.value) return@launch
+            _isCheckingSeriesUpdates.value = true
+            try {
+                SeriesUpdateEngine.checkAllSubscriptions(context, repository)
+            } finally {
+                _isCheckingSeriesUpdates.value = false
+            }
         }
     }
 

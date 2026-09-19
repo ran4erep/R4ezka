@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -74,6 +75,10 @@ fun SettingsScreen(
     var isMirrorsExpanded by remember { mutableStateOf(false) }
     var isPlaybackExpanded by remember { mutableStateOf(false) }
     var isTvExpanded by remember { mutableStateOf(false) }
+    var isSubscriptionsExpanded by remember { mutableStateOf(false) }
+
+    val subscriptions by viewModel.subscriptions.collectAsState()
+    val isCheckingSeriesUpdates by viewModel.isCheckingSeriesUpdates.collectAsState()
 
     var tvModeDropdownExpanded by remember { mutableStateOf(false) }
     var gridDropdownExpanded by remember { mutableStateOf(false) }
@@ -90,6 +95,10 @@ fun SettingsScreen(
     val tvArrowRotation by animateFloatAsState(
         targetValue = if (isTvExpanded) 180f else 0f,
         label = "tvArrowRotation"
+    )
+    val subscriptionsArrowRotation by animateFloatAsState(
+        targetValue = if (isSubscriptionsExpanded) 180f else 0f,
+        label = "subscriptionsArrowRotation"
     )
 
     Column(
@@ -1056,6 +1065,245 @@ fun SettingsScreen(
                                     },
                                     colors = MenuDefaults.itemColors(textColor = CinemaTextWhite)
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ==========================================
+        // 4. КАТЕГОРИЯ: УВЕДОМЛЕНИЯ О НОВЫХ СЕРИЯХ
+        // ==========================================
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = CinemaDark),
+            border = BorderStroke(1.dp, if (isSubscriptionsExpanded) CinemaPrimary.copy(alpha = 0.5f) else CinemaMuted.copy(alpha = 0.25f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize()
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // Header аккордеона
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .tvFocusableItem(
+                            onClick = { isSubscriptionsExpanded = !isSubscriptionsExpanded },
+                            shape = RoundedCornerShape(16.dp),
+                            scaleFactor = 1.01f
+                        )
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                        .testTag("settings_accordion_subscriptions"),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(CinemaPrimary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.NotificationsActive,
+                                contentDescription = null,
+                                tint = CinemaPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Column {
+                            Text(
+                                text = "ОТСЛЕЖИВАНИЕ СЕРИЙ",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = CinemaTextWhite,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = if (subscriptions.isEmpty()) "Нет активных подписок" else "Активных сериалов: ${subscriptions.size}",
+                                fontSize = 11.sp,
+                                color = if (subscriptions.isEmpty()) CinemaTextGray else CinemaPrimary,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = CinemaPrimary,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .rotate(subscriptionsArrowRotation)
+                    )
+                }
+
+                // Тело аккордеона
+                AnimatedVisibility(
+                    visible = isSubscriptionsExpanded,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
+                    ) {
+                        HorizontalDivider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Кнопка ручной проверки прямо сейчас
+                        Button(
+                            onClick = {
+                                viewModel.triggerManualSeriesCheck(context)
+                                Toast.makeText(context, "Проверка обновлений запущена...", Toast.LENGTH_SHORT).show()
+                            },
+                            enabled = !isCheckingSeriesUpdates,
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CinemaPrimary,
+                                contentColor = CinemaBlack,
+                                disabledContainerColor = CinemaCard,
+                                disabledContentColor = CinemaTextGray
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .testTag("check_series_updates_button")
+                        ) {
+                            if (isCheckingSeriesUpdates) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = CinemaPrimary,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Проверка...",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Проверить новые серии",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        if (subscriptions.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Список пуст",
+                                    color = CinemaTextGray,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "СПИСОК ОТСЛЕЖИВАЕМЫХ СЕРИАЛОВ",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = CinemaTextGray,
+                                letterSpacing = 1.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                subscriptions.forEach { sub ->
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = CinemaCard,
+                                        border = BorderStroke(1.dp, if (sub.hasUnseenUpdate) CinemaPrimary else Color.White.copy(alpha = 0.08f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.weight(1f),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                AsyncImage(
+                                                    model = ImageRequest.Builder(context)
+                                                        .data(sub.imageUrl)
+                                                        .crossfade(true)
+                                                        .build(),
+                                                    contentDescription = sub.title,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier
+                                                        .size(42.dp, 58.dp)
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                )
+
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = sub.title,
+                                                        color = CinemaTextWhite,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Text(
+                                                        text = "Текущая: Сезон ${sub.lastKnownSeason}, серия ${sub.lastKnownEpisode}",
+                                                        color = CinemaPrimary,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                    if (sub.hasUnseenUpdate) {
+                                                        Text(
+                                                            text = "Есть новые серии!",
+                                                            color = CinemaAmber,
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                    }
+                                                }
+                                            }
+
+                                            IconButton(
+                                                onClick = { viewModel.removeSubscription(sub.id) },
+                                                modifier = Modifier.size(36.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.DeleteOutline,
+                                                    contentDescription = "Отписаться",
+                                                    tint = CinemaTextGray,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
