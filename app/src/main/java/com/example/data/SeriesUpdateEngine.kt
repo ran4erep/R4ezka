@@ -254,9 +254,9 @@ object SeriesUpdateEngine {
     }
 
     /**
-     * Выполняет легковесный сетевой запрос к странице сериала и сканирует последние серии.
+     * Выполняет легковесный сетевой запрос к странице сериала или фильма и сканирует последние серии.
      */
-    suspend fun fetchSeriesLatestEpisode(url: String): SeriesScanResult = withContext(Dispatchers.IO) {
+    suspend fun fetchSeriesLatestEpisode(url: String, isMovie: Boolean = false): SeriesScanResult = withContext(Dispatchers.IO) {
         val cleanUrl = url.trim()
         if (cleanUrl.isEmpty()) {
             return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "Пустой URL")
@@ -292,7 +292,8 @@ object SeriesUpdateEngine {
                     return@withContext parseRes
                 }
 
-                if (isItemReleasedFromHtml(html)) {
+                // Только для ФИЛЬМОВ проверяем статус выхода
+                if (isMovie && isItemReleasedFromHtml(html)) {
                     return@withContext SeriesScanResult(
                         latestSeason = 1,
                         latestEpisode = 1,
@@ -392,13 +393,13 @@ object SeriesUpdateEngine {
         for (sub in subscriptions) {
             try {
                 semaphore.withPermit {
-                    // Точечный быстрый AJAX запрос (1-2 КБ) для сериалов. Для фильмов и невышедших анонсов сразу запрашиваем HTML.
-                    val isMovieOrUnreleased = sub.type.equals("MOVIE", ignoreCase = true) || sub.lastKnownSeason == 0
-                    val scanResult = if (!isMovieOrUnreleased && sub.numericPostId.isNotBlank()) {
+                    // Точечный быстрый AJAX запрос (1-2 КБ) для сериалов. Для фильмов сразу запрашиваем HTML.
+                    val isMovie = sub.type.equals("MOVIE", ignoreCase = true)
+                    val scanResult = if (!isMovie && sub.numericPostId.isNotBlank()) {
                         val ajaxRes = fetchSeriesLatestEpisodeAjax(sub.numericPostId, sub.translatorId)
-                        if (ajaxRes.isSuccess) ajaxRes else fetchSeriesLatestEpisode(sub.url)
+                        if (ajaxRes.isSuccess) ajaxRes else fetchSeriesLatestEpisode(sub.url, isMovie = false)
                     } else {
-                        fetchSeriesLatestEpisode(sub.url)
+                        fetchSeriesLatestEpisode(sub.url, isMovie = isMovie)
                     }
                     val now = System.currentTimeMillis()
 
@@ -511,7 +512,7 @@ object SeriesUpdateEngine {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val isMovieRelease = subscription.lastKnownSeason == 0 || subscription.type.equals("MOVIE", ignoreCase = true)
+        val isMovieRelease = subscription.type.equals("MOVIE", ignoreCase = true) || episodeName.equals("Фильм вышел", ignoreCase = true)
         val title = if (isMovieRelease) {
             "Фильм вышел: ${subscription.title}"
         } else {
