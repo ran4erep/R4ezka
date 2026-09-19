@@ -117,7 +117,7 @@ object SeriesUpdateScheduler {
     fun scheduleDelayedCheck(context: Context, delaySeconds: Long = 10) {
         Log.i("SeriesUpdateScheduler", "Планирование точной тестовой проверки через $delaySeconds секунд...")
 
-        // 1. Прямой точный будильник AlarmManager (срабатывает в Doze Mode / при закрытом приложении)
+        // 1. Точный будильник setAlarmClock (срабатывает в Doze Mode и НЕ лимитируется 9-минутным квотированием OS)
         try {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
             val intent = Intent(context, SeriesUpdateAlarmReceiver::class.java).apply {
@@ -132,12 +132,15 @@ object SeriesUpdateScheduler {
 
             val triggerAtMs = System.currentTimeMillis() + (delaySeconds * 1000L)
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerAtMs, pendingIntent)
+                alarmManager?.setAlarmClock(alarmClockInfo, pendingIntent)
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 alarmManager?.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pendingIntent)
             } else {
                 alarmManager?.setExact(AlarmManager.RTC_WAKEUP, triggerAtMs, pendingIntent)
             }
-            Log.i("SeriesUpdateScheduler", "Будильник AlarmManager успешно взведён на $triggerAtMs (через $delaySeconds сек)")
+            Log.i("SeriesUpdateScheduler", "Будильник setAlarmClock успешно взведён на $triggerAtMs (через $delaySeconds сек)")
         } catch (e: Exception) {
             Log.e("SeriesUpdateScheduler", "Ошибка установки точного будильника AlarmManager: ${e.message}", e)
         }
