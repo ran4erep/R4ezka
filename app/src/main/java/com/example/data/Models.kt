@@ -190,6 +190,25 @@ data class WatchHistoryEntity(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+@Entity(tableName = "series_subscriptions")
+data class SeriesSubscriptionEntity(
+    @PrimaryKey val id: String, // itemId сериала
+    val title: String,
+    val imageUrl: String,
+    val url: String,
+    val type: String,
+    val numericPostId: String = "",
+    val translatorId: String = "",
+    val lastKnownSeason: Int,
+    val lastKnownEpisode: Int,
+    val lastEpisodeName: String,
+    val subscribedAt: Long = System.currentTimeMillis(),
+    val lastCheckedAt: Long = 0L,
+    val hasUnseenUpdate: Boolean = false,
+    val lastNotifiedSeason: Int = 0,
+    val lastNotifiedEpisode: Int = 0
+) : Serializable
+
 data class AggregatedHistoryItem(
     val itemId: String,
     val title: String,

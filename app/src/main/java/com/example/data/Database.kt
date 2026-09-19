@@ -57,6 +57,39 @@ interface WatchHistoryDao {
     suspend fun getAllHistoryList(): List<WatchHistoryEntity>
 }
 
+@Dao
+interface SeriesSubscriptionDao {
+    @Query("SELECT * FROM series_subscriptions ORDER BY subscribedAt DESC")
+    fun getAllSubscriptions(): Flow<List<SeriesSubscriptionEntity>>
+
+    @Query("SELECT * FROM series_subscriptions")
+    suspend fun getAllSubscriptionsList(): List<SeriesSubscriptionEntity>
+
+    @Query("SELECT * FROM series_subscriptions WHERE id = :id LIMIT 1")
+    suspend fun getSubscriptionById(id: String): SeriesSubscriptionEntity?
+
+    @Query("SELECT EXISTS(SELECT 1 FROM series_subscriptions WHERE id = :id LIMIT 1)")
+    suspend fun isSubscribed(id: String): Boolean
+
+    @Query("SELECT EXISTS(SELECT 1 FROM series_subscriptions WHERE id = :id LIMIT 1)")
+    fun isSubscribedFlow(id: String): Flow<Boolean>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSubscription(subscription: SeriesSubscriptionEntity)
+
+    @Query("DELETE FROM series_subscriptions WHERE id = :id")
+    suspend fun deleteSubscriptionById(id: String)
+
+    @Query("UPDATE series_subscriptions SET lastKnownSeason = :season, lastKnownEpisode = :episode, lastEpisodeName = :episodeName, lastCheckedAt = :checkedAt, hasUnseenUpdate = :hasUpdate WHERE id = :id")
+    suspend fun updateEpisodeProgress(id: String, season: Int, episode: Int, episodeName: String, checkedAt: Long, hasUpdate: Boolean)
+
+    @Query("UPDATE series_subscriptions SET lastCheckedAt = :checkedAt WHERE id = :id")
+    suspend fun updateCheckedTime(id: String, checkedAt: Long)
+
+    @Query("UPDATE series_subscriptions SET hasUnseenUpdate = 0 WHERE id = :id")
+    suspend fun markSeen(id: String)
+}
+
 val MIGRATION_3_4 = object : Migration(3, 4) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE watch_history ADD COLUMN episodeIndex INTEGER NOT NULL DEFAULT 0")
@@ -64,10 +97,40 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
     }
 }
 
-@Database(entities = [FavoriteEntity::class, WatchHistoryEntity::class], version = 4, exportSchema = false)
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS `series_subscriptions` (
+                `id` TEXT NOT NULL PRIMARY KEY,
+                `title` TEXT NOT NULL,
+                `imageUrl` TEXT NOT NULL,
+                `url` TEXT NOT NULL,
+                `type` TEXT NOT NULL,
+                `lastKnownSeason` INTEGER NOT NULL,
+                `lastKnownEpisode` INTEGER NOT NULL,
+                `lastEpisodeName` TEXT NOT NULL,
+                `subscribedAt` INTEGER NOT NULL,
+                `lastCheckedAt` INTEGER NOT NULL,
+                `hasUnseenUpdate` INTEGER NOT NULL,
+                `lastNotifiedSeason` INTEGER NOT NULL,
+                `lastNotifiedEpisode` INTEGER NOT NULL
+            )
+        """.trimIndent())
+    }
+}
+
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE series_subscriptions ADD COLUMN numericPostId TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE series_subscriptions ADD COLUMN translatorId TEXT NOT NULL DEFAULT ''")
+    }
+}
+
+@Database(entities = [FavoriteEntity::class, WatchHistoryEntity::class, SeriesSubscriptionEntity::class], version = 6, exportSchema = false)
 abstract class RezkaDatabase : RoomDatabase() {
     abstract fun favoriteDao(): FavoriteDao
     abstract fun watchHistoryDao(): WatchHistoryDao
+    abstract fun seriesSubscriptionDao(): SeriesSubscriptionDao
 
     companion object {
         @Volatile
@@ -80,7 +143,7 @@ abstract class RezkaDatabase : RoomDatabase() {
                     RezkaDatabase::class.java,
                     "rezka_database"
                 )
-                    .addMigrations(MIGRATION_3_4)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
                 INSTANCE = instance
@@ -93,6 +156,23 @@ abstract class RezkaDatabase : RoomDatabase() {
 class RezkaRepository(private val db: RezkaDatabase) {
     val favorites: Flow<List<FavoriteEntity>> = db.favoriteDao().getAllFavorites()
     val watchHistory: Flow<List<WatchHistoryEntity>> = db.watchHistoryDao().getAllHistory()
+    val subscriptions: Flow<List<SeriesSubscriptionEntity>> = db.seriesSubscriptionDao().getAllSubscriptions()
+
+    fun isSubscribedFlow(id: String): Flow<Boolean> = db.seriesSubscriptionDao().isSubscribedFlow(id)
+    suspend fun isSubscribed(id: String): Boolean = db.seriesSubscriptionDao().isSubscribed(id)
+    suspend fun getSubscription(id: String): SeriesSubscriptionEntity? = db.seriesSubscriptionDao().getSubscriptionById(id)
+    suspend fun addSubscription(subscription: SeriesSubscriptionEntity) = db.seriesSubscriptionDao().insertSubscription(subscription)
+    suspend fun removeSubscription(id: String) = db.seriesSubscriptionDao().deleteSubscriptionById(id)
+    suspend fun getAllSubscriptionsList(): List<SeriesSubscriptionEntity> = db.seriesSubscriptionDao().getAllSubscriptionsList()
+    suspend fun updateSubscriptionProgress(id: String, season: Int, episode: Int, episodeName: String, checkedAt: Long, hasUpdate: Boolean) {
+        db.seriesSubscriptionDao().updateEpisodeProgress(id, season, episode, episodeName, checkedAt, hasUpdate)
+    }
+    suspend fun updateSubscriptionCheckedTime(id: String, checkedAt: Long) {
+        db.seriesSubscriptionDao().updateCheckedTime(id, checkedAt)
+    }
+    suspend fun markSubscriptionSeen(id: String) {
+        db.seriesSubscriptionDao().markSeen(id)
+    }
 
     suspend fun isFavorite(id: String): Boolean = db.favoriteDao().isFavorite(id)
 

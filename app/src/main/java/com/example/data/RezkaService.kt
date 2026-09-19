@@ -292,7 +292,7 @@ object RezkaService {
 
     val cookieJar = InMemoryCookieJar()
 
-    private val client = OkHttpClient.Builder()
+    val client = OkHttpClient.Builder()
         .dns(SafeDns)
         .cookieJar(cookieJar)
         .addInterceptor { chain ->

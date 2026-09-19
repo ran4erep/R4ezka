@@ -24,8 +24,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -131,6 +138,51 @@ fun DetailScreen(
     val autoNextEpisode by viewModel.autoNextEpisode.collectAsState()
     val commentsState by viewModel.commentsState.collectAsState()
     val isFavorite = favorites.any { it.id == item.id }
+    val isSubscribed by viewModel.isSubscribedFlow(item.id).collectAsState(initial = false)
+    val subscriptions by viewModel.subscriptions.collectAsState()
+    val currentSubscription = remember(subscriptions, item.id) {
+        subscriptions.find { it.id == item.id }
+    }
+
+    var selectedTranslator by remember { mutableStateOf<Translator?>(null) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            val currentDetail = (detailState as? DetailState.Success)?.detail
+            val transId = selectedTranslator?.id ?: currentDetail?.translators?.firstOrNull()?.id
+            viewModel.toggleSubscription(item, currentDetail, transId, false) { isSubNow, _, _ ->
+                if (isSubNow) {
+                    Toast.makeText(context, "Подписка оформлена", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } else {
+            Toast.makeText(context, "Разрешите уведомления", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val onToggleSubscriptionClick: () -> Unit = {
+        val currentDetail = (detailState as? DetailState.Success)?.detail
+        val transId = selectedTranslator?.id ?: currentDetail?.translators?.firstOrNull()?.id
+        if (isSubscribed) {
+            viewModel.toggleSubscription(item, currentDetail, transId, true) { _, _, _ ->
+                Toast.makeText(context, "Подписка отменена", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                viewModel.toggleSubscription(item, currentDetail, transId, false) { isSubNow, _, _ ->
+                    if (isSubNow) {
+                        Toast.makeText(context, "Подписка оформлена", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
 
     val scope = rememberCoroutineScope()
 
@@ -173,7 +225,6 @@ fun DetailScreen(
     var pendingPlayStartPos by remember { mutableStateOf(0L) }
 
     // Active selector states
-    var selectedTranslator by remember { mutableStateOf<Translator?>(null) }
     var selectedSeasonId by remember { mutableStateOf<Int?>(null) }
     var selectedEpisodeId by remember { mutableStateOf<String?>(null) }
     var dynamicSeasons by remember { mutableStateOf<List<Season>>(emptyList()) }
@@ -534,6 +585,8 @@ fun DetailScreen(
                         item = item,
                         isFavorite = isFavorite,
                         onToggleFavorite = { viewModel.toggleFavorite(item, isFavorite) },
+                        isSubscribed = isSubscribed,
+                        onToggleSubscription = onToggleSubscriptionClick,
                         selectedTranslator = selectedTranslator,
                         onSelectTranslator = { trans ->
                             selectedTranslator = trans
@@ -2042,6 +2095,30 @@ fun DetailScreen(
                             tint = CinemaTextWhite,
                             modifier = Modifier.size(20.dp)
                         )
+                    }
+
+                    // Плавающая кнопка Подписка на новые серии (для сериалов)
+                    val isSeries = (detailState as? DetailState.Success)?.detail?.type == RezkaType.SERIES || item.type == RezkaType.SERIES
+                    if (isSeries) {
+                        IconButton(
+                            onClick = onToggleSubscriptionClick,
+                            modifier = Modifier
+                                .size(46.dp)
+                                .background(Color.Black.copy(alpha = 0.65f), CircleShape)
+                                .border(
+                                    1.dp,
+                                    if (isSubscribed) CinemaPrimary.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.15f),
+                                    CircleShape
+                                )
+                                .testTag("series_subscription_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isSubscribed) Icons.Default.NotificationsActive else Icons.Outlined.Notifications,
+                                contentDescription = if (isSubscribed) "Вы подписаны на новые серии" else "Подписаться на новые серии",
+                                tint = if (isSubscribed) CinemaPrimary else CinemaTextWhite,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
 
                     // Плавающая кнопка В избранное (справа)

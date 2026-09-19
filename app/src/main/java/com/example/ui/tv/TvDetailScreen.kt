@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -69,6 +70,8 @@ fun TvDetailContent(
     item: RezkaItem,
     isFavorite: Boolean,
     onToggleFavorite: () -> Unit,
+    isSubscribed: Boolean = false,
+    onToggleSubscription: (() -> Unit)? = null,
     selectedTranslator: Translator?,
     onSelectTranslator: (Translator) -> Unit,
     selectedSeasonId: Int?,
@@ -476,6 +479,38 @@ fun TvDetailContent(
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
                                     )
+                                }
+                            }
+
+                            // Кнопка подписки на серии (для сериалов)
+                            if (detail.type == RezkaType.SERIES && onToggleSubscription != null) {
+                                Surface(
+                                    color = if (isSubscribed) CinemaPrimary.copy(alpha = 0.25f) else CinemaCard,
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSubscribed) CinemaPrimary else CinemaSecondary.copy(alpha = 0.3f)
+                                    ),
+                                    modifier = Modifier
+                                        .tvFocusableItem(
+                                            onClick = onToggleSubscription,
+                                            scaleFactor = 1.05f,
+                                            shape = RoundedCornerShape(6.dp),
+                                            lazyListState = rightScrollState
+                                        )
+                                        .testTag("tv_subscription_button")
+                                ) {
+                                    Box(
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isSubscribed) Icons.Default.NotificationsActive else Icons.Outlined.Notifications,
+                                            contentDescription = "Уведомления о новых сериях",
+                                            tint = if (isSubscribed) CinemaPrimary else CinemaTextWhite,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
                             }
 
