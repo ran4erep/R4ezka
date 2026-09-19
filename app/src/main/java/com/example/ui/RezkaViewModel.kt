@@ -579,6 +579,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (isSubscribed) {
                 repository.removeSubscription(item.id)
+                FirebaseSyncManager.onSubscriptionRemoved(item.id)
                 onResult?.invoke(false, 0, 0)
             } else {
                 var maxSeason = 1
@@ -630,6 +631,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     hasUnseenUpdate = false
                 )
                 repository.addSubscription(subscription)
+                FirebaseSyncManager.onSubscriptionAdded(subscription)
                 onResult?.invoke(true, maxSeason, maxEpisode)
             }
         }
@@ -638,12 +640,23 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     fun removeSubscription(id: String) {
         viewModelScope.launch {
             repository.removeSubscription(id)
+            FirebaseSyncManager.onSubscriptionRemoved(id)
         }
     }
 
     fun markSubscriptionSeen(id: String) {
         viewModelScope.launch {
+            val sub = repository.getSubscription(id)
             repository.markSubscriptionSeen(id)
+            if (sub != null) {
+                FirebaseSyncManager.onSubscriptionProgressUpdated(
+                    id = id,
+                    season = sub.lastKnownSeason,
+                    episode = sub.lastKnownEpisode,
+                    episodeName = sub.lastEpisodeName,
+                    hasUpdate = false
+                )
+            }
         }
     }
 
