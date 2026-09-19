@@ -347,6 +347,13 @@ object SeriesUpdateEngine {
                                 checkedAt = now,
                                 hasUpdate = true
                             )
+                            FirebaseSyncManager.onSubscriptionProgressUpdated(
+                                id = sub.id,
+                                season = scanResult.latestSeason,
+                                episode = scanResult.latestEpisode,
+                                episodeName = scanResult.latestEpisodeName,
+                                hasUpdate = true
+                            )
 
                             val updatedSub = sub.copy(
                                 lastKnownSeason = scanResult.latestSeason,

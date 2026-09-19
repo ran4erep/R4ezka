@@ -419,6 +419,77 @@ object FirebaseSyncManager {
     }
 
     /**
+     * Добавление/обновление подписки на сериал в Firebase RTDB
+     */
+    fun onSubscriptionAdded(entity: SeriesSubscriptionEntity) {
+        val key = _userKey.value ?: return
+        scope.launch {
+            try {
+                val safeId = safeFirebaseKey(entity.id)
+                val json = subscriptionToJson(entity)
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/subscriptions/$safeId.json")
+                    .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                httpClient.newCall(request).execute().close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to sync subscription to Firebase: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Удаление подписки из Firebase RTDB
+     */
+    fun onSubscriptionRemoved(itemId: String) {
+        val key = _userKey.value ?: return
+        scope.launch {
+            try {
+                val safeId = safeFirebaseKey(itemId)
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/subscriptions/$safeId.json")
+                    .delete()
+                    .build()
+                httpClient.newCall(request).execute().close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to remove subscription from Firebase: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Точечное обновление прогресса вышедших серий в облаке
+     */
+    fun onSubscriptionProgressUpdated(
+        id: String,
+        season: Int,
+        episode: Int,
+        episodeName: String,
+        hasUpdate: Boolean
+    ) {
+        val key = _userKey.value ?: return
+        scope.launch {
+            try {
+                val safeId = safeFirebaseKey(id)
+                val patchJson = JSONObject().apply {
+                    put("lastKnownSeason", season)
+                    put("lastKnownEpisode", episode)
+                    put("lastEpisodeName", episodeName)
+                    put("lastCheckedAt", System.currentTimeMillis())
+                    put("hasUnseenUpdate", hasUpdate)
+                }
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/subscriptions/$safeId.json")
+                    .patch(patchJson.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                httpClient.newCall(request).execute().close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to patch subscription progress in Firebase: ${e.message}")
+            }
+        }
+    }
+
+    /**
      * Умное сохранение прогресса просмотра в Firebase с дебаунсингом (не чаще раза в 4 секунды),
      * чтобы плеер не нагружал процессор и сеть лишними сетевыми запросами во время воспроизведения.
      */
@@ -857,6 +928,72 @@ object FirebaseSyncManager {
                 Log.w(TAG, "Failed to sync search history from Firebase: ${e.message}")
             }
 
+            // 5. Синхронизация Подписок на сериалы
+            try {
+                val subReq = Request.Builder().url("$DATABASE_URL/users/$key/subscriptions.json").get().build()
+                val subResp = httpClient.newCall(subReq).execute()
+                val remoteSubs = mutableListOf<SeriesSubscriptionEntity>()
+
+                if (subResp.isSuccessful) {
+                    val subBody = subResp.body?.string()?.trim() ?: ""
+                    if (subBody != "null" && subBody.isNotEmpty()) {
+                        val subJson = JSONObject(subBody)
+                        val it = subJson.keys()
+                        while (it.hasNext()) {
+                            val k = it.next()
+                            val obj = subJson.optJSONObject(k)
+                            if (obj != null) {
+                                remoteSubs.add(jsonToSubscription(obj))
+                            }
+                        }
+                    }
+                }
+
+                val localSubs = repository.getAllSubscriptionsList()
+                val localSubMap = localSubs.associateBy { it.id }
+
+                // Слияние удаленных подписок с локальной базой
+                val subsToInsert = mutableListOf<SeriesSubscriptionEntity>()
+                for (rSub in remoteSubs) {
+                    val lSub = localSubMap[rSub.id]
+                    if (lSub == null) {
+                        subsToInsert.add(rSub)
+                    } else {
+                        val rIsNewer = rSub.lastKnownSeason > lSub.lastKnownSeason ||
+                                (rSub.lastKnownSeason == lSub.lastKnownSeason && rSub.lastKnownEpisode > lSub.lastKnownEpisode)
+                        if (rIsNewer) {
+                            subsToInsert.add(rSub)
+                        }
+                    }
+                }
+                if (subsToInsert.isNotEmpty()) {
+                    repository.insertSubscriptions(subsToInsert)
+                }
+
+                // Дозаливаем локальные подписки, которых еще нет в облаке
+                val remoteSubIds = remoteSubs.map { it.id }.toSet()
+                val subUpdateJson = JSONObject()
+                for (lSub in localSubs) {
+                    if (lSub.id !in remoteSubIds) {
+                        val safeId = safeFirebaseKey(lSub.id)
+                        subUpdateJson.put(safeId, subscriptionToJson(lSub))
+                    }
+                }
+                if (subUpdateJson.length() > 0) {
+                    try {
+                        val patchRequest = Request.Builder()
+                            .url("$DATABASE_URL/users/$key/subscriptions.json")
+                            .patch(subUpdateJson.toString().toRequestBody(JSON_MEDIA_TYPE))
+                            .build()
+                        httpClient.newCall(patchRequest).execute().close()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to patch subscriptions to Firebase: ${e.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to sync subscriptions from Firebase: ${e.message}")
+            }
+
             Log.d(TAG, "Sync complete: ${remoteFavorites.size} favorites, ${remoteHistory.size} history items")
         } catch (e: Exception) {
             Log.e(TAG, "Error during syncAll: ${e.message}", e)
@@ -901,6 +1038,21 @@ object FirebaseSyncManager {
                 onSearchHistoryUpdated(localSearch)
             }
 
+            // Выгружаем подписки в облако
+            val localSubs = repository.getAllSubscriptionsList()
+            if (localSubs.isNotEmpty()) {
+                val subJson = JSONObject()
+                for (sub in localSubs) {
+                    val safeId = safeFirebaseKey(sub.id)
+                    subJson.put(safeId, subscriptionToJson(sub))
+                }
+                val req = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/subscriptions.json")
+                    .patch(subJson.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                httpClient.newCall(req).execute().close()
+            }
+
             // Выгружаем настройки в облако
             onSettingsUpdated()
         } catch (e: Exception) {
@@ -919,6 +1071,51 @@ object FirebaseSyncManager {
             put("type", fav.type)
             put("timestamp", fav.timestamp)
         }
+    }
+
+    fun subscriptionToJson(sub: SeriesSubscriptionEntity): JSONObject {
+        return JSONObject().apply {
+            put("id", sub.id)
+            put("title", sub.title)
+            put("imageUrl", sub.imageUrl)
+            put("url", sub.url)
+            put("type", sub.type)
+            put("numericPostId", sub.numericPostId)
+            put("translatorId", sub.translatorId)
+            put("lastKnownSeason", sub.lastKnownSeason)
+            put("lastKnownEpisode", sub.lastKnownEpisode)
+            put("lastEpisodeName", sub.lastEpisodeName)
+            put("subscribedAt", sub.subscribedAt)
+            put("lastCheckedAt", sub.lastCheckedAt)
+            put("hasUnseenUpdate", sub.hasUnseenUpdate)
+            put("lastNotifiedSeason", sub.lastNotifiedSeason)
+            put("lastNotifiedEpisode", sub.lastNotifiedEpisode)
+        }
+    }
+
+    fun jsonToSubscription(json: JSONObject): SeriesSubscriptionEntity {
+        val rawUrl = json.optString("url", "")
+        val typeStr = json.optString("type", "SERIES")
+        val itemType = try { RezkaType.valueOf(typeStr) } catch (_: Exception) { RezkaType.SERIES }
+        val id = json.optString("id", "")
+        val adjustedUrl = RezkaService.adjustUrlToCurrentMirror(rawUrl, itemType, id)
+        return SeriesSubscriptionEntity(
+            id = id,
+            title = json.optString("title", ""),
+            imageUrl = json.optString("imageUrl", ""),
+            url = adjustedUrl,
+            type = typeStr,
+            numericPostId = json.optString("numericPostId", ""),
+            translatorId = json.optString("translatorId", ""),
+            lastKnownSeason = json.optInt("lastKnownSeason", 1),
+            lastKnownEpisode = json.optInt("lastKnownEpisode", 1),
+            lastEpisodeName = json.optString("lastEpisodeName", ""),
+            subscribedAt = json.optLong("subscribedAt", System.currentTimeMillis()),
+            lastCheckedAt = json.optLong("lastCheckedAt", System.currentTimeMillis()),
+            hasUnseenUpdate = json.optBoolean("hasUnseenUpdate", false),
+            lastNotifiedSeason = json.optInt("lastNotifiedSeason", 0),
+            lastNotifiedEpisode = json.optInt("lastNotifiedEpisode", 0)
+        )
     }
 
     private fun jsonToFavorite(json: JSONObject): FavoriteEntity {

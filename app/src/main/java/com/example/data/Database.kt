@@ -77,6 +77,9 @@ interface SeriesSubscriptionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSubscription(subscription: SeriesSubscriptionEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSubscriptions(subscriptions: List<SeriesSubscriptionEntity>)
+
     @Query("DELETE FROM series_subscriptions WHERE id = :id")
     suspend fun deleteSubscriptionById(id: String)
 
@@ -162,6 +165,7 @@ class RezkaRepository(private val db: RezkaDatabase) {
     suspend fun isSubscribed(id: String): Boolean = db.seriesSubscriptionDao().isSubscribed(id)
     suspend fun getSubscription(id: String): SeriesSubscriptionEntity? = db.seriesSubscriptionDao().getSubscriptionById(id)
     suspend fun addSubscription(subscription: SeriesSubscriptionEntity) = db.seriesSubscriptionDao().insertSubscription(subscription)
+    suspend fun insertSubscriptions(subscriptions: List<SeriesSubscriptionEntity>) = db.seriesSubscriptionDao().insertSubscriptions(subscriptions)
     suspend fun removeSubscription(id: String) = db.seriesSubscriptionDao().deleteSubscriptionById(id)
     suspend fun getAllSubscriptionsList(): List<SeriesSubscriptionEntity> = db.seriesSubscriptionDao().getAllSubscriptionsList()
     suspend fun updateSubscriptionProgress(id: String, season: Int, episode: Int, episodeName: String, checkedAt: Long, hasUpdate: Boolean) {

@@ -31,18 +31,20 @@ object SeriesUpdateScheduler {
     private const val UNIQUE_ONE_TIME_WORK_NAME = "rezka_series_manual_check"
 
     /**
-     * Планирует периодическую энергоэффективную проверку новых серий через WorkManager.
-     * Проверка срабатывает только при наличии сети и не при критически низком заряде батареи.
+     * Планирует периодическую проверку новых серий через WorkManager.
+     * Интервал проверки: 1 час (с flex-интервалом 15 минут).
+     * Проверка срабатывает при наличии сети независимо от уровня заряда батареи.
      */
-    fun schedulePeriodicCheck(context: Context, intervalHours: Long = 2) {
+    fun schedulePeriodicCheck(context: Context, intervalHours: Long = 1) {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
-            .setRequiresBatteryNotLow(true)
             .build()
 
         val periodicRequest = PeriodicWorkRequestBuilder<SeriesUpdateWorker>(
             intervalHours.coerceAtLeast(1),
-            TimeUnit.HOURS
+            TimeUnit.HOURS,
+            15,
+            TimeUnit.MINUTES
         )
             .setConstraints(constraints)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
@@ -50,7 +52,7 @@ object SeriesUpdateScheduler {
 
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             UNIQUE_PERIODIC_WORK_NAME,
-            ExistingPeriodicWorkPolicy.KEEP,
+            ExistingPeriodicWorkPolicy.UPDATE,
             periodicRequest
         )
     }
