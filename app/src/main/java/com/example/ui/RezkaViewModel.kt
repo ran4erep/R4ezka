@@ -12,6 +12,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed interface CatalogState {
     object Loading : CatalogState
@@ -681,6 +682,61 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 SeriesUpdateEngine.checkAllSubscriptions(context, repository)
             } finally {
                 _isCheckingSeriesUpdates.value = false
+            }
+        }
+    }
+
+    /**
+     * Искусственно понижает номер последней серии на -1 в БД для тестирования работы
+     * автоматической и ручной проверки новых серий. Не отправляет уведомление сразу,
+     * а подготавливает запись для обнаружения обновления при следующей штатной проверке.
+     */
+    fun simulatePreviousEpisodeForTest(id: String, onResult: ((String) -> Unit)? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val sub = repository.getSubscription(id) ?: return@launch
+            var targetSeason = sub.lastKnownSeason
+            var targetEpisode = sub.lastKnownEpisode
+
+            if (targetEpisode > 1) {
+                targetEpisode -= 1
+            } else if (targetEpisode == 1) {
+                if (targetSeason > 1) {
+                    targetSeason -= 1
+                    targetEpisode = 1
+                } else {
+                    targetEpisode = 0
+                }
+            } else if (targetSeason > 0) {
+                targetSeason = 0
+                targetEpisode = 0
+            }
+
+            val epName = if (targetSeason == 0 && targetEpisode == 0) "Ожидает выхода" else "Серия $targetEpisode"
+            val now = System.currentTimeMillis()
+
+            repository.updateSubscriptionProgress(
+                id = sub.id,
+                season = targetSeason,
+                episode = targetEpisode,
+                episodeName = epName,
+                checkedAt = now,
+                hasUpdate = false
+            )
+            FirebaseSyncManager.onSubscriptionProgressUpdated(
+                id = sub.id,
+                season = targetSeason,
+                episode = targetEpisode,
+                episodeName = epName,
+                hasUpdate = false
+            )
+
+            val msg = if (targetSeason == 0 && targetEpisode == 0) {
+                "Статус сериала '${sub.title}' изменён на 'Ожидается' (0/0)"
+            } else {
+                "'${sub.title}': установлена серия S${targetSeason}E${targetEpisode}. Запустите проверку для теста!"
+            }
+            withContext(Dispatchers.Main) {
+                onResult?.invoke(msg)
             }
         }
     }
