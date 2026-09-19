@@ -81,15 +81,21 @@ object SeriesUpdateEngine {
     private val HTML_TAG_STRIP_REGEX = Regex("""<[^>]+>""")
 
     private val MOVIE_RELEASED_REGEX = Regex(
-        """class=["'][^"']*?b-translator__item[^"']*?["']|sof\.tv\.initCDN(?:Movies|Series)Events|initCDN(?:Movies|Series)Events|data-translator_id=["']?\d+|"translator_id"\s*:\s*"?\d+"""",
+        """class=["'][^"']*?b-translator__item[^"']*?["']|sof\.tv\.initCDN(?:Movies|Series)Events|initCDN(?:Movies|Series)Events|data-translator_id=["']?\d+|"translator_id"\s*:\s*"?\d+"|id=["']?cdn-player["']?|id=["']?player["']?|class=["'][^"']*?b-post__video[^"']*?["']|class=["'][^"']*?b-player[^"']*?["']|data-cdn_url=["']?[^"'\s>]+""",
         RegexOption.IGNORE_CASE
     )
 
     fun isItemReleasedFromHtml(html: String): Boolean {
         if (html.isBlank()) return false
-        return MOVIE_RELEASED_REGEX.containsMatchIn(html) ||
+        val isUnreleasedText = html.contains("Скоро на сайте", ignoreCase = true) ||
+                html.contains("Фильм еще не вышел", ignoreCase = true) ||
+                html.contains("Сериал еще не вышел", ignoreCase = true)
+
+        val hasPlayerOrTranslators = MOVIE_RELEASED_REGEX.containsMatchIn(html) ||
                 EPISODE_TAG_REGEX.containsMatchIn(html) ||
                 EPISODE_TAG_ALT_REGEX.containsMatchIn(html)
+
+        return hasPlayerOrTranslators && (!isUnreleasedText || MOVIE_RELEASED_REGEX.containsMatchIn(html))
     }
 
     /**
@@ -286,55 +292,50 @@ object SeriesUpdateEngine {
 
         val baseUrl = RezkaService.currentBaseUrl
         val endpoint = "$baseUrl/ajax/get_cdn_series/"
+        val cleanTransId = translatorId.ifBlank { "0" }
 
-        // Пробуем сначала с переданным translatorId, если не пустой. Иначе пробуем "0"
-        val transIdsToTry = if (translatorId.isNotBlank() && translatorId != "0") {
-            listOf(translatorId, "0")
-        } else {
-            listOf("0")
-        }
+        val formBody = FormBody.Builder()
+            .add("id", cleanPostId)
+            .add("translator_id", cleanTransId)
+            .add("action", "get_episodes")
+            .build()
 
-        for (transId in transIdsToTry) {
-            val formBody = FormBody.Builder()
-                .add("id", cleanPostId)
-                .add("translator_id", transId)
-                .add("action", "get_episodes")
-                .build()
+        val request = Request.Builder()
+            .url(endpoint)
+            .post(formBody)
+            .header("User-Agent", RezkaService.USER_AGENT)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .header("Referer", "$baseUrl/")
+            .header("Origin", baseUrl)
+            .header("Accept", "application/json, text/javascript, */*; q=0.01")
+            .build()
 
-            val request = Request.Builder()
-                .url(endpoint)
-                .post(formBody)
-                .header("User-Agent", RezkaService.USER_AGENT)
-                .header("X-Requested-With", "XMLHttpRequest")
-                .header("Referer", "$baseUrl/")
-                .header("Origin", baseUrl)
-                .header("Accept", "application/json, text/javascript, */*; q=0.01")
-                .build()
-
-            try {
-                RezkaService.client.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) {
-                        val bodyStr = response.body?.string().orEmpty()
-                        if (bodyStr.isNotBlank()) {
-                            val json = JSONObject(bodyStr)
-                            if (json.optBoolean("success", false)) {
-                                val episodesHtml = json.optString("episodes", "")
-                                if (episodesHtml.isNotBlank()) {
-                                    val parsed = parseLatestEpisodeFromHtml(episodesHtml)
-                                    if (parsed.isSuccess) {
-                                        return@withContext parsed
-                                    }
-                                }
-                            }
-                        }
-                    }
+        try {
+            RezkaService.client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "HTTP ${response.code}")
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Сбой AJAX get_episodes для id=$cleanPostId trans=$transId: ${e.message}")
-            }
-        }
+                val bodyStr = response.body?.string().orEmpty()
+                if (bodyStr.isBlank()) {
+                    return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "Пустой AJAX ответ")
+                }
 
-        return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "AJAX episodes не найдены")
+                val json = JSONObject(bodyStr)
+                if (!json.optBoolean("success", false)) {
+                    return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "AJAX success=false")
+                }
+
+                val episodesHtml = json.optString("episodes", "")
+                if (episodesHtml.isBlank()) {
+                    return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "Пустой блок episodes")
+                }
+
+                return@withContext parseLatestEpisodeFromHtml(episodesHtml)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Сбой точечного AJAX запроса для $cleanPostId: ${e.message}")
+            return@withContext SeriesScanResult(0, 0, "", false, errorMessage = e.message)
+        }
     }
 
     /**
@@ -346,12 +347,6 @@ object SeriesUpdateEngine {
         repository: RezkaRepository,
         onUpdateFound: ((SeriesSubscriptionEntity, Int, Int, String) -> Unit)? = null
     ): List<SeriesSubscriptionEntity> = withContext(Dispatchers.IO) {
-        RezkaService.init(context)
-        val notifManager = NotificationManagerCompat.from(context)
-        if (!notifManager.areNotificationsEnabled()) {
-            Log.w(TAG, "ВНИМАНИЕ: Системные уведомления отключены в настройках Android! Включите уведомления в настройках системы.")
-        }
-
         val subscriptions = repository.getAllSubscriptionsList()
         if (subscriptions.isEmpty()) {
             return@withContext emptyList()
@@ -363,34 +358,14 @@ object SeriesUpdateEngine {
         for (sub in subscriptions) {
             try {
                 semaphore.withPermit {
-                    // Точечный быстрый AJAX запрос (1-2 КБ), если numericPostId известен или извлекается из URL. Фолбэк на HTML страницу.
-                    val effectivePostId = if (sub.numericPostId.isNotBlank()) {
-                        sub.numericPostId
-                    } else {
-                        Regex("""/(\d+)-[^/]+\.html""").find(sub.url)?.groupValues?.get(1).orEmpty()
-                    }
-
-                    var scanResult = if (effectivePostId.isNotBlank()) {
-                        val ajaxRes = fetchSeriesLatestEpisodeAjax(effectivePostId, sub.translatorId)
+                    // Точечный быстрый AJAX запрос (1-2 КБ) для сериалов. Для фильмов и невышедших анонсов сразу запрашиваем HTML.
+                    val isMovieOrUnreleased = sub.type.equals("MOVIE", ignoreCase = true) || sub.lastKnownSeason == 0
+                    val scanResult = if (!isMovieOrUnreleased && sub.numericPostId.isNotBlank()) {
+                        val ajaxRes = fetchSeriesLatestEpisodeAjax(sub.numericPostId, sub.translatorId)
                         if (ajaxRes.isSuccess) ajaxRes else fetchSeriesLatestEpisode(sub.url)
                     } else {
                         fetchSeriesLatestEpisode(sub.url)
                     }
-
-                    // Если сканирование не удалось (например, текущее зеркало заблокировано), пробуем запасное зеркало
-                    if (!scanResult.isSuccess && (scanResult.isAntiBot || scanResult.errorMessage?.contains("HTTP") == true || scanResult.errorMessage?.contains("timeout", ignoreCase = true) == true)) {
-                        for (fallbackMirror in RezkaService.PRESET_MIRRORS) {
-                            if (fallbackMirror != RezkaService.currentMirror.value) {
-                                val altUrl = Regex("""^https?://[^/]+""").replace(sub.url, fallbackMirror)
-                                val altResult = fetchSeriesLatestEpisode(altUrl)
-                                if (altResult.isSuccess) {
-                                    scanResult = altResult
-                                    break
-                                }
-                            }
-                        }
-                    }
-
                     val now = System.currentTimeMillis()
 
                     if (scanResult.isSuccess) {
@@ -468,9 +443,6 @@ object SeriesUpdateEngine {
             val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
                 description = descriptionText
                 enableVibration(true)
-                enableLights(true)
-                lightColor = 0xFFFF2D55.toInt()
-                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
                 setShowBadge(true)
             }
             val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
@@ -529,11 +501,7 @@ object SeriesUpdateEngine {
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText("$text\nНажмите чтобы начать просмотр"))
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
-            .setOnlyAlertOnce(false)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
 
@@ -541,15 +509,13 @@ object SeriesUpdateEngine {
         try {
             var largeIconBitmap: Bitmap? = null
             if (!subscription.imageUrl.isNullOrBlank()) {
-                kotlinx.coroutines.withTimeoutOrNull(3500L) {
-                    val imageLoader = coil.Coil.imageLoader(context)
-                    val request = ImageRequest.Builder(context)
-                        .data(subscription.imageUrl)
-                        .allowHardware(false)
-                        .build()
-                    val result = (imageLoader.execute(request) as? SuccessResult)?.drawable
-                    largeIconBitmap = (result as? BitmapDrawable)?.bitmap
-                }
+                val imageLoader = coil.Coil.imageLoader(context)
+                val request = ImageRequest.Builder(context)
+                    .data(subscription.imageUrl)
+                    .allowHardware(false)
+                    .build()
+                val result = (imageLoader.execute(request) as? SuccessResult)?.drawable
+                largeIconBitmap = (result as? BitmapDrawable)?.bitmap
             }
             if (largeIconBitmap == null) {
                 largeIconBitmap = BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher)
@@ -563,20 +529,11 @@ object SeriesUpdateEngine {
 
         try {
             val notificationManager = NotificationManagerCompat.from(context)
-            if (!notificationManager.areNotificationsEnabled()) {
-                Log.w(TAG, "ВНИМАНИЕ! Системные уведомления ОТКЛЮЧЕНЫ в настройках телефона.")
-            }
-            // Отменяем предыдущее уведомление с этим ID, чтобы Android принудительно воспроизвел звук,
-            // вибрацию и показал Heads-Up баннер даже при многократных тестах подряд
-            val notificationId = subscription.id.hashCode()
-            notificationManager.cancel(notificationId)
-            kotlinx.coroutines.delay(50)
-            notificationManager.notify(notificationId, builder.build())
-            Log.i(TAG, "Уведомление успешно доставлено в шторку: $title ($text)")
+            notificationManager.notify(subscription.id.hashCode(), builder.build())
         } catch (e: SecurityException) {
             Log.w(TAG, "Нет разрешения POST_NOTIFICATIONS для отправки уведомления: ${e.message}")
         } catch (e: Exception) {
-            Log.e(TAG, "Не удалось отправить уведомление: ${e.message}", e)
+            Log.w(TAG, "Не удалось отправить уведомление: ${e.message}")
         }
     }
 }

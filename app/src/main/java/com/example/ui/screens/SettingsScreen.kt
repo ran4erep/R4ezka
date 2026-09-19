@@ -1,9 +1,7 @@
 package com.example.ui.screens
 
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -1177,20 +1175,59 @@ fun SettingsScreen(
                         ) {
                             if (isCheckingSeriesUpdates) {
                                 CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
+                                    modifier = Modifier.size(20.dp),
                                     color = CinemaPrimary,
                                     strokeWidth = 2.dp
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Проверка...", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Проверка...",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
                             } else {
                                 Icon(
                                     imageVector = Icons.Default.Refresh,
                                     contentDescription = null,
                                     modifier = Modifier.size(18.dp)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Проверить обновления", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Проверить обновления",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Подсказка для тестирования уведомлений
+                        Surface(
+                            color = CinemaCard.copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, CinemaAmber.copy(alpha = 0.25f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Science,
+                                    contentDescription = null,
+                                    tint = CinemaAmber,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Для теста: нажмите ➖ возле сериала и скройте/закройте приложение. Через 10 сек фоновый WorkManager проверит обнову и пришлёт пуш.",
+                                    fontSize = 11.sp,
+                                    color = CinemaTextGray,
+                                    lineHeight = 15.sp
+                                )
                             }
                         }
 
@@ -1296,7 +1333,7 @@ fun SettingsScreen(
                                                     onClick = {
                                                         viewModel.simulatePreviousEpisodeForTest(sub.id) { message ->
                                                             com.example.data.SeriesUpdateScheduler.scheduleDelayedCheck(context, 10)
-                                                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                                            Toast.makeText(context, "$message\nСверните приложение! Фоновая проверка сработает через 10 секунд.", Toast.LENGTH_LONG).show()
                                                         }
                                                     },
                                                     modifier = Modifier
@@ -1305,7 +1342,7 @@ fun SettingsScreen(
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Default.RemoveCircleOutline,
-                                                        contentDescription = "Серия -1",
+                                                        contentDescription = "Понизить серию на -1 для теста",
                                                         tint = CinemaAmber,
                                                         modifier = Modifier.size(20.dp)
                                                     )

@@ -8,9 +8,8 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Android TV compatibility declarations: touchscreen is optional, leanback supported -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -109,15 +108,22 @@
         </provider>
 
         <receiver
-            android:name=".data.SeriesUpdateReceiver"
+            android:name=".data.SeriesUpdateAlarmReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.action.CHECK_SERIES_UPDATES" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".data.BootReceiver"
             android:enabled="true"
-            android:exported="true"
-            android:directBootAware="true">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-                <action android:name="com.example.ACTION_CHECK_SERIES_UPDATES" />
-                <action android:name="com.example.ACTION_DELAYED_TEST_CHECK" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
     </application>
