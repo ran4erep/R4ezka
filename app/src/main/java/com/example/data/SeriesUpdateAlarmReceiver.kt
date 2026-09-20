@@ -42,6 +42,13 @@ class SeriesUpdateAlarmReceiver : BroadcastReceiver() {
             } catch (e: Exception) {
                 Log.e(TAG, "Ошибка сканирования в AlarmReceiver: ${e.message}", e)
             } finally {
+                // Перепланируем следующий ТОЧНЫЙ будильник ровно через 1 час, обеспечивая непрерывный цикл
+                try {
+                    SeriesUpdateScheduler.scheduleExactAlarm(context, 3600_000L)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Не удалось перезапланировать точный будильник: ${e.message}")
+                }
+
                 wakeLock?.let {
                     if (it.isHeld) {
                         try { it.release() } catch (_: Exception) {}
