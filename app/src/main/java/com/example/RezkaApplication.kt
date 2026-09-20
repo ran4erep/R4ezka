@@ -20,7 +20,6 @@ class RezkaApplication : Application(), ImageLoaderFactory {
         RezkaService.init(this)
         FirebaseSyncManager.init(this, repository)
         com.example.data.SeriesUpdateEngine.createNotificationChannel(this)
-        com.example.data.SeriesUpdateScheduler.schedulePeriodicCheck(this)
     }
 
     /**
