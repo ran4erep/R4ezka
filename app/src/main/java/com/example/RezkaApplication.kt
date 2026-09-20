@@ -10,6 +10,9 @@ import com.example.data.FirebaseSyncManager
 import com.example.data.RezkaDatabase
 import com.example.data.RezkaRepository
 import com.example.data.RezkaService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class RezkaApplication : Application(), ImageLoaderFactory {
     val database by lazy { RezkaDatabase.getDatabase(this) }
@@ -20,6 +23,11 @@ class RezkaApplication : Application(), ImageLoaderFactory {
         RezkaService.init(this)
         FirebaseSyncManager.init(this, repository)
         com.example.data.SeriesUpdateEngine.createNotificationChannel(this)
+        
+        // Мгновенное создание и инициализация текстового лог-файла проверок сериалов
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            com.example.data.SeriesUpdateLogger.init(this@RezkaApplication)
+        }
     }
 
     /**
