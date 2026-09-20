@@ -37,35 +37,49 @@ object SeriesUpdateScheduler {
     private const val PERIODIC_ALARM_REQ_CODE = 8802
 
     /**
-     * Планирует периодическую проверку новых серий через WorkManager и резервный AlarmManager.
+     * Планирует периодическую проверку новых серий через WorkManager и точный самовозобновляемый AlarmManager.
      * Интервал проверки: 1 час.
-     * Совмещенная схема гарантирует срабатывание на любых прошивка Android (MIUI, OneUI и т.д.).
+     * Использует setExactAndAllowWhileIdle — будильник пробьёт Doze Mode и ограничения ОС,
+     * даже если приложение полностью закрыто и выгружено из недавних задач!
      */
     fun schedulePeriodicCheck(context: Context, intervalHours: Long = 1) {
-        // 1. WorkManager
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
+        val intervalMs = intervalHours.coerceAtLeast(1) * 3600_000L
 
-        val periodicRequest = PeriodicWorkRequestBuilder<SeriesUpdateWorker>(
-            intervalHours.coerceAtLeast(1),
-            TimeUnit.HOURS,
-            15,
-            TimeUnit.MINUTES
-        )
-            .setConstraints(constraints)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
-            .build()
+        // 1. Точный AlarmManager с RTC_WAKEUP (пробивает режим сна Doze Mode)
+        scheduleExactAlarm(context, intervalMs)
 
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-            UNIQUE_PERIODIC_WORK_NAME,
-            ExistingPeriodicWorkPolicy.UPDATE,
-            periodicRequest
-        )
-
-        // 2. Резервный AlarmManager для обхода жестких фоновых ограничений вендоров
+        // 2. Вторичный фоллбэк через WorkManager
         try {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+
+            val periodicRequest = PeriodicWorkRequestBuilder<SeriesUpdateWorker>(
+                intervalHours.coerceAtLeast(1),
+                TimeUnit.HOURS,
+                15,
+                TimeUnit.MINUTES
+            )
+                .setConstraints(constraints)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                UNIQUE_PERIODIC_WORK_NAME,
+                ExistingPeriodicWorkPolicy.UPDATE,
+                periodicRequest
+            )
+        } catch (e: Exception) {
+            Log.w("SeriesUpdateScheduler", "Ошибка планирования WorkManager: ${e.message}")
+        }
+    }
+
+    /**
+     * Взводит точный будильник на указанную задержку (по умолчанию 1 час) с автоматическим пробуждением.
+     */
+    fun scheduleExactAlarm(context: Context, delayMs: Long = 3600_000L) {
+        try {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
             val intent = Intent(context, SeriesUpdateAlarmReceiver::class.java).apply {
                 action = SeriesUpdateAlarmReceiver.ACTION_CHECK_UPDATES
             }
@@ -76,17 +90,16 @@ object SeriesUpdateScheduler {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            val intervalMs = intervalHours.coerceAtLeast(1) * 3600_000L
-            val triggerAtMs = System.currentTimeMillis() + intervalMs
+            val triggerAtMs = System.currentTimeMillis() + delayMs
 
-            alarmManager?.setInexactRepeating(
-                AlarmManager.RTC_WAKEUP,
-                triggerAtMs,
-                intervalMs,
-                pendingIntent
-            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pendingIntent)
+            } else {
+                alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMs, pendingIntent)
+            }
+            Log.i("SeriesUpdateScheduler", "✅ Точный будильник взведён на $triggerAtMs (через ${delayMs / 1000} сек)")
         } catch (e: Exception) {
-            Log.w("SeriesUpdateScheduler", "Не удалось запланировать резервный AlarmManager: ${e.message}")
+            Log.e("SeriesUpdateScheduler", "Ошибка установки точного будильника AlarmManager: ${e.message}", e)
         }
     }
 
