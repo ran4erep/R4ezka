@@ -317,7 +317,11 @@ object SeriesUpdateEngine {
         onUpdateFound: ((SeriesSubscriptionEntity, Int, Int, String) -> Unit)? = null
     ): List<SeriesSubscriptionEntity> = withContext(Dispatchers.IO) {
         val subscriptions = repository.getAllSubscriptionsList()
+        SeriesUpdateLogger.logCheckStarted(context, subscriptions.size)
+
         if (subscriptions.isEmpty()) {
+            SeriesUpdateLogger.appendLog(context, "ℹ️ Подписок для проверки пока нет в базе данных.")
+            SeriesUpdateLogger.logCheckFinished(context, 0)
             return@withContext emptyList()
         }
 
@@ -383,13 +387,77 @@ object SeriesUpdateEngine {
                             1,
                             epName
                         )
+
+                        SeriesUpdateLogger.logItemChecked(
+                            context = context,
+                            title = sub.title,
+                            type = sub.type,
+                            translatorId = sub.translatorId,
+                            currentSeason = sub.lastKnownSeason,
+                            currentEpisode = sub.lastKnownEpisode,
+                            lastEpName = sub.lastEpisodeName,
+                            expectedSeason = 1,
+                            expectedEpisode = 1,
+                            foundSeason = 1,
+                            foundEpisode = 1,
+                            foundEpName = epName,
+                            isNewFound = true
+                        )
                     } else if (movieScan.isSuccess) {
                         repository.updateSubscriptionCheckedTime(sub.id, now)
+                        SeriesUpdateLogger.logItemChecked(
+                            context = context,
+                            title = sub.title,
+                            type = sub.type,
+                            translatorId = sub.translatorId,
+                            currentSeason = sub.lastKnownSeason,
+                            currentEpisode = sub.lastKnownEpisode,
+                            lastEpName = sub.lastEpisodeName,
+                            expectedSeason = 1,
+                            expectedEpisode = 1,
+                            foundSeason = 0,
+                            foundEpisode = 0,
+                            foundEpName = "В ожидании релиза",
+                            isNewFound = false
+                        )
+                    } else {
+                        SeriesUpdateLogger.logItemChecked(
+                            context = context,
+                            title = sub.title,
+                            type = sub.type,
+                            translatorId = sub.translatorId,
+                            currentSeason = sub.lastKnownSeason,
+                            currentEpisode = sub.lastKnownEpisode,
+                            lastEpName = sub.lastEpisodeName,
+                            expectedSeason = 1,
+                            expectedEpisode = 1,
+                            foundSeason = 0,
+                            foundEpisode = 0,
+                            foundEpName = "",
+                            isNewFound = false,
+                            errorMessage = movieScan.errorMessage ?: "Сбой сетевого запроса"
+                        )
                     }
                     delay(250)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Ошибка проверки фильма '${sub.title}': ${e.message}")
+                SeriesUpdateLogger.logItemChecked(
+                    context = context,
+                    title = sub.title,
+                    type = sub.type,
+                    translatorId = sub.translatorId,
+                    currentSeason = sub.lastKnownSeason,
+                    currentEpisode = sub.lastKnownEpisode,
+                    lastEpName = sub.lastEpisodeName,
+                    expectedSeason = 1,
+                    expectedEpisode = 1,
+                    foundSeason = 0,
+                    foundEpisode = 0,
+                    foundEpName = "",
+                    isNewFound = false,
+                    errorMessage = e.message ?: "Исключение"
+                )
             }
         }
 
@@ -404,6 +472,9 @@ object SeriesUpdateEngine {
                         fetchSeriesLatestEpisode(sub.url)
                     }
                     val now = System.currentTimeMillis()
+
+                    val expSeason = if (sub.lastKnownSeason == 0 && sub.lastKnownEpisode == 0) 1 else sub.lastKnownSeason
+                    val expEpisode = if (sub.lastKnownSeason == 0 && sub.lastKnownEpisode == 0) 1 else sub.lastKnownEpisode + 1
 
                     if (scanResult.isSuccess) {
                         val isNewSeason = scanResult.latestSeason > sub.lastKnownSeason
@@ -454,18 +525,83 @@ object SeriesUpdateEngine {
                                 scanResult.latestEpisode,
                                 scanResult.latestEpisodeName
                             )
+
+                            SeriesUpdateLogger.logItemChecked(
+                                context = context,
+                                title = sub.title,
+                                type = sub.type,
+                                translatorId = sub.translatorId,
+                                currentSeason = sub.lastKnownSeason,
+                                currentEpisode = sub.lastKnownEpisode,
+                                lastEpName = sub.lastEpisodeName,
+                                expectedSeason = expSeason,
+                                expectedEpisode = expEpisode,
+                                foundSeason = scanResult.latestSeason,
+                                foundEpisode = scanResult.latestEpisode,
+                                foundEpName = scanResult.latestEpisodeName,
+                                isNewFound = true
+                            )
                         } else {
                             // Серии те же самые, просто обновляем timestamp проверки
                             repository.updateSubscriptionCheckedTime(sub.id, now)
+                            SeriesUpdateLogger.logItemChecked(
+                                context = context,
+                                title = sub.title,
+                                type = sub.type,
+                                translatorId = sub.translatorId,
+                                currentSeason = sub.lastKnownSeason,
+                                currentEpisode = sub.lastKnownEpisode,
+                                lastEpName = sub.lastEpisodeName,
+                                expectedSeason = expSeason,
+                                expectedEpisode = expEpisode,
+                                foundSeason = scanResult.latestSeason,
+                                foundEpisode = scanResult.latestEpisode,
+                                foundEpName = scanResult.latestEpisodeName,
+                                isNewFound = false
+                            )
                         }
+                    } else {
+                        SeriesUpdateLogger.logItemChecked(
+                            context = context,
+                            title = sub.title,
+                            type = sub.type,
+                            translatorId = sub.translatorId,
+                            currentSeason = sub.lastKnownSeason,
+                            currentEpisode = sub.lastKnownEpisode,
+                            lastEpName = sub.lastEpisodeName,
+                            expectedSeason = expSeason,
+                            expectedEpisode = expEpisode,
+                            foundSeason = 0,
+                            foundEpisode = 0,
+                            foundEpName = "",
+                            isNewFound = false,
+                            errorMessage = scanResult.errorMessage ?: "Не удалось спарсить данные"
+                        )
                     }
                     delay(250) // Микропауза между запросами
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Ошибка проверки сериала '${sub.title}': ${e.message}")
+                SeriesUpdateLogger.logItemChecked(
+                    context = context,
+                    title = sub.title,
+                    type = sub.type,
+                    translatorId = sub.translatorId,
+                    currentSeason = sub.lastKnownSeason,
+                    currentEpisode = sub.lastKnownEpisode,
+                    lastEpName = sub.lastEpisodeName,
+                    expectedSeason = if (sub.lastKnownSeason == 0) 1 else sub.lastKnownSeason,
+                    expectedEpisode = if (sub.lastKnownEpisode == 0) 1 else sub.lastKnownEpisode + 1,
+                    foundSeason = 0,
+                    foundEpisode = 0,
+                    foundEpName = "",
+                    isNewFound = false,
+                    errorMessage = e.message ?: "Исключение"
+                )
             }
         }
 
+        SeriesUpdateLogger.logCheckFinished(context, updatedList.size)
         return@withContext updatedList
     }
 

@@ -687,12 +687,45 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val _logContent = MutableStateFlow("")
+    val logContent: StateFlow<String> = _logContent.asStateFlow()
+
+    fun refreshLogContent(context: Context) {
+        viewModelScope.launch {
+            _logContent.value = SeriesUpdateLogger.readLogContent(context)
+        }
+    }
+
+    fun clearLog(context: Context, onResult: ((String) -> Unit)? = null) {
+        viewModelScope.launch {
+            SeriesUpdateLogger.clearLog(context)
+            _logContent.value = SeriesUpdateLogger.readLogContent(context)
+            onResult?.invoke("Журнал проверок очищен")
+        }
+    }
+
+    fun exportLogToDownloads(context: Context, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val res = SeriesUpdateLogger.exportToPublicDownloads(context)
+            onResult(res)
+        }
+    }
+
+    fun shareLogFile(context: Context) {
+        SeriesUpdateLogger.shareLogFile(context)
+    }
+
+    fun getLogFilePath(context: Context): String {
+        return SeriesUpdateLogger.getLogFile(context).absolutePath
+    }
+
     fun triggerManualSeriesCheck(context: Context) {
         viewModelScope.launch {
             if (_isCheckingSeriesUpdates.value) return@launch
             _isCheckingSeriesUpdates.value = true
             try {
                 SeriesUpdateEngine.checkAllSubscriptions(context, repository)
+                refreshLogContent(context)
             } finally {
                 _isCheckingSeriesUpdates.value = false
             }

@@ -77,13 +77,16 @@ fun SettingsScreen(
     var isPlaybackExpanded by remember { mutableStateOf(false) }
     var isTvExpanded by remember { mutableStateOf(false) }
     var isSubscriptionsExpanded by remember { mutableStateOf(false) }
+    var isLogExpanded by remember { mutableStateOf(false) }
 
     val subscriptions by viewModel.subscriptions.collectAsState()
     val isCheckingSeriesUpdates by viewModel.isCheckingSeriesUpdates.collectAsState()
+    val logContent by viewModel.logContent.collectAsState()
 
     var tvModeDropdownExpanded by remember { mutableStateOf(false) }
     var gridDropdownExpanded by remember { mutableStateOf(false) }
     var showCustomGridDialog by remember { mutableStateOf(false) }
+    var showLogViewerDialog by remember { mutableStateOf(false) }
 
     val mirrorArrowRotation by animateFloatAsState(
         targetValue = if (isMirrorsExpanded) 180f else 0f,
@@ -100,6 +103,10 @@ fun SettingsScreen(
     val subscriptionsArrowRotation by animateFloatAsState(
         targetValue = if (isSubscriptionsExpanded) 180f else 0f,
         label = "subscriptionsArrowRotation"
+    )
+    val logArrowRotation by animateFloatAsState(
+        targetValue = if (isLogExpanded) 180f else 0f,
+        label = "logArrowRotation"
     )
 
     Column(
@@ -1378,6 +1385,179 @@ fun SettingsScreen(
             }
         }
 
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ==========================================
+        // 5. КАТЕГОРИЯ: ЖУРНАЛ ПРОВЕРОК (ЛОГ-ФАЙЛ)
+        // ==========================================
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = CinemaDark),
+            border = BorderStroke(1.dp, CinemaMuted.copy(alpha = 0.25f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize()
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // Header аккордеона
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .tvFocusableItem(
+                            onClick = {
+                                isLogExpanded = !isLogExpanded
+                                if (isLogExpanded) {
+                                    viewModel.refreshLogContent(context)
+                                }
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            scaleFactor = 1.01f
+                        )
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                        .testTag("settings_accordion_log"),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(CinemaMuted.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Description,
+                                contentDescription = null,
+                                tint = CinemaPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Column {
+                            Text(
+                                text = "ЖУРНАЛ ПРОВЕРОК (ЛОГ)",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = CinemaTextWhite,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = "Текстовый лог фоновых запросов",
+                                fontSize = 11.sp,
+                                color = CinemaTextGray,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = CinemaTextGray,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .rotate(logArrowRotation)
+                    )
+                }
+
+                // Тело аккордеона
+                AnimatedVisibility(
+                    visible = isLogExpanded,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
+                    ) {
+                        HorizontalDivider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        val logFilePath = remember(context) { viewModel.getLogFilePath(context) }
+
+                        Text(
+                            text = "ФАЙЛ ЛОГА",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = CinemaTextGray,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = logFilePath,
+                            fontSize = 11.sp,
+                            color = CinemaPrimary,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(CinemaCard)
+                                .padding(8.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Ряд кнопок
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    viewModel.refreshLogContent(context)
+                                    showLogViewerDialog = true
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary, contentColor = CinemaBlack),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(40.dp)
+                            ) {
+                                Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Открыть", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            Button(
+                                onClick = {
+                                    viewModel.exportLogToDownloads(context) { msg ->
+                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = CinemaCard, contentColor = CinemaTextWhite),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(40.dp)
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp), tint = CinemaPrimary)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Загрузки", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            Button(
+                                onClick = { viewModel.shareLogFile(context) },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = CinemaCard, contentColor = CinemaTextWhite),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(40.dp)
+                            ) {
+                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp), tint = CinemaPrimary)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Поделиться", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Диалог точной настройки сетки (до 10x5)
         if (showCustomGridDialog) {
             val initialGrid = RezkaService.parseCardGrid(cardGridMode)
@@ -1390,6 +1570,31 @@ fun SettingsScreen(
                     viewModel.setCardGridMode(newMode)
                     Toast.makeText(context, "Сетка: $newMode", Toast.LENGTH_SHORT).show()
                     showCustomGridDialog = false
+                }
+            )
+        }
+
+        if (showLogViewerDialog) {
+            val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+            LogViewerDialog(
+                logText = logContent,
+                filePath = viewModel.getLogFilePath(context),
+                onDismiss = { showLogViewerDialog = false },
+                onRefresh = { viewModel.refreshLogContent(context) },
+                onCopy = {
+                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(logContent))
+                    Toast.makeText(context, "Текст лога скопирован в буфер", Toast.LENGTH_SHORT).show()
+                },
+                onExport = {
+                    viewModel.exportLogToDownloads(context) { msg ->
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                    }
+                },
+                onShare = { viewModel.shareLogFile(context) },
+                onClear = {
+                    viewModel.clearLog(context) { msg ->
+                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                    }
                 }
             )
         }
@@ -1730,6 +1935,142 @@ private fun CustomGridDialog(
                     color = CinemaTextGray,
                     fontSize = 14.sp
                 )
+            }
+        }
+    )
+}
+
+@Composable
+fun LogViewerDialog(
+    logText: String,
+    filePath: String,
+    onDismiss: () -> Unit,
+    onRefresh: () -> Unit,
+    onCopy: () -> Unit,
+    onExport: () -> Unit,
+    onShare: () -> Unit,
+    onClear: () -> Unit
+) {
+    val logScrollState = rememberScrollState()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CinemaDark,
+        shape = RoundedCornerShape(16.dp),
+        title = {
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Article,
+                        contentDescription = null,
+                        tint = CinemaPrimary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "Журнал проверок серий",
+                        color = CinemaTextWhite,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = filePath,
+                    color = CinemaTextGray,
+                    fontSize = 10.sp,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 200.dp, max = 420.dp)
+            ) {
+                // Текстовая область лога
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(CinemaBlack)
+                        .border(1.dp, CinemaMuted.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                        .verticalScroll(logScrollState)
+                        .dpadScrollable(logScrollState)
+                        .padding(12.dp)
+                ) {
+                    Text(
+                        text = if (logText.isBlank()) "Лог-файл пуст." else logText,
+                        color = CinemaTextWhite.copy(alpha = 0.9f),
+                        fontSize = 11.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        lineHeight = 15.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Ряд кнопок
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onCopy,
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp), tint = CinemaPrimary)
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Копия", fontSize = 10.sp, color = CinemaPrimary)
+                    }
+
+                    OutlinedButton(
+                        onClick = onExport,
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(13.dp), tint = CinemaPrimary)
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Скачать", fontSize = 10.sp, color = CinemaPrimary)
+                    }
+
+                    OutlinedButton(
+                        onClick = onShare,
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(13.dp), tint = CinemaPrimary)
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Поделиться", fontSize = 10.sp, color = CinemaPrimary)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onRefresh, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Обновить", tint = CinemaPrimary, modifier = Modifier.size(20.dp))
+                }
+                IconButton(onClick = onClear, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.DeleteOutline, contentDescription = "Очистить лог", tint = CinemaAmber, modifier = Modifier.size(20.dp))
+                }
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Закрыть", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
             }
         }
     )
