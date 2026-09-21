@@ -15,7 +15,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.core.app.PictureInPictureModeChangedInfo
 import androidx.core.util.Consumer
-import androidx.annotation.OptIn
+import kotlin.OptIn
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationEndReason
@@ -129,6 +129,7 @@ enum class VideoResizeMode(val mode: Int, val title: String, val shortLabel: Str
     FILL(AspectRatioFrameLayout.RESIZE_MODE_FILL, "Растянуть на весь экран", "Растянуть")
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SourceLockedOrientationActivity")
 @Composable
 fun RezkaPlayer(
@@ -360,7 +361,7 @@ fun RezkaPlayer(
                 .setPrioritizeTimeOverSizeThresholds(true)
                 .build()
 
-            val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            val okHttpDataSourceFactory = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(RezkaService.client)
                 .setUserAgent(RezkaService.USER_AGENT)
                 .setDefaultRequestProperties(
                     mapOf(
@@ -369,9 +370,6 @@ fun RezkaPlayer(
                         "Accept" to "*/*"
                     )
                 )
-                .setAllowCrossProtocolRedirects(true)
-                .setConnectTimeoutMs(15_000)
-                .setReadTimeoutMs(15_000)
 
             val trackSelector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context).apply {
                 setParameters(
@@ -381,7 +379,7 @@ fun RezkaPlayer(
                 )
             }
 
-            val mediaSourceFactory = DefaultMediaSourceFactory(httpDataSourceFactory)
+            val mediaSourceFactory = DefaultMediaSourceFactory(okHttpDataSourceFactory)
 
             val audioAttributes = AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
@@ -2441,11 +2439,26 @@ fun RezkaPlayer(
                                 exoPlayer.seekTo(currentPosition)
                             },
                             valueRange = 0f..(totalDuration.toFloat().coerceAtLeast(1f)),
-                            colors = SliderDefaults.colors(
-                                thumbColor = Color.Transparent,
-                                activeTrackColor = CinemaPrimary,
-                                inactiveTrackColor = CinemaSecondary
-                            ),
+                            thumb = {
+                                SliderDefaults.Thumb(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = CinemaPrimary
+                                    )
+                                )
+                            },
+                            track = { sliderState ->
+                                SliderDefaults.Track(
+                                    sliderState = sliderState,
+                                    colors = SliderDefaults.colors(
+                                        activeTrackColor = CinemaPrimary,
+                                        inactiveTrackColor = CinemaSecondary,
+                                        activeTickColor = Color.Transparent,
+                                        inactiveTickColor = Color.Transparent
+                                    ),
+                                    drawStopIndicator = null
+                                )
+                            },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(24.dp)

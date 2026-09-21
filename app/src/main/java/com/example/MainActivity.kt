@@ -594,7 +594,8 @@ fun UpdateBanner(
                                         progress = { if (state.progress >= 0f) state.progress else 0f },
                                         modifier = Modifier.fillMaxWidth(0.9f),
                                         color = CinemaPrimary,
-                                        trackColor = CinemaTextGray.copy(alpha = 0.3f)
+                                        trackColor = CinemaTextGray.copy(alpha = 0.3f),
+                                        drawStopIndicator = {}
                                     )
                                 }
                                 is UpdateState.ReadyToInstall -> {

@@ -3257,6 +3257,7 @@ object RezkaService {
             val formBuilder = FormBody.Builder()
                 .add("id", numericId)
                 .add("action", actionParam)
+                .add("favs", "0")
                 .add("is_cam", "0")
                 .add("is_ads", "0")
                 .add("is_director", "0")
@@ -3270,12 +3271,14 @@ object RezkaService {
                 formBuilder.add("episode", if (episode.isBlank() || episode == "0") "1" else episode)
             }
 
+            val itemReferer = if (isSeries) "$currentBaseUrl/series/$numericId.html" else "$currentBaseUrl/films/$numericId.html"
+
             val request = Request.Builder()
                 .url(urlWithTs)
                 .post(formBuilder.build())
                 .header("User-Agent", USER_AGENT)
                 .header("X-Requested-With", "XMLHttpRequest")
-                .header("Referer", "$currentBaseUrl/")
+                .header("Referer", itemReferer)
                 .header("Origin", currentBaseUrl)
                 .header("Accept", "application/json, text/javascript, */*; q=0.01")
                 .build()
@@ -3322,7 +3325,7 @@ object RezkaService {
                     }
 
                     if (rawUrl.isNotEmpty() && rawUrl != "false" && rawUrl != "null") {
-                        val cleanEncrypted = rawUrl.replace("\\/", "/")
+                        val cleanEncrypted = unescapeRaw(rawUrl).replace("\\/", "/")
                         val decrypted = RezkaDecryptor.decrypt(cleanEncrypted)
                         val streams = RezkaDecryptor.parseStreams(decrypted)
                         val subtitles = if (rawSubtitle.isNotEmpty() && rawSubtitle != "false" && rawSubtitle != "null") {
@@ -3339,6 +3342,8 @@ object RezkaService {
                             return finalStreams
                         }
                     }
+                } else {
+                    Log.w(TAG, "CDN AJAX не сработал [$urlWithTs, id=$numericId]: HTTP ${response.code}")
                 }
             }
         } catch (e: Exception) {
