@@ -209,6 +209,7 @@ fun RezkaPlayer(
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             if (window != null) {
                 val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+                insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
                 insetsController.show(WindowInsetsCompat.Type.systemBars())
                 insetsController.isAppearanceLightStatusBars = false
                 insetsController.isAppearanceLightNavigationBars = false
@@ -691,11 +692,26 @@ fun RezkaPlayer(
                 Log.w("RezkaPlayer", "Player error: code=${error.errorCode}, name=${error.errorCodeName}, msg=${error.message}")
 
                 val activeStream = currentStream
+                val streamUrl = currentPlayingUrl ?: activeStream?.url ?: ""
+
                 // Auto-fallback 1: If HLS manifest failed and direct MP4 exists, try direct MP4
                 if (activeStream != null && !triedDirectMp4 && activeStream.directMp4Url.isNotEmpty() && activeStream.directMp4Url != currentPlayingUrl) {
                     Log.d("RezkaPlayer", "Auto-switching to direct MP4 fallback: ${activeStream.directMp4Url}")
                     triedDirectMp4 = true
-                    playStreamUrl(activeStream.directMp4Url, targetStartPos = exoPlayer.currentPosition)
+                    val nextUrl = activeStream.directMp4Url
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        com.example.data.SeriesUpdateLogger.logPlaybackError(
+                            context = context,
+                            title = title,
+                            subtitle = subtitle,
+                            streamUrl = streamUrl,
+                            errorCodeName = error.errorCodeName,
+                            errorCode = error.errorCode,
+                            errorMessage = error.message ?: "Сбой потока HLS",
+                            fallbackInfo = "Переключение на прямой MP4 файл: $nextUrl"
+                        )
+                    }
+                    playStreamUrl(nextUrl, targetStartPos = exoPlayer.currentPosition)
                     return
                 }
 
@@ -704,6 +720,18 @@ fun RezkaPlayer(
                     val backupUrl = activeStream.backupUrls[backupAttemptIndex]
                     backupAttemptIndex++
                     Log.d("RezkaPlayer", "Auto-switching to backup CDN link: $backupUrl")
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        com.example.data.SeriesUpdateLogger.logPlaybackError(
+                            context = context,
+                            title = title,
+                            subtitle = subtitle,
+                            streamUrl = streamUrl,
+                            errorCodeName = error.errorCodeName,
+                            errorCode = error.errorCode,
+                            errorMessage = error.message ?: "Сбой основного CDN сервера",
+                            fallbackInfo = "Переключение на резервное зеркало CDN: $backupUrl"
+                        )
+                    }
                     playStreamUrl(backupUrl, targetStartPos = exoPlayer.currentPosition)
                     return
                 }
@@ -715,6 +743,18 @@ fun RezkaPlayer(
                     if (nextStream != null) {
                         Log.i("RezkaPlayer", "Auto-switching to next stream quality: ${nextStream.quality}")
                         selectedStreamIndex = nextIndex
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                            com.example.data.SeriesUpdateLogger.logPlaybackError(
+                                context = context,
+                                title = title,
+                                subtitle = subtitle,
+                                streamUrl = streamUrl,
+                                errorCodeName = error.errorCodeName,
+                                errorCode = error.errorCode,
+                                errorMessage = error.message ?: "Сбой качества потока",
+                                fallbackInfo = "Переключение на следующее качество: ${nextStream.quality}"
+                            )
+                        }
                         playStreamUrl(nextStream.url, targetStartPos = exoPlayer.currentPosition)
                         return
                     }
@@ -729,6 +769,19 @@ fun RezkaPlayer(
                     else -> error.localizedMessage ?: "Сбой воспроизведения видео"
                 }
                 playerErrorMessage = errorDesc
+
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                    com.example.data.SeriesUpdateLogger.logPlaybackError(
+                        context = context,
+                        title = title,
+                        subtitle = subtitle,
+                        streamUrl = streamUrl,
+                        errorCodeName = error.errorCodeName,
+                        errorCode = error.errorCode,
+                        errorMessage = "$errorDesc (${error.message.orEmpty()})",
+                        fallbackInfo = "Все авто-фоллбэки исчерпаны. Ошибка показана в интерфейсе плеера."
+                    )
+                }
             }
         }
         exoPlayer.addListener(listener)
@@ -951,11 +1004,12 @@ fun RezkaPlayer(
     ) {
         if (!isFloating && window != null) {
             val insetsController = WindowCompat.getInsetsController(window, window.decorView)
-            insetsController.systemBarsBehavior =
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             if (controlsVisible && !isScreenLocked) {
+                insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
                 insetsController.show(WindowInsetsCompat.Type.statusBars())
             } else {
+                insetsController.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                 insetsController.hide(WindowInsetsCompat.Type.systemBars())
             }
         }

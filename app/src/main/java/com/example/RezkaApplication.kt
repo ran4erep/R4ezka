@@ -15,11 +15,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class RezkaApplication : Application(), ImageLoaderFactory {
+    companion object {
+        lateinit var instance: RezkaApplication
+            private set
+    }
+
     val database by lazy { RezkaDatabase.getDatabase(this) }
     val repository by lazy { RezkaRepository(database) }
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         RezkaService.init(this)
         FirebaseSyncManager.init(this, repository)
         com.example.data.SeriesUpdateEngine.createNotificationChannel(this)
