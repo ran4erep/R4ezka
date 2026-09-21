@@ -954,6 +954,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     val isLoggedIn: StateFlow<Boolean> = FirebaseSyncManager.isLoggedIn
     val currentUser: StateFlow<String?> = FirebaseSyncManager.currentUser
     val currentUserAvatar: StateFlow<String?> = FirebaseSyncManager.currentUserAvatar
+    val currentUserRegisteredAt: StateFlow<Long?> = FirebaseSyncManager.currentUserRegisteredAt
     val isSyncing: StateFlow<Boolean> = FirebaseSyncManager.isSyncing
 
     fun register(loginName: String, loginPass: String, avatar: String? = null, onResult: (Boolean, String) -> Unit) {

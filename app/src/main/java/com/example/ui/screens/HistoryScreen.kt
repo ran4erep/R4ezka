@@ -312,6 +312,7 @@ fun HistoryCardItem(
                             .clip(RoundedCornerShape(2.dp)),
                         color = if (isFullyWatched) CinemaGreen else CinemaPrimary,
                         trackColor = CinemaSecondary,
+                        drawStopIndicator = {}
                     )
 
                     Text(

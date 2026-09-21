@@ -251,7 +251,7 @@ fun AvatarPickerDialog(
                         Icon(
                             imageVector = Icons.Default.AddPhotoAlternate,
                             contentDescription = null,
-                            tint = CinemaPrimary,
+                            tint = CinemaTextGray,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))

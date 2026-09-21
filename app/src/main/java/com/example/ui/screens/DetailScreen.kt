@@ -305,11 +305,6 @@ fun DetailScreen(
         isPlayerOpen = true
         isDecryptingStreams = true
 
-        // Rotate screen immediately to sensor landscape upon click on mobile
-        if (!isTvMode) {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        }
-
         playbackJob = scope.launch {
             try {
                 val targetId = currentDetail?.numericPostId?.ifEmpty { null } ?: item.id
