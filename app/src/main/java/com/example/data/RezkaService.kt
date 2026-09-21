@@ -278,9 +278,41 @@ object RezkaService {
         "https://hdrezka.club",
         "https://hdrezka.ag",
         "https://rezka.ag",
-        "https://hdrezka.cm",
-        "https://hdrezka.me"
+        "https://hdrezka.me",
+        "https://hdrezka.website",
+        "https://hdrezka-home.tv",
+        "https://hello-rezka.tv",
+        "https://hdrezka.name",
+        "https://hdrezka.sh",
+        "https://hdrezka.tw",
+        "https://hdrezka.in",
+        "https://hdrezka.kim",
+        "https://hdrezkavktest.org",
+        "https://omnirezka.tv",
+        "https://kinopub.me",
+        "https://rezka-kz.tv",
+        "https://rezka-kz.net",
+        "https://rezka-ua.net",
+        "https://rezka-ua.org",
+        "https://rezka-ua.in",
+        "https://rezka-ua.co",
+        "https://rezka-ua.club",
+        "https://rezka-ua.pub",
+        "https://rezka-ua.tv",
+        "https://rezka.pub",
+        "https://rezkery.com",
+        "https://hdrezka-concord.net",
+        "https://hdrezka-fly.net",
+        "https://hdrezka-sonic.net",
+        "https://hdrezka.hk"
     )
+
+    // Кэшированное множество хостов предустановленных зеркал для мгновенной O(1) проверки
+    val PRESET_MIRROR_HOSTS: Set<String> by lazy {
+        PRESET_MIRRORS.mapTo(HashSet(PRESET_MIRRORS.size)) { m ->
+            m.removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore("/").substringBefore(":").lowercase()
+        }
+    }
 
     private val _currentMirror = MutableStateFlow(PRIMARY_MIRROR)
     val currentMirror: StateFlow<String> = _currentMirror.asStateFlow()
@@ -462,31 +494,35 @@ object RezkaService {
         if (rawHost.isBlank()) return false
         val cleanHost = rawHost.lowercase().trim().removePrefix("www.")
 
-        // 1. Проверяем текущее активное зеркало
-        val currentHost = currentBaseUrl.toHttpUrlOrNull()?.host?.lowercase()?.removePrefix("www.")
-        if (currentHost != null && (cleanHost == currentHost || cleanHost.endsWith(".$currentHost"))) {
+        // 1. Быстрая O(1) проверка по множеству предустановленных зеркал
+        if (cleanHost in PRESET_MIRROR_HOSTS) {
             return true
         }
 
-        // 2. Проверяем сохраненное зеркало в SharedPreferences (кастомное зеркало)
+        // 2. Проверка поддоменов предустановленных зеркал
+        for (mHost in PRESET_MIRROR_HOSTS) {
+            if (cleanHost.endsWith(".$mHost")) {
+                return true
+            }
+        }
+
+        // 3. Проверяем текущее активное зеркало
+        val currentHost = currentBaseUrl.removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore("/").substringBefore(":").lowercase()
+        if (cleanHost == currentHost || cleanHost.endsWith(".$currentHost")) {
+            return true
+        }
+
+        // 4. Проверяем сохраненное зеркало в SharedPreferences (кастомное зеркало)
         val saved = prefs?.getString("saved_mirror", null)
         if (!saved.isNullOrBlank()) {
-            val savedHost = saved.toHttpUrlOrNull()?.host?.lowercase()?.removePrefix("www.")
+            val savedHost = saved.removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore("/").substringBefore(":").lowercase()
             if (savedHost != null && (cleanHost == savedHost || cleanHost.endsWith(".$savedHost"))) {
                 return true
             }
         }
 
-        // 3. Проверяем все предустановленные зеркала
-        for (m in PRESET_MIRRORS) {
-            val mHost = m.toHttpUrlOrNull()?.host?.lowercase()?.removePrefix("www.") ?: continue
-            if (cleanHost == mHost || cleanHost.endsWith(".$mHost")) {
-                return true
-            }
-        }
-
-        // 4. Паттерны доменов rezka / hdrezka
-        if (cleanHost.contains("rezka") || cleanHost.contains("hdrezka")) {
+        // 5. Паттерны доменов rezka / hdrezka / kinopub / rezkery
+        if (cleanHost.contains("rezka") || cleanHost.contains("hdrezka") || cleanHost.contains("kinopub") || cleanHost.contains("rezkery")) {
             return true
         }
 
@@ -981,26 +1017,116 @@ object RezkaService {
         return PRIMARY_MIRROR
     }
 
+    private val testPingClient by lazy {
+        client.newBuilder()
+            .connectTimeout(7, TimeUnit.SECONDS)
+            .readTimeout(7, TimeUnit.SECONDS)
+            .build()
+    }
+
     suspend fun testMirror(mirrorUrl: String): Result<Long> = withContext(Dispatchers.IO) {
         val normalized = normalizeMirrorUrl(mirrorUrl)
         val startTime = System.currentTimeMillis()
         try {
+            // Проверяем реальный раздел каталога /films/ - он гарантированно отдает разметку Резки
+            val testUrl = "$normalized/films/"
             val request = Request.Builder()
-                .url(normalized)
+                .url(testUrl)
                 .header("User-Agent", USER_AGENT)
-                .head()
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+                .header("Referer", "$normalized/")
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            testPingClient.newCall(request).execute().use { response ->
                 val duration = (System.currentTimeMillis() - startTime).coerceAtLeast(1)
-                if (response.isSuccessful || response.code in 200..399 || response.code == 403 || response.code == 503) {
-                    Result.success(duration)
-                } else {
-                    Result.failure(Exception("Код ответа: ${response.code}"))
+
+                // 1. Проверка HTTP-статуса (никаких ложных 403 и 503!)
+                val code = response.code
+                if (code == 403) {
+                    return@withContext Result.failure(Exception("HTTP 403: Доступ заблокирован (Cloudflare / WAF)"))
                 }
+                if (code == 503) {
+                    return@withContext Result.failure(Exception("HTTP 503: Сервер недоступен или включена защита"))
+                }
+                if (code == 502) {
+                    return@withContext Result.failure(Exception("HTTP 502: Ошибка шлюза (сервер упал)"))
+                }
+                if (code == 504) {
+                    return@withContext Result.failure(Exception("HTTP 504: Таймаут ответа шлюза"))
+                }
+                if (code == 404) {
+                    return@withContext Result.failure(Exception("HTTP 404: Каталог не найден по этому адресу"))
+                }
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(Exception("HTTP $code: Ошибка ответа сервера"))
+                }
+
+                // 2. Проверка редиректа на чужие хосты (заглушки блокировок РКН / провайдеров / парковки)
+                val originalHost = request.url.host.lowercase()
+                val finalHost = response.request.url.host.lowercase()
+                if (finalHost != originalHost && !finalHost.endsWith(originalHost) && !originalHost.endsWith(finalHost)) {
+                    if (finalHost.contains("zapret") || finalHost.contains("warning") ||
+                        finalHost.contains("block") || finalHost.contains("rkn") ||
+                        finalHost.contains("parking") || finalHost.contains("domain")) {
+                        return@withContext Result.failure(Exception("Заблокировано провайдером (редирект на $finalHost)"))
+                    }
+                }
+
+                // 3. Высокопроизводительное потоковое считывание первых 48 КБ (минимальная нагрузка на CPU и память)
+                val body = response.body ?: return@withContext Result.failure(Exception("Пустой ответ от сервера"))
+                val charBuffer = CharArray(49152) // 48 KB
+                val reader = body.charStream().buffered(49152)
+                val readCount = reader.read(charBuffer, 0, charBuffer.size)
+                if (readCount <= 0) {
+                    return@withContext Result.failure(Exception("Сервер вернул пустую страницу"))
+                }
+                val snippet = String(charBuffer, 0, readCount).lowercase()
+
+                // 4. Проверка на экраны блокировок и антибот-капчи
+                val antiBotPhrases = listOf(
+                    "проверяем, что вы не бот",
+                    "checking if you are a bot",
+                    "checking your browser",
+                    "just a moment...",
+                    "cf-browser-verification",
+                    "cf-challenge",
+                    "attention required! | cloudflare",
+                    "ddos-guard",
+                    "security check",
+                    "challenge-running",
+                    "enable javascript and cookies to continue"
+                )
+                for (phrase in antiBotPhrases) {
+                    if (snippet.contains(phrase)) {
+                        return@withContext Result.failure(Exception("Заблокировано защитой от ботов (Cloudflare / DDoS-Guard)"))
+                    }
+                }
+
+                // 5. Проверка наличия ключевых маркеров разметки сайта HDRezka
+                val hasRezkaMarkers = snippet.contains("b-content__inline") ||
+                        snippet.contains("b-post") ||
+                        snippet.contains("b-content__main") ||
+                        snippet.contains("b-category__items") ||
+                        snippet.contains("hdrezka") ||
+                        snippet.contains("data-id=\"") ||
+                        snippet.contains("b-content__bubble")
+
+                if (!hasRezkaMarkers) {
+                    return@withContext Result.failure(Exception("Сайт не содержит каталог Rezka (заглушка или неверный адрес)"))
+                }
+
+                Result.success(duration)
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            val errorMsg = when {
+                e is java.net.SocketTimeoutException -> "Таймаут подключения (сервер не отвечает)"
+                e is java.net.UnknownHostException -> "Домен не существует или DNS заблокирован"
+                e is java.net.ConnectException -> "Не удалось подключиться к серверу"
+                e is javax.net.ssl.SSLException -> "Ошибка SSL/TLS сертификата"
+                else -> e.message ?: "Сетевая ошибка"
+            }
+            Result.failure(Exception(errorMsg))
         }
     }
 

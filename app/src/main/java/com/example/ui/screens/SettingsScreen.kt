@@ -272,7 +272,7 @@ fun SettingsScreen(
                                         isPinging = false
                                         if (result.isSuccess) {
                                             val ms = result.getOrNull() ?: 0
-                                            pingResult = "Отклик: ${ms} мс (Доступно)"
+                                            pingResult = "Отклик: ${ms} мс (Каталог доступен)"
                                         } else {
                                             pingResult = "Недоступно: ${result.exceptionOrNull()?.message ?: "таймаут"}"
                                         }
@@ -320,7 +320,7 @@ fun SettingsScreen(
                         AnimatedVisibility(visible = pingResult != null) {
                             pingResult?.let { text ->
                                 Spacer(modifier = Modifier.height(8.dp))
-                                val isOk = text.contains("Доступно")
+                                val isOk = text.startsWith("Отклик:")
                                 Text(
                                     text = text,
                                     fontSize = 12.sp,
