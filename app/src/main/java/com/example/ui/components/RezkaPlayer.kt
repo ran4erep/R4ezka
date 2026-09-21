@@ -825,7 +825,7 @@ fun RezkaPlayer(
     }
 
     // Controller Visibility State & Interaction Key
-    var showControls by remember { mutableStateOf(true) }
+    var showControls by remember { mutableStateOf(false) }
     var controlsInteractionKey by remember { mutableIntStateOf(0) }
 
     // Media3 MediaSession to intercept and handle system and Bluetooth headset/speaker media buttons
@@ -2789,16 +2789,16 @@ fun RezkaPlayer(
 
 
 
-        // Central Buffering Overlay with floating skulls when main controls overlay is hidden or video is buffering/loading
-        val isControlsOverlayVisible = showControls && playerErrorMessage == null && !isScreenLocked && !isLoading && streams.isNotEmpty()
-        if (!isControlsOverlayVisible && (isLoading || isBuffering || !hasInitialPlayStarted) && playerErrorMessage == null && !isScreenLocked) {
+        // Central Buffering Overlay with floating skulls during buffering, loading streams, or before initial playback
+        val isBufferingOrLoading = (isLoading || isBuffering || !hasInitialPlayStarted) && playerErrorMessage == null && !isScreenLocked
+        if (isBufferingOrLoading) {
             FallingSkullsBufferingOverlay(
                 text = "Буферизация... Приятного просмотра!"
             )
         }
 
         // Top Bar with Back button and Title during buffering or when streams are loading
-        if ((isLoading || (isBuffering && playbackState != Player.STATE_READY)) && playerErrorMessage == null && !showControls) {
+        if (isBufferingOrLoading && !showControls) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
