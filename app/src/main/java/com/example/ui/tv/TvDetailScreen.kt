@@ -108,11 +108,13 @@ fun TvDetailContent(
     // Автофокус на кнопке "В закладки" и сброс скролла наверх только при смене фильма на ТВ
     var previousDetailId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(detail.id) {
-        favoriteButtonFocusRequester.requestFocusSafe()
-        if (previousDetailId != null && previousDetailId != detail.id) {
-            rightScrollState.scrollToItem(0)
+        if (previousDetailId != detail.id) {
+            if (previousDetailId != null) {
+                rightScrollState.scrollToItem(0)
+            }
+            favoriteButtonFocusRequester.requestFocusSafe()
+            previousDetailId = detail.id
         }
-        previousDetailId = detail.id
     }
 
     BoxWithConstraints(

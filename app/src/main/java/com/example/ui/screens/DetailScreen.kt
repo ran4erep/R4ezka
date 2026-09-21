@@ -483,9 +483,13 @@ fun DetailScreen(
             is DetailState.Success -> {
                 val detail = state.detail
 
-                // Автоматически поднимаем список наверх при смене ID фильма (переход по франшизе)
+                // Автоматически поднимаем список наверх только при смене ID фильма (переход по франшизе)
+                var previousDetailId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
                 LaunchedEffect(detail.id) {
-                    lazyListState.scrollToItem(0)
+                    if (previousDetailId != null && previousDetailId != detail.id) {
+                        lazyListState.scrollToItem(0)
+                    }
+                    previousDetailId = detail.id
                 }
 
                 // Automatically restore user's saved selection (translator, season, episode) or deep linked translator
