@@ -80,10 +80,12 @@ object RezkaDecryptor {
         }
 
         // Strip known HDRezka obfuscation prefixes
-        if (data.startsWith("#h")) {
-            data = data.substring(2)
-        } else if (data.startsWith("#") || data.startsWith("$") || data.startsWith("!") || data.startsWith("@")) {
-            data = data.substring(1)
+        while (data.startsWith("#h") || data.startsWith("//") || data.startsWith("#") || data.startsWith("$") || data.startsWith("!") || data.startsWith("@") || data.startsWith("^") || data.startsWith("_") || data.startsWith("~")) {
+            data = when {
+                data.startsWith("#h") -> data.substring(2)
+                data.startsWith("//") -> data.substring(2)
+                else -> data.substring(1)
+            }
         }
 
         // Unescape escaped slashes if coming from raw JSON
