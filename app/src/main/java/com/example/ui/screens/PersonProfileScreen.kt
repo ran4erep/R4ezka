@@ -41,6 +41,8 @@ import com.example.ui.theme.*
 import com.example.ui.tv.dpadScrollable
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusableItem
+import com.example.ui.util.rememberSavedLazyGridState
+import com.example.ui.RezkaViewModel
 
 sealed interface PersonState {
     object Loading : PersonState
@@ -56,7 +58,8 @@ fun PersonProfileScreen(
     onBack: () -> Unit,
     onNavigateToDetail: (RezkaItem) -> Unit,
     modifier: Modifier = Modifier,
-    isTvMode: Boolean = false
+    isTvMode: Boolean = false,
+    viewModel: RezkaViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 ) {
     var state by remember(url) { mutableStateOf<PersonState>(PersonState.Loading) }
 
@@ -137,6 +140,8 @@ fun PersonProfileScreen(
             is PersonState.Success -> {
                 TvPersonProfileContent(
                     person = currentState.person,
+                    url = url,
+                    viewModel = viewModel,
                     onBack = onBack,
                     onNavigateToDetail = onNavigateToDetail,
                     modifier = modifier
@@ -226,7 +231,7 @@ fun PersonProfileScreen(
                 is PersonState.Success -> {
                     val person = currentState.person
                     val context = LocalContext.current
-                    val gridState = rememberLazyGridState()
+                    val gridState = rememberSavedLazyGridState("person_${url}", viewModel)
 
                     // Выбранная вкладка карьеры: -1 = Все работы, 0..N = индекс роли (Актёр, Режиссёр, Продюсер и др.)
                     var selectedSectionIndex by remember(person.id) { mutableIntStateOf(-1) }
@@ -525,6 +530,8 @@ fun PersonProfileScreen(
 @Composable
 private fun TvPersonProfileContent(
     person: RezkaPerson,
+    url: String,
+    viewModel: RezkaViewModel,
     onBack: () -> Unit,
     onNavigateToDetail: (RezkaItem) -> Unit,
     modifier: Modifier = Modifier
@@ -830,7 +837,7 @@ private fun TvPersonProfileContent(
                     )
                 }
             } else {
-                val tvGridState = rememberLazyGridState()
+                val tvGridState = rememberSavedLazyGridState("person_${url}", viewModel)
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 130.dp),
                     state = tvGridState,

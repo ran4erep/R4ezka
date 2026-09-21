@@ -16,6 +16,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import com.example.ui.util.rememberSavedScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -59,7 +60,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val scrollState = rememberScrollState()
+    val scrollState = rememberSavedScrollState("settings", viewModel)
     val currentMirror by viewModel.currentMirror.collectAsState()
     val defaultQuality by viewModel.defaultQuality.collectAsState()
     val autoNextEpisode by viewModel.autoNextEpisode.collectAsState()

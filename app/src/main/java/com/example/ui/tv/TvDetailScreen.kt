@@ -89,6 +89,7 @@ fun TvDetailContent(
     onAppendNextCommentsPage: () -> Unit = {},
     onNavigateToMovie: (RezkaItem) -> Unit = {},
     onNavigateToThematic: (String, String) -> Unit = { _, _ -> },
+    scrollState: androidx.compose.foundation.lazy.LazyListState? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -97,17 +98,21 @@ fun TvDetailContent(
     val favoriteButtonFocusRequester = remember { FocusRequester() }
     val shareButtonFocusRequester = remember { FocusRequester() }
     val mainActionFocusRequester = remember { FocusRequester() }
-    val rightScrollState = rememberLazyListState()
+    val rightScrollState = scrollState ?: rememberLazyListState()
     var isActorsExpanded by remember { mutableStateOf(false) }
 
     val displayComments = remember(commentsState.comments, detail.comments) {
         if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
     }
 
-    // Автофокус на кнопке "В закладки" и сброс скролла наверх при входе на экран или смене фильма на ТВ
+    // Автофокус на кнопке "В закладки" и сброс скролла наверх только при смене фильма на ТВ
+    var previousDetailId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(detail.id) {
         favoriteButtonFocusRequester.requestFocusSafe()
-        rightScrollState.scrollToItem(0)
+        if (previousDetailId != null && previousDetailId != detail.id) {
+            rightScrollState.scrollToItem(0)
+        }
+        previousDetailId = detail.id
     }
 
     BoxWithConstraints(
@@ -395,12 +400,14 @@ fun TvDetailContent(
                         )
 
                         if (detail.originalTitle.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = detail.originalTitle,
-                                color = CinemaTextGray,
+                                color = CinemaTextGray.copy(alpha = 0.7f),
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Normal,
+                                letterSpacing = 0.2.sp,
+                                lineHeight = 17.sp
                             )
                         }
 

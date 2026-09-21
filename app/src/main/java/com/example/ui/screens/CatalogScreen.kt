@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.*
+import com.example.ui.util.rememberSavedLazyGridState
 import com.example.ui.CatalogState
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
@@ -37,6 +38,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
 import androidx.compose.ui.window.Dialog
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -376,8 +379,8 @@ fun CatalogScreen(
                             )
                         }
                     } else {
-                        // High-performance vertical grid with optimized pagination
-                        val gridState = rememberLazyGridState()
+                        // High-performance vertical grid with optimized pagination and saved scroll state
+                        val gridState = rememberSavedLazyGridState("catalog", viewModel)
 
                         // Ultra-efficient scroll observer via derivedStateOf
                         val shouldLoadMore by remember {
@@ -401,7 +404,18 @@ fun CatalogScreen(
                             }
                         }
 
-                        val columnsCount = parsedCardGrid?.columns ?: 2
+                        val configuration = LocalConfiguration.current
+                        val columnsCount = remember(parsedCardGrid, configuration.orientation, configuration.screenWidthDp) {
+                            if (parsedCardGrid != null) {
+                                parsedCardGrid.columns
+                            } else {
+                                if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                                    (configuration.screenWidthDp / 150).coerceIn(3, 8)
+                                } else {
+                                    2
+                                }
+                            }
+                        }
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(columnsCount),
                             state = gridState,

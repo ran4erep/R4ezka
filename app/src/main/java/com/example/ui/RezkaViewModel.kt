@@ -45,8 +45,23 @@ data class MovieCommentsState(
     val numericPostId: String = ""
 )
 
+data class ScrollPosition(val index: Int = 0, val offset: Int = 0)
+
 class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as RezkaApplication).repository
+
+    // Store for saving scroll positions across screen orientation changes and UI mode switches
+    private val scrollPositions = java.util.concurrent.ConcurrentHashMap<String, ScrollPosition>()
+
+    fun getScrollPosition(key: String): ScrollPosition {
+        return scrollPositions[key] ?: ScrollPosition()
+    }
+
+    fun saveScrollPosition(key: String, index: Int, offset: Int) {
+        if (key.isNotEmpty() && index >= 0 && offset >= 0) {
+            scrollPositions[key] = ScrollPosition(index, offset)
+        }
+    }
 
     // Reactive database flows
     val favorites: StateFlow<List<FavoriteEntity>> = repository.favorites

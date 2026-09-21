@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import com.example.ui.util.rememberSavedLazyListState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -134,7 +135,7 @@ fun HistoryScreen(
                     )
                 }
             } else {
-                val listState = rememberLazyListState()
+                val listState = rememberSavedLazyListState("history", viewModel)
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
