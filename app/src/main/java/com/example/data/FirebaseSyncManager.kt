@@ -535,6 +535,31 @@ object FirebaseSyncManager {
     }
 
     /**
+     * Сохранение индивидуального режима масштабирования для конкретного фильма или сериала в облаке
+     */
+    fun onItemResizeModeUpdated(itemId: String, mode: String) {
+        if (itemId.isBlank()) return
+        val key = _userKey.value ?: return
+        val safeId = safeFirebaseKey(itemId)
+        scope.launch {
+            try {
+                val json = JSONObject().apply {
+                    put("itemId", itemId)
+                    put("mode", mode)
+                    put("updatedAt", System.currentTimeMillis())
+                }
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/itemResizeModes/$safeId.json")
+                    .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                httpClient.newCall(request).execute().close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to sync item resize mode for $safeId: ${e.message}")
+            }
+        }
+    }
+
+    /**
      * Сохранение настроек приложения (зеркало, качество видео, автопереключение серии, субтитры, масштаб, режим интерфейса и сетка карточек) в облако
      */
     fun onSettingsUpdated(
@@ -887,6 +912,30 @@ object FirebaseSyncManager {
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync settings from Firebase: ${e.message}")
+            }
+
+            // 3.5. Синхронизация индивидуальных настроек масштабирования для фильмов/сериалов
+            try {
+                val itemScaleReq = Request.Builder().url("$DATABASE_URL/users/$key/itemResizeModes.json").get().build()
+                val itemScaleResp = httpClient.newCall(itemScaleReq).execute()
+                if (itemScaleResp.isSuccessful) {
+                    val bodyStr = itemScaleResp.body?.string()?.trim() ?: ""
+                    if (bodyStr != "null" && bodyStr.isNotEmpty() && bodyStr.startsWith("{")) {
+                        val obj = JSONObject(bodyStr)
+                        val keys = obj.keys()
+                        while (keys.hasNext()) {
+                            val k = keys.next()
+                            val itemObj = obj.optJSONObject(k)
+                            val targetItemId = itemObj?.optString("itemId")?.ifBlank { k } ?: k
+                            val targetMode = itemObj?.optString("mode") ?: ""
+                            if (targetItemId.isNotBlank() && targetMode.isNotBlank()) {
+                                RezkaService.setItemResizeMode(targetItemId, targetMode)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to sync item resize modes from Firebase: ${e.message}")
             }
 
             // 4. Синхронизация Истории поиска (недавние поисковые запросы)

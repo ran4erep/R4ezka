@@ -132,6 +132,7 @@ enum class VideoResizeMode(val mode: Int, val title: String, val shortLabel: Str
 fun RezkaPlayer(
     title: String,
     subtitle: String,
+    itemId: String = "",
     streams: List<StreamUrl>,
     isLoading: Boolean = false,
     subtitleTracks: List<SubtitleTrack> = streams.firstOrNull()?.subtitles ?: emptyList(),
@@ -243,9 +244,15 @@ fun RezkaPlayer(
     var isHoldingUnlock by remember { mutableStateOf(false) }
     var screenNotificationMessage by remember { mutableStateOf<String?>(null) }
 
-    // Video Resize (Stretch) mode: FIT -> ZOOM -> FILL (синхронизируется с облаком)
-    val initialResizeModeName = remember { RezkaService.defaultResizeMode.value }
-    var currentResizeMode by remember {
+    // Video Resize (Stretch) mode: FIT -> ZOOM -> FILL (индивидуально для фильма/сериала или глобально по умолчанию)
+    val initialResizeModeName = remember(itemId) {
+        if (itemId.isNotBlank()) {
+            RezkaService.getEffectiveResizeMode(itemId)
+        } else {
+            RezkaService.defaultResizeMode.value
+        }
+    }
+    var currentResizeMode by remember(itemId) {
         mutableStateOf(
             try { VideoResizeMode.valueOf(initialResizeModeName) } catch (e: Exception) { VideoResizeMode.FIT }
         )
@@ -295,9 +302,11 @@ fun RezkaPlayer(
         }
     }
     LaunchedEffect(cloudResizeMode) {
-        val targetMode = try { VideoResizeMode.valueOf(cloudResizeMode) } catch (e: Exception) { null }
-        if (targetMode != null && targetMode != currentResizeMode) {
-            currentResizeMode = targetMode
+        if (itemId.isBlank() || RezkaService.getItemResizeMode(itemId) == null) {
+            val targetMode = try { VideoResizeMode.valueOf(cloudResizeMode) } catch (e: Exception) { null }
+            if (targetMode != null && targetMode != currentResizeMode) {
+                currentResizeMode = targetMode
+            }
         }
     }
 
@@ -1584,8 +1593,10 @@ fun RezkaPlayer(
                                                     VideoResizeMode.ZOOM -> VideoResizeMode.FILL
                                                     VideoResizeMode.FILL -> VideoResizeMode.FIT
                                                 }
-                                                RezkaService.setDefaultResizeMode(currentResizeMode.name)
-                                                FirebaseSyncManager.onSettingsUpdated(resizeMode = currentResizeMode.name)
+                                                if (itemId.isNotBlank()) {
+                                                    RezkaService.setItemResizeMode(itemId, currentResizeMode.name)
+                                                    FirebaseSyncManager.onItemResizeModeUpdated(itemId, currentResizeMode.name)
+                                                }
                                                 screenNotificationMessage = "Масштаб: ${currentResizeMode.title}"
                                                 view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                             }
@@ -1601,8 +1612,10 @@ fun RezkaPlayer(
                                                     VideoResizeMode.ZOOM -> VideoResizeMode.FILL
                                                     VideoResizeMode.FILL -> VideoResizeMode.FIT
                                                 }
-                                                RezkaService.setDefaultResizeMode(currentResizeMode.name)
-                                                FirebaseSyncManager.onSettingsUpdated(resizeMode = currentResizeMode.name)
+                                                if (itemId.isNotBlank()) {
+                                                    RezkaService.setItemResizeMode(itemId, currentResizeMode.name)
+                                                    FirebaseSyncManager.onItemResizeModeUpdated(itemId, currentResizeMode.name)
+                                                }
                                                 screenNotificationMessage = "Масштаб: ${currentResizeMode.title}"
                                                 view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                             }
@@ -2602,8 +2615,10 @@ fun RezkaPlayer(
                                         VideoResizeMode.ZOOM -> VideoResizeMode.FILL
                                         VideoResizeMode.FILL -> VideoResizeMode.FIT
                                     }
-                                    RezkaService.setDefaultResizeMode(currentResizeMode.name)
-                                    FirebaseSyncManager.onSettingsUpdated(resizeMode = currentResizeMode.name)
+                                    if (itemId.isNotBlank()) {
+                                        RezkaService.setItemResizeMode(itemId, currentResizeMode.name)
+                                        FirebaseSyncManager.onItemResizeModeUpdated(itemId, currentResizeMode.name)
+                                    }
                                     screenNotificationMessage = "Масштаб: ${currentResizeMode.title}"
                                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                 },
