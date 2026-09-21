@@ -369,8 +369,8 @@ fun RezkaPlayer(
                 .setUserAgent(RezkaService.USER_AGENT)
                 .setDefaultRequestProperties(
                     mapOf(
-                        "Referer" to "$activeMirror/",
-                        "Origin" to activeMirror,
+                        "Referer" to "${RezkaService.currentBaseUrl}/",
+                        "Origin" to RezkaService.currentBaseUrl,
                         "Accept" to "*/*"
                     )
                 )
@@ -760,17 +760,18 @@ fun RezkaPlayer(
                     }
                 }
 
-                // Auto-fallback error message
+                // Auto-fallback error message with clear, actionable diagnostics
                 val errorDesc = when (error.errorCode) {
-                    PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "Сервер потока вернул ошибку (403/404). Видеосервер недоступен или заблокирован провайдером."
-                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> "Не удалось подключиться к видеосерверу CDN."
-                    PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED -> "Не удалось распознать формат видеопотока."
-                    PlaybackException.ERROR_CODE_DECODER_INIT_FAILED -> "Аппаратный декодер не поддерживает данный профиль видео."
-                    else -> error.localizedMessage ?: "Сбой воспроизведения видео"
+                    PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "Сервер потока вернул ошибку (HTTP 403/404). Видеобалансировщик CDN отклонил запрос с текущего IP/зеркала (часто блокируется в облаке/эмуляторе, но работает на реальном телефоне). Попробуйте сменить зеркало или качество."
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> "Не удалось подключиться к видеосерверу CDN. Проверьте интернет-соединение или смените активное зеркало."
+                    PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED -> "Не удалось распознать формат видеопотока (повреждённый манифест или ответ CDN)."
+                    PlaybackException.ERROR_CODE_DECODER_INIT_FAILED -> "Аппаратный декодер устройства не поддерживает данный профиль видеопотока."
+                    else -> error.localizedMessage ?: "Сбой воспроизведения видео (Код: ${error.errorCodeName})"
                 }
                 playerErrorMessage = errorDesc
 
                 kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                    val rootCause = error.cause?.message ?: error.message.orEmpty()
                     com.example.data.SeriesUpdateLogger.logPlaybackError(
                         context = context,
                         title = title,
@@ -778,7 +779,7 @@ fun RezkaPlayer(
                         streamUrl = streamUrl,
                         errorCodeName = error.errorCodeName,
                         errorCode = error.errorCode,
-                        errorMessage = "$errorDesc (${error.message.orEmpty()})",
+                        errorMessage = "$errorDesc [Детали: $rootCause]",
                         fallbackInfo = "Все авто-фоллбэки исчерпаны. Ошибка показана в интерфейсе плеера."
                     )
                 }

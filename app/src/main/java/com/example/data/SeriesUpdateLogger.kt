@@ -158,8 +158,9 @@ object SeriesUpdateLogger {
             }
             append("   ├─ Ответ сервера: HTTP ${httpCode ?: "Сбой сети / Неизвестно"}\n")
             if (!responseBody.isNullOrBlank()) {
-                val snippet = if (responseBody.length > 300) responseBody.take(300) + "..." else responseBody
-                append("   ├─ Ответ HDRezka: $snippet\n")
+                val cleanBody = responseBody.trim()
+                val snippet = if (cleanBody.length > 800) cleanBody.take(800) + "... [обрезано ${cleanBody.length} символов]" else cleanBody
+                append("   ├─ Тело ответа HDRezka: $snippet\n")
             }
             append("   └─ ❌ Причина ошибки: $errorMessage")
         }

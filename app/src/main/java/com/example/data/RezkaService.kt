@@ -3159,7 +3159,8 @@ object RezkaService {
 
     /**
      * Получение ссылок на видеопотоки (CDN AJAX rezka-tv.org).
-     * Оптимизировано с автоматическим определением параметров и надежными фоллбэками.
+     * Высокопроизводительный движок: точный выбор эндпоинта, строгое соблюдение
+     * выбранной пользователем озвучки и отсутствие ложных ошибок в логах.
      */
     suspend fun getStreamUrls(
         itemId: String,
@@ -3179,52 +3180,96 @@ object RezkaService {
         val cacheKey = "$numericId-$effectiveTranslatorId-$isSeries-$effectiveSeason-$effectiveEpisode"
         streamCache.get(cacheKey)?.let { return@withContext it }
 
-        val endpoint = if (isSeries) "$currentBaseUrl/ajax/get_cdn_series/" else "$currentBaseUrl/ajax/get_cdn_movie/"
+        // Точка входа CDN HDRezka ВСЕГДА одна: /ajax/get_cdn_series/
+        // И для фильмов (action=get_movie), и для сериалов (action=get_stream).
+        // Эндпоинта get_cdn_movie на сервере не существует (он отдавал HTML с кодом 200).
+        val endpoint = "$currentBaseUrl/ajax/get_cdn_series/"
 
-        // 1. Попытка 1: с переданной озвучкой
-        val streams = fetchCdnStreams(endpoint, numericId, effectiveTranslatorId, isSeries, effectiveSeason, effectiveEpisode)
-        if (streams.isNotEmpty()) {
-            streamCache.put(cacheKey, streams)
-            return@withContext streams
-        }
-
-        // 2. Попытка 2: если переданная озвучка не сработала, пробуем без translator_id
-        if (effectiveTranslatorId.isNotEmpty()) {
-            val streamNoTr = fetchCdnStreams(endpoint, numericId, "", isSeries, effectiveSeason, effectiveEpisode)
-            if (streamNoTr.isNotEmpty()) {
-                streamCache.put(cacheKey, streamNoTr)
-                return@withContext streamNoTr
-            }
-        }
-
-        // 3. Попытка 3: перебор распространенных ID переводов (238 - Дубляж, 56 - HDRezka, 1 - Оригинал, 375, 111, 33)
-        val fallbackTranslators = listOf("238", "56", "1", "375", "111", "33", "82", "2", "438", "62")
-        for (altTrans in fallbackTranslators) {
-            if (altTrans == effectiveTranslatorId) continue
-            val altStreams = fetchCdnStreams(endpoint, numericId, altTrans, isSeries, effectiveSeason, effectiveEpisode)
-            if (altStreams.isNotEmpty()) {
-                streamCache.put(cacheKey, altStreams)
-                return@withContext altStreams
-            }
-        }
-
-        // 4. Попытка 4: переключение между series/movie endpoints
-        val altEndpoint = if (isSeries) "$currentBaseUrl/ajax/get_cdn_movie/" else "$currentBaseUrl/ajax/get_cdn_series/"
-        val altSeries = !isSeries
-        val altStreams = fetchCdnStreams(
-            altEndpoint,
-            numericId,
-            effectiveTranslatorId,
-            altSeries,
-            if (altSeries) effectiveSeason else 0,
-            if (altSeries) effectiveEpisode else ""
+        // 1. Попытка 1: целевой запрос под ВЫБРАННУЮ пользователем озвучку
+        val primaryAction = if (isSeries) "get_stream" else "get_movie"
+        val res1 = fetchCdnStreamsSingle(
+            endpoint = endpoint,
+            numericId = numericId,
+            translatorId = effectiveTranslatorId,
+            isSeries = isSeries,
+            season = effectiveSeason,
+            episode = effectiveEpisode,
+            actionParam = primaryAction
         )
-        if (altStreams.isNotEmpty()) {
-            streamCache.put(cacheKey, altStreams)
-            return@withContext altStreams
+        if (res1.streams.isNotEmpty()) {
+            streamCache.put(cacheKey, res1.streams)
+            return@withContext res1.streams
         }
 
+        var lastDiagResult = res1
+
+        // 2. Попытка 2: альтернативное действие для ТОЙ ЖЕ САМОЙ озвучки
+        // Защита от неоднозначности типов на сайте (мини-сериал, спецвыпуск или фильм с эпизодами)
+        val altAction = if (isSeries) "get_movie" else "get_stream"
+        val res2 = fetchCdnStreamsSingle(
+            endpoint = endpoint,
+            numericId = numericId,
+            translatorId = effectiveTranslatorId,
+            isSeries = (altAction == "get_stream"),
+            season = if (altAction == "get_stream") effectiveSeason.coerceAtLeast(1) else 0,
+            episode = if (altAction == "get_stream") (effectiveEpisode.ifBlank { "1" }) else "",
+            actionParam = altAction
+        )
+        if (res2.streams.isNotEmpty()) {
+            streamCache.put(cacheKey, res2.streams)
+            return@withContext res2.streams
+        }
+        if (res2.responseBody != null) {
+            lastDiagResult = res2
+        }
+
+        // 3. Попытка 3: если озвучка была передана, но на данном CDN-узле поток отдается без параметра translator_id
+        if (effectiveTranslatorId.isNotEmpty()) {
+            val res3 = fetchCdnStreamsSingle(
+                endpoint = endpoint,
+                numericId = numericId,
+                translatorId = "",
+                isSeries = isSeries,
+                season = effectiveSeason,
+                episode = effectiveEpisode,
+                actionParam = primaryAction
+            )
+            if (res3.streams.isNotEmpty()) {
+                streamCache.put(cacheKey, res3.streams)
+                return@withContext res3.streams
+            }
+            if (res3.responseBody != null) {
+                lastDiagResult = res3
+            }
+        }
+
+        // 4. Попытка 4: ТОЛЬКО если озвучка изначально НЕ была выбрана/передана (effectiveTranslatorId пуст).
+        // Если пользователь явно выбрал озвучку, мы СТРОГО соблюдаем его выбор и НЕ перебираем чужие ID.
+        if (effectiveTranslatorId.isEmpty()) {
+            val defaultTranslators = listOf("238", "1") // 238 - Дубляж, 1 - Оригинал
+            for (altTrans in defaultTranslators) {
+                val res4 = fetchCdnStreamsSingle(
+                    endpoint = endpoint,
+                    numericId = numericId,
+                    translatorId = altTrans,
+                    isSeries = isSeries,
+                    season = effectiveSeason,
+                    episode = effectiveEpisode,
+                    actionParam = primaryAction
+                )
+                if (res4.streams.isNotEmpty()) {
+                    streamCache.put(cacheKey, res4.streams)
+                    return@withContext res4.streams
+                }
+                if (res4.responseBody != null) {
+                    lastDiagResult = res4
+                }
+            }
+        }
+
+        // Если ВСЕ попытки для видео исчерпаны и поток действительно не найден — логируем ОДНУ реальную ошибку с полным телом и кодом
         prefetchScope.launch {
+            val specificReason = lastDiagResult.errorMessage ?: "Не удалось извлечь видеопоток для озвучки (ID: ${effectiveTranslatorId.ifEmpty { "по умолчанию" }}). Возможно, видео заблокировано правообладателем или недоступно."
             SeriesUpdateLogger.logParserError(
                 title = "Тайтл ID $numericId",
                 itemId = numericId,
@@ -3233,30 +3278,22 @@ object RezkaService {
                 episode = effectiveEpisode,
                 endpointUrl = endpoint,
                 requestParams = "id=$numericId, translator_id=$effectiveTranslatorId, isSeries=$isSeries, season=$effectiveSeason, episode=$effectiveEpisode",
-                httpCode = null,
-                responseBody = null,
-                errorMessage = "Все варианты загрузки видеопотока (основная озвучка, дефолт, резервные озвучки 238/56/1) вернули пустой результат. Парсер не смог извлечь прямые ссылки."
+                httpCode = lastDiagResult.httpCode,
+                responseBody = lastDiagResult.responseBody,
+                errorMessage = specificReason
             )
         }
 
         return@withContext emptyList()
     }
 
-    private fun fetchCdnStreams(
-        endpoint: String,
-        numericId: String,
-        translatorId: String,
-        isSeries: Boolean,
-        season: Int,
-        episode: String
-    ): List<StreamUrl> {
-        val primaryAction = if (isSeries) "get_stream" else "get_movie"
-        val firstAttempt = fetchCdnStreamsSingle(endpoint, numericId, translatorId, isSeries, season, episode, primaryAction)
-        if (firstAttempt.isNotEmpty()) return firstAttempt
-
-        val altAction = if (isSeries) "get_movie" else "get_stream"
-        return fetchCdnStreamsSingle(endpoint, numericId, translatorId, isSeries, season, episode, altAction)
-    }
+    // Internal holder for CDN response result and diagnostics
+    private data class CdnFetchResult(
+        val streams: List<StreamUrl>,
+        val httpCode: Int? = null,
+        val responseBody: String? = null,
+        val errorMessage: String? = null
+    )
 
     private fun fetchCdnStreamsSingle(
         endpoint: String,
@@ -3266,8 +3303,10 @@ object RezkaService {
         season: Int,
         episode: String,
         actionParam: String
-    ): List<StreamUrl> {
+    ): CdnFetchResult {
         val paramSummary = "id=$numericId, translator_id=$translatorId, action=$actionParam, season=$season, episode=$episode"
+        var lastHttpCode: Int? = null
+        var lastBody: String? = null
         try {
             val urlWithTs = "$endpoint?t=${System.currentTimeMillis()}"
             val formBuilder = FormBody.Builder()
@@ -3282,7 +3321,8 @@ object RezkaService {
                 formBuilder.add("translator_id", translatorId)
             }
 
-            if (isSeries) {
+            val isSeriesAction = actionParam == "get_stream" || isSeries
+            if (isSeriesAction) {
                 formBuilder.add("season", season.coerceAtLeast(1).toString())
                 formBuilder.add("episode", if (episode.isBlank() || episode == "0") "1" else episode)
             }
@@ -3300,17 +3340,28 @@ object RezkaService {
                 .build()
 
             client.newCall(request).execute().use { response ->
+                lastHttpCode = response.code
+                val bodyStr = response.body?.string() ?: ""
+                lastBody = bodyStr
+
                 if (response.isSuccessful) {
-                    val bodyStr = response.body?.string() ?: ""
                     Log.d(TAG, "CDN AJAX ответ [$urlWithTs, id=$numericId, tr=$translatorId, act=$actionParam, s=$season, ep=$episode]: $bodyStr")
 
                     // Пытаемся распарсить JSON
                     var rawUrl = ""
                     var rawSubtitle = ""
                     var subtitleDef = ""
+                    var jsonSuccess = true
+                    var jsonMessage = ""
+
                     try {
                         val json = JSONObject(bodyStr)
+                        if (json.has("success")) {
+                            jsonSuccess = json.optBoolean("success", true)
+                        }
                         rawUrl = json.optString("url", "")
+                        jsonMessage = json.optString("message", "")
+
                         val subObj = json.opt("subtitle")
                         if (subObj is String) {
                             rawSubtitle = subObj
@@ -3355,65 +3406,55 @@ object RezkaService {
                             } else {
                                 streams
                             }
-                            return finalStreams
-                        }
-                    } else {
-                        prefetchScope.launch {
-                            val reason = if (bodyStr.contains("\"url\":false") || bodyStr.contains("\"url\": \"false\"")) {
-                                "Озвучка или видео заблокировано/недоступно (url=false в JSON)"
-                            } else {
-                                "В ответе CDN отсутствует атрибут url с адресом потока"
-                            }
-                            SeriesUpdateLogger.logParserError(
-                                title = "Тайтл ID $numericId",
-                                itemId = numericId,
-                                translatorId = translatorId,
-                                season = season,
-                                episode = episode,
-                                endpointUrl = urlWithTs,
-                                requestParams = paramSummary,
+                            return CdnFetchResult(
+                                streams = finalStreams,
+                                httpCode = response.code,
+                                responseBody = bodyStr
+                            )
+                        } else {
+                            return CdnFetchResult(
+                                streams = emptyList(),
                                 httpCode = response.code,
                                 responseBody = bodyStr,
-                                errorMessage = reason
+                                errorMessage = "Поле url получено, но расшифровка/парсинг качества потоков вернули пустой список"
                             )
                         }
+                    } else {
+                        Log.d(TAG, "CDN ответ без url для $paramSummary: body=$bodyStr")
+                        val reason = when {
+                            !jsonSuccess -> "Сервер вернул success:false${if (jsonMessage.isNotEmpty()) " ($jsonMessage)" else ""}"
+                            bodyStr.contains("\"url\":false") || bodyStr.contains("\"url\": null") ->
+                                "Сервер вернул url:false / url:null. На данном зеркале/регионе видео заблокировано, либо требуется авторизация/VIP"
+                            bodyStr.startsWith("<!DOCTYPE") || bodyStr.startsWith("<html") ->
+                                "Сервер вернул HTML-страницу вместо JSON (возможна Cloudflare-капча или редирект)"
+                            else -> "В ответе сервера отсутствует валидный зашифрованный URL видеопотока"
+                        }
+                        return CdnFetchResult(
+                            streams = emptyList(),
+                            httpCode = response.code,
+                            responseBody = bodyStr,
+                            errorMessage = reason
+                        )
                     }
                 } else {
                     Log.w(TAG, "CDN AJAX не сработал [$urlWithTs, id=$numericId]: HTTP ${response.code}")
-                    prefetchScope.launch {
-                        SeriesUpdateLogger.logParserError(
-                            title = "Тайтл ID $numericId",
-                            itemId = numericId,
-                            translatorId = translatorId,
-                            season = season,
-                            episode = episode,
-                            endpointUrl = urlWithTs,
-                            requestParams = paramSummary,
-                            httpCode = response.code,
-                            responseBody = response.message,
-                            errorMessage = "HTTP ошибка сервера CDN (${response.code})"
-                        )
-                    }
+                    return CdnFetchResult(
+                        streams = emptyList(),
+                        httpCode = response.code,
+                        responseBody = bodyStr,
+                        errorMessage = "Сервер вернул ошибку HTTP ${response.code}"
+                    )
                 }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Ошибка CDN запроса ($endpoint, id=$numericId): ${e.message}")
-            prefetchScope.launch {
-                SeriesUpdateLogger.logParserError(
-                    title = "Тайтл ID $numericId",
-                    itemId = numericId,
-                    translatorId = translatorId,
-                    season = season,
-                    episode = episode,
-                    endpointUrl = endpoint,
-                    requestParams = paramSummary,
-                    httpCode = null,
-                    responseBody = null,
-                    errorMessage = "Ошибка подключения / Исключение сети: ${e.message}"
-                )
-            }
+            return CdnFetchResult(
+                streams = emptyList(),
+                httpCode = lastHttpCode,
+                responseBody = lastBody,
+                errorMessage = "Сетевое исключение при вызове CDN: ${e.message ?: e.javaClass.simpleName}"
+            )
         }
-        return emptyList()
     }
 
     /**
