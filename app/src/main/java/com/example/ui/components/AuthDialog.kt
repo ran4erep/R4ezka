@@ -7,13 +7,20 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.border
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Event
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -31,8 +38,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.offset
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.ui.RezkaViewModel
@@ -66,7 +75,16 @@ fun AuthDialog(
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val currentUserAvatar by viewModel.currentUserAvatar.collectAsState()
+    val currentUserRegisteredAt by viewModel.currentUserRegisteredAt.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
+
+    val favorites by viewModel.favorites.collectAsState()
+    val watchHistory by viewModel.aggregatedWatchHistory.collectAsState()
+    val subscriptions by viewModel.subscriptions.collectAsState()
+
+    val formattedRegDate = remember(currentUserRegisteredAt) {
+        formatRegistrationDate(currentUserRegisteredAt)
+    }
 
     var isRegisterMode by remember { mutableStateOf(false) }
     var registerAvatar by remember { mutableStateOf<String?>(null) }
@@ -151,91 +169,83 @@ fun AuthDialog(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 if (isLoggedIn) {
-                    // Авторизованный аккаунт с кликабельным аватаром и ником
-                    var loggedAccountFocused by remember { mutableStateOf(false) }
+                    // Основной блок профиля
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(CinemaCard, RoundedCornerShape(14.dp))
-                            .onFocusChanged { loggedAccountFocused = it.isFocused }
-                            .tvPulsingFocusBorder(isFocused = loggedAccountFocused, shape = RoundedCornerShape(14.dp))
-                            .clickable { showAvatarPicker = true }
-                            .padding(14.dp)
+                            .background(CinemaCard, RoundedCornerShape(16.dp))
+                            .border(1.dp, CinemaBorder, RoundedCornerShape(16.dp))
+                            .padding(16.dp)
                     ) {
-                        Box(contentAlignment = Alignment.BottomEnd) {
+                        var avatarFocused by remember { mutableStateOf(false) }
+                        Box(
+                            contentAlignment = Alignment.BottomEnd,
+                            modifier = Modifier
+                                .onFocusChanged { avatarFocused = it.isFocused }
+                                .tvPulsingFocusBorder(isFocused = avatarFocused, shape = CircleShape)
+                                .clickable { showAvatarPicker = true }
+                        ) {
                             UserAvatar(
                                 avatar = currentUserAvatar,
-                                size = 52.dp,
+                                size = 58.dp,
                                 onClick = { showAvatarPicker = true }
                             )
-                            Box(
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .background(CinemaPrimary, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.AddPhotoAlternate,
-                                    contentDescription = "Сменить аватар",
-                                    tint = CinemaBlack,
-                                    modifier = Modifier.size(11.dp)
-                                )
-                            }
+                            PencilAvatarBadge(
+                                size = 22.dp,
+                                iconSize = 13.dp
+                            )
                         }
-                        Spacer(modifier = Modifier.width(14.dp))
+                        Spacer(modifier = Modifier.width(16.dp))
                         Column(
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(
                                 text = currentUser ?: "Пользователь",
                                 color = CinemaTextWhite,
-                                fontSize = 16.sp,
+                                fontSize = 17.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            Spacer(modifier = Modifier.height(2.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Нажмите, чтобы сменить аватар",
-                                color = CinemaPrimary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
+                                text = "Зарегистрирован $formattedRegDate",
+                                color = CinemaTextGray,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Normal
                             )
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Блок дополнительной информации / статистики аккаунта
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(CinemaCard, RoundedCornerShape(16.dp))
+                            .border(1.dp, CinemaBorder, RoundedCornerShape(16.dp))
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceAround,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        StatItem(
+                            icon = Icons.Default.Bookmark,
+                            value = favorites.size.toString(),
+                            label = "В избранном"
+                        )
+                        StatItem(
+                            icon = Icons.Default.History,
+                            value = watchHistory.size.toString(),
+                            label = "Просмотрено"
+                        )
+                        StatItem(
+                            icon = Icons.Default.Subscriptions,
+                            value = subscriptions.size.toString(),
+                            label = "Подписки"
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
-
-                    // Принудительная синхронизация
-                    var syncBtnFocused by remember { mutableStateOf(false) }
-                    OutlinedButton(
-                        onClick = {
-                            viewModel.syncCloudData {
-                                Toast.makeText(context, "Синхронизация завершена", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        enabled = !isSyncing,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = CinemaTextWhite),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(
-                            brush = SolidColor(CinemaPrimary)
-                        ),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .onFocusChanged { syncBtnFocused = it.isFocused }
-                            .tvPulsingFocusBorder(isFocused = syncBtnFocused, shape = RoundedCornerShape(10.dp))
-                    ) {
-                        if (isSyncing) {
-                            CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Синхронизация...", fontSize = 14.sp)
-                        } else {
-                            Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp), tint = CinemaPrimary)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Синхронизировать сейчас", fontSize = 14.sp)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
 
                     var logoutBtnFocused by remember { mutableStateOf(false) }
                     Button(
@@ -325,19 +335,10 @@ fun AuthDialog(
                                     size = 60.dp,
                                     onClick = { showAvatarPicker = true }
                                 )
-                                Box(
-                                    modifier = Modifier
-                                        .size(20.dp)
-                                        .background(CinemaPrimary, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.AddPhotoAlternate,
-                                        contentDescription = "Выбрать аватар",
-                                        tint = CinemaBlack,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                }
+                                PencilAvatarBadge(
+                                    size = 22.dp,
+                                    iconSize = 13.dp
+                                )
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
@@ -664,6 +665,93 @@ private fun TvAuthTextField(
                     .testTag(testTag)
             )
         }
+    }
+}
+
+@Composable
+private fun PencilAvatarBadge(
+    modifier: Modifier = Modifier,
+    size: Dp = 22.dp,
+    iconSize: Dp = 13.dp
+) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .background(Color(0xFF1E1E24), CircleShape)
+            .border(1.2.dp, Color.Black, CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        // Black outline pencil
+        Icon(
+            imageVector = Icons.Default.Edit,
+            contentDescription = null,
+            tint = Color.Black,
+            modifier = Modifier
+                .size(iconSize + 1.dp)
+                .offset(x = 0.5.dp, y = 0.5.dp)
+        )
+        Icon(
+            imageVector = Icons.Default.Edit,
+            contentDescription = null,
+            tint = Color.Black,
+            modifier = Modifier
+                .size(iconSize + 1.dp)
+                .offset(x = (-0.5).dp, y = (-0.5).dp)
+        )
+        // White pencil on top
+        Icon(
+            imageVector = Icons.Default.Edit,
+            contentDescription = "Сменить аватар",
+            tint = Color.White,
+            modifier = Modifier.size(iconSize)
+        )
+    }
+}
+
+private fun formatRegistrationDate(timestamp: Long?): String {
+    if (timestamp == null || timestamp <= 0L) return "21.09.2026"
+    return try {
+        val sdf = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.getDefault())
+        sdf.format(java.util.Date(timestamp))
+    } catch (_: Exception) {
+        "21.09.2026"
+    }
+}
+
+@Composable
+private fun StatItem(
+    icon: ImageVector,
+    value: String,
+    label: String
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = CinemaTextGray,
+                modifier = Modifier.size(15.dp)
+            )
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+                text = value,
+                color = CinemaTextWhite,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(modifier = Modifier.height(3.dp))
+        Text(
+            text = label,
+            color = CinemaTextGray,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium
+        )
     }
 }
 

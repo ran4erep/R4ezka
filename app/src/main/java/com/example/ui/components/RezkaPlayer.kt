@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.media3.common.util.UnstableApi::class)
+
 package com.example.ui.components
 
 import android.annotation.SuppressLint
@@ -41,6 +43,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -126,7 +129,6 @@ enum class VideoResizeMode(val mode: Int, val title: String, val shortLabel: Str
     FILL(AspectRatioFrameLayout.RESIZE_MODE_FILL, "Растянуть на весь экран", "Растянуть")
 }
 
-@OptIn(UnstableApi::class)
 @SuppressLint("SourceLockedOrientationActivity")
 @Composable
 fun RezkaPlayer(
@@ -343,75 +345,86 @@ fun RezkaPlayer(
 
     // High-performance hardware-accelerated ExoPlayer instance
     val exoPlayer = remember {
-        val renderersFactory = DefaultRenderersFactory(context)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
-            .setEnableDecoderFallback(true)
+        try {
+            val renderersFactory = DefaultRenderersFactory(context)
+                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
+                .setEnableDecoderFallback(true)
 
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                15_000, // minBufferMs
-                50_000, // maxBufferMs
-                2_500,  // bufferForPlaybackMs
-                5_000   // bufferForPlaybackAfterRebufferMs
-            )
-            .setPrioritizeTimeOverSizeThresholds(true)
-            .build()
-
-        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(RezkaService.USER_AGENT)
-            .setDefaultRequestProperties(
-                mapOf(
-                    "Referer" to "$activeMirror/",
-                    "Origin" to activeMirror,
-                    "Accept" to "*/*"
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    15_000, // minBufferMs
+                    50_000, // maxBufferMs
+                    2_500,  // bufferForPlaybackMs
+                    5_000   // bufferForPlaybackAfterRebufferMs
                 )
-            )
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(15_000)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
 
-        val trackSelector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context).apply {
-            setParameters(
-                buildUponParameters()
-                    .setPreferredVideoMimeType(MimeTypes.VIDEO_H264)
-                    .setForceHighestSupportedBitrate(true)
-            )
-        }
+            val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+                .setUserAgent(RezkaService.USER_AGENT)
+                .setDefaultRequestProperties(
+                    mapOf(
+                        "Referer" to "$activeMirror/",
+                        "Origin" to activeMirror,
+                        "Accept" to "*/*"
+                    )
+                )
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(15_000)
+                .setReadTimeoutMs(15_000)
 
-        val mediaSourceFactory = DefaultMediaSourceFactory(httpDataSourceFactory)
+            val trackSelector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context).apply {
+                setParameters(
+                    buildUponParameters()
+                        .setPreferredVideoMimeType(MimeTypes.VIDEO_H264)
+                        .setForceHighestSupportedBitrate(true)
+                )
+            }
 
-        val audioAttributes = AudioAttributes.Builder()
-            .setUsage(C.USAGE_MEDIA)
-            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-            .build()
+            val mediaSourceFactory = DefaultMediaSourceFactory(httpDataSourceFactory)
 
-        ExoPlayer.Builder(context, renderersFactory)
-            .setAudioAttributes(audioAttributes, true)
-            .setTrackSelector(trackSelector)
-            .setMediaSourceFactory(mediaSourceFactory)
-            .setLoadControl(loadControl)
-            .build().apply {
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .build()
+
+            ExoPlayer.Builder(context, renderersFactory)
+                .setAudioAttributes(audioAttributes, true)
+                .setTrackSelector(trackSelector)
+                .setMediaSourceFactory(mediaSourceFactory)
+                .setLoadControl(loadControl)
+                .build().apply {
+                    playWhenReady = true
+                }
+        } catch (e: Exception) {
+            Log.e("RezkaPlayer", "Error creating custom ExoPlayer instance, using fallback builder", e)
+            ExoPlayer.Builder(context).build().apply {
                 playWhenReady = true
             }
+        }
     }
 
     // Helper to configure SubtitleView styling with optimal contrast and outline
     fun configurePlayerView(playerView: PlayerView) {
-        playerView.player = exoPlayer
-        playerView.useController = false
-        playerView.resizeMode = currentResizeMode.mode
-        playerView.subtitleView?.apply {
-            setStyle(
-                CaptionStyleCompat(
-                    android.graphics.Color.WHITE,
-                    android.graphics.Color.argb(160, 0, 0, 0),
-                    android.graphics.Color.TRANSPARENT,
-                    CaptionStyleCompat.EDGE_TYPE_OUTLINE,
-                    android.graphics.Color.BLACK,
-                    null
+        try {
+            playerView.player = exoPlayer
+            playerView.useController = false
+            playerView.resizeMode = currentResizeMode.mode
+            playerView.subtitleView?.apply {
+                setStyle(
+                    CaptionStyleCompat(
+                        android.graphics.Color.WHITE,
+                        android.graphics.Color.argb(160, 0, 0, 0),
+                        android.graphics.Color.TRANSPARENT,
+                        CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                        android.graphics.Color.BLACK,
+                        null
+                    )
                 )
-            )
-            setFractionalTextSize(subtitleTextScale)
+                setFractionalTextSize(subtitleTextScale)
+            }
+        } catch (e: Exception) {
+            Log.e("RezkaPlayer", "Error configuring PlayerView", e)
         }
     }
 
@@ -456,34 +469,38 @@ fun RezkaPlayer(
 
     // Helper to apply subtitle selection cleanly to ExoPlayer
     fun applySubtitleTrack(track: SubtitleTrack?, enabled: Boolean) {
-        if (!enabled || track == null) {
-            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                .buildUpon()
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                .build()
-        } else {
-            val paramsBuilder = exoPlayer.trackSelectionParameters
-                .buildUpon()
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                .setPreferredTextLanguage(track.language)
+        try {
+            if (!enabled || track == null) {
+                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                    .buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                    .build()
+            } else {
+                val paramsBuilder = exoPlayer.trackSelectionParameters
+                    .buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                    .setPreferredTextLanguage(track.language)
 
-            val currentTracks = exoPlayer.currentTracks
-            for (group in currentTracks.groups) {
-                if (group.type == C.TRACK_TYPE_TEXT) {
-                    for (i in 0 until group.length) {
-                        val format = group.getTrackFormat(i)
-                        if (format.language.equals(track.language, ignoreCase = true) ||
-                            format.label.equals(track.title, ignoreCase = true)) {
-                            paramsBuilder.setOverrideForType(
-                                TrackSelectionOverride(group.mediaTrackGroup, i)
-                            )
-                            break
+                val currentTracks = exoPlayer.currentTracks
+                for (group in currentTracks.groups) {
+                    if (group.type == C.TRACK_TYPE_TEXT) {
+                        for (i in 0 until group.length) {
+                            val format = group.getTrackFormat(i)
+                            if (format.language.equals(track.language, ignoreCase = true) ||
+                                format.label.equals(track.title, ignoreCase = true)) {
+                                paramsBuilder.setOverrideForType(
+                                    TrackSelectionOverride(group.mediaTrackGroup, i)
+                                )
+                                break
+                            }
                         }
                     }
                 }
+                exoPlayer.trackSelectionParameters = paramsBuilder.build()
             }
-            exoPlayer.trackSelectionParameters = paramsBuilder.build()
+        } catch (e: Exception) {
+            Log.w("RezkaPlayer", "Error applying subtitle track", e)
         }
     }
 
@@ -504,10 +521,11 @@ fun RezkaPlayer(
             hasInitialPlayStarted = false
         }
         val startFrom = targetStartPos ?: startPositionMs
-        exoPlayer.stop()
-        exoPlayer.clearMediaItems()
         try {
-            exoPlayer.setMediaItem(buildMediaItem(urlToPlay, availableSubtitles))
+            exoPlayer.stop()
+            exoPlayer.clearMediaItems()
+            val mediaItem = buildMediaItem(urlToPlay, availableSubtitles)
+            exoPlayer.setMediaItem(mediaItem)
             exoPlayer.prepare()
             if (isSubtitlesEnabled && selectedSubtitleTrack != null) {
                 applySubtitleTrack(selectedSubtitleTrack, true)
@@ -527,6 +545,7 @@ fun RezkaPlayer(
             exoPlayer.play()
         } catch (e: Exception) {
             Log.e("RezkaPlayer", "Error loading media item: $urlToPlay", e)
+            playerErrorMessage = "Ошибка инициализации видео: ${e.localizedMessage ?: "Ошибка плеера"}"
         }
     }
 
@@ -702,8 +721,10 @@ fun RezkaPlayer(
     DisposableEffect(exoPlayer) {
         onDispose {
             try {
-                if (exoPlayer.currentPosition > 0) {
-                    onProgressUpdate(exoPlayer.currentPosition, exoPlayer.duration)
+                val pos = try { exoPlayer.currentPosition } catch (_: Exception) { 0L }
+                val dur = try { exoPlayer.duration } catch (_: Exception) { 0L }
+                if (pos > 0) {
+                    onProgressUpdate(pos, dur)
                 }
                 exoPlayer.stop()
                 exoPlayer.clearMediaItems()
@@ -735,94 +756,103 @@ fun RezkaPlayer(
 
     // Media3 MediaSession to intercept and handle system and Bluetooth headset/speaker media buttons
     val mediaSession = remember(exoPlayer) {
-        val callback = object : MediaSession.Callback {
-            override fun onMediaButtonEvent(
-                session: MediaSession,
-                controllerInfo: MediaSession.ControllerInfo,
-                intent: Intent
-            ): Boolean {
-                val keyEvent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
-                }
-                if (keyEvent != null && keyEvent.action == KeyEvent.ACTION_DOWN) {
-                    when (keyEvent.keyCode) {
-                        KeyEvent.KEYCODE_HEADSETHOOK,
-                        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-                        KeyEvent.KEYCODE_SPACE -> {
-                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                            showControls = true
-                            controlsInteractionKey++
-                            return true
+        try {
+            val callback = object : MediaSession.Callback {
+                override fun onMediaButtonEvent(
+                    session: MediaSession,
+                    controllerInfo: MediaSession.ControllerInfo,
+                    intent: Intent
+                ): Boolean {
+                    try {
+                        val keyEvent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
                         }
-                        KeyEvent.KEYCODE_MEDIA_PLAY -> {
-                            exoPlayer.play()
-                            showControls = true
-                            controlsInteractionKey++
-                            return true
-                        }
-                        KeyEvent.KEYCODE_MEDIA_PAUSE,
-                        KeyEvent.KEYCODE_MEDIA_STOP -> {
-                            exoPlayer.pause()
-                            showControls = true
-                            controlsInteractionKey++
-                            return true
-                        }
-                        KeyEvent.KEYCODE_MEDIA_NEXT -> {
-                            if (isSeries && hasNextEpisode && onNextEpisode != null) {
-                                onNextEpisode.invoke()
-                            } else {
-                                val cur = exoPlayer.currentPosition
-                                val dur = exoPlayer.duration.coerceAtLeast(0L)
-                                exoPlayer.seekTo((cur + 10000L).coerceAtMost(dur))
+                        if (keyEvent != null && keyEvent.action == KeyEvent.ACTION_DOWN) {
+                            when (keyEvent.keyCode) {
+                                KeyEvent.KEYCODE_HEADSETHOOK,
+                                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                                KeyEvent.KEYCODE_SPACE -> {
+                                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    return true
+                                }
+                                KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                                    exoPlayer.play()
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    return true
+                                }
+                                KeyEvent.KEYCODE_MEDIA_PAUSE,
+                                KeyEvent.KEYCODE_MEDIA_STOP -> {
+                                    exoPlayer.pause()
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    return true
+                                }
+                                KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                                    if (isSeries && hasNextEpisode && onNextEpisode != null) {
+                                        onNextEpisode.invoke()
+                                    } else {
+                                        val cur = exoPlayer.currentPosition
+                                        val dur = exoPlayer.duration.coerceAtLeast(0L)
+                                        exoPlayer.seekTo((cur + 10000L).coerceAtMost(dur))
+                                    }
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    return true
+                                }
+                                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                                    if (isSeries && hasPreviousEpisode && onPreviousEpisode != null) {
+                                        onPreviousEpisode.invoke()
+                                    } else {
+                                        val cur = exoPlayer.currentPosition
+                                        exoPlayer.seekTo((cur - 10000L).coerceAtLeast(0L))
+                                    }
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    return true
+                                }
+                                KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                                    val cur = exoPlayer.currentPosition
+                                    val dur = exoPlayer.duration.coerceAtLeast(0L)
+                                    exoPlayer.seekTo((cur + 10000L).coerceAtMost(dur))
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    return true
+                                }
+                                KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                                    val cur = exoPlayer.currentPosition
+                                    exoPlayer.seekTo((cur - 10000L).coerceAtLeast(0L))
+                                    showControls = true
+                                    controlsInteractionKey++
+                                    return true
+                                }
                             }
-                            showControls = true
-                            controlsInteractionKey++
-                            return true
                         }
-                        KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
-                            if (isSeries && hasPreviousEpisode && onPreviousEpisode != null) {
-                                onPreviousEpisode.invoke()
-                            } else {
-                                val cur = exoPlayer.currentPosition
-                                exoPlayer.seekTo((cur - 10000L).coerceAtLeast(0L))
-                            }
-                            showControls = true
-                            controlsInteractionKey++
-                            return true
-                        }
-                        KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                            val cur = exoPlayer.currentPosition
-                            val dur = exoPlayer.duration.coerceAtLeast(0L)
-                            exoPlayer.seekTo((cur + 10000L).coerceAtMost(dur))
-                            showControls = true
-                            controlsInteractionKey++
-                            return true
-                        }
-                        KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                            val cur = exoPlayer.currentPosition
-                            exoPlayer.seekTo((cur - 10000L).coerceAtLeast(0L))
-                            showControls = true
-                            controlsInteractionKey++
-                            return true
-                        }
+                    } catch (e: Exception) {
+                        Log.e("RezkaPlayer", "Error processing media button event", e)
                     }
+                    return super.onMediaButtonEvent(session, controllerInfo, intent)
                 }
-                return super.onMediaButtonEvent(session, controllerInfo, intent)
             }
+            MediaSession.Builder(context, exoPlayer)
+                .setId("RezkaMediaSession_${System.currentTimeMillis()}")
+                .setCallback(callback)
+                .build()
+        } catch (e: Exception) {
+            Log.e("RezkaPlayer", "Error creating MediaSession", e)
+            null
         }
-        MediaSession.Builder(context, exoPlayer)
-            .setId("RezkaMediaSession_${System.currentTimeMillis()}")
-            .setCallback(callback)
-            .build()
     }
 
     DisposableEffect(mediaSession) {
         onDispose {
             try {
-                mediaSession.release()
+                mediaSession?.release()
             } catch (e: Exception) {
                 Log.e("RezkaPlayer", "Error releasing MediaSession", e)
             }
@@ -928,12 +958,20 @@ fun RezkaPlayer(
                     }
                 },
                 update = { playerView ->
-                    playerView.player = exoPlayer
-                    playerView.resizeMode = currentResizeMode.mode
-                    playerView.subtitleView?.setFractionalTextSize(subtitleTextScale)
+                    try {
+                        if (playerView.player != exoPlayer) {
+                            playerView.player = exoPlayer
+                        }
+                        playerView.resizeMode = currentResizeMode.mode
+                        playerView.subtitleView?.setFractionalTextSize(subtitleTextScale)
+                    } catch (e: Exception) {
+                        Log.e("RezkaPlayer", "Error updating PiP PlayerView", e)
+                    }
                 },
                 onRelease = { playerView ->
-                    playerView.player = null
+                    try {
+                        playerView.player = null
+                    } catch (_: Exception) {}
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -985,9 +1023,20 @@ fun RezkaPlayer(
                         }
                     },
                     update = { playerView ->
-                        playerView.player = exoPlayer
-                        playerView.resizeMode = currentResizeMode.mode
-                        playerView.subtitleView?.setFractionalTextSize(subtitleTextScale)
+                        try {
+                            if (playerView.player != exoPlayer) {
+                                playerView.player = exoPlayer
+                            }
+                            playerView.resizeMode = currentResizeMode.mode
+                            playerView.subtitleView?.setFractionalTextSize(subtitleTextScale)
+                        } catch (e: Exception) {
+                            Log.e("RezkaPlayer", "Error updating Floating PlayerView", e)
+                        }
+                    },
+                    onRelease = { playerView ->
+                        try {
+                            playerView.player = null
+                        } catch (_: Exception) {}
                     },
                     modifier = Modifier
                         .fillMaxSize()
@@ -1148,11 +1197,10 @@ fun RezkaPlayer(
                 .onKeyEvent { keyEvent ->
                     if (keyEvent.type != KeyEventType.KeyDown) return@onKeyEvent false
 
-                    // If screen is locked, notify user and absorb input
+                    // If screen is locked, absorb input
                     if (isScreenLocked) {
                         showLockOverlay = true
                         lockOverlayInteractionKey++
-                        screenNotificationMessage = "Экран заблокирован. Удерживайте 2 сек. для разблокировки."
                         return@onKeyEvent true
                     }
 
@@ -1541,7 +1589,6 @@ fun RezkaPlayer(
                                             isScreenLocked = true
                                             showControls = false
                                             showLockOverlay = true
-                                            screenNotificationMessage = "Экран заблокирован. Удерживайте 2 сек. для разблокировки."
                                             view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                                         }
                                     }
@@ -1593,11 +1640,10 @@ fun RezkaPlayer(
                                                     VideoResizeMode.ZOOM -> VideoResizeMode.FILL
                                                     VideoResizeMode.FILL -> VideoResizeMode.FIT
                                                 }
-                                                if (itemId.isNotBlank()) {
+                                                 if (itemId.isNotBlank()) {
                                                     RezkaService.setItemResizeMode(itemId, currentResizeMode.name)
                                                     FirebaseSyncManager.onItemResizeModeUpdated(itemId, currentResizeMode.name)
                                                 }
-                                                screenNotificationMessage = "Масштаб: ${currentResizeMode.title}"
                                                 view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                             }
                                         }
@@ -1616,7 +1662,6 @@ fun RezkaPlayer(
                                                     RezkaService.setItemResizeMode(itemId, currentResizeMode.name)
                                                     FirebaseSyncManager.onItemResizeModeUpdated(itemId, currentResizeMode.name)
                                                 }
-                                                screenNotificationMessage = "Масштаб: ${currentResizeMode.title}"
                                                 view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                             }
                                         }
@@ -1641,90 +1686,25 @@ fun RezkaPlayer(
                     }
                 },
                 update = { playerView ->
-                    playerView.player = exoPlayer
-                    playerView.resizeMode = currentResizeMode.mode
-                    playerView.subtitleView?.setFractionalTextSize(subtitleTextScale)
+                    try {
+                        if (playerView.player != exoPlayer) {
+                            playerView.player = exoPlayer
+                        }
+                        playerView.resizeMode = currentResizeMode.mode
+                        playerView.subtitleView?.setFractionalTextSize(subtitleTextScale)
+                    } catch (e: Exception) {
+                        Log.e("RezkaPlayer", "Error updating Fullscreen PlayerView", e)
+                    }
                 },
                 onRelease = { playerView ->
-                    playerView.player = null
+                    try {
+                        playerView.player = null
+                    } catch (_: Exception) {}
                 },
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Visual Continuous Multi-Tap Seek Indicators (Left / Right)
-            AnimatedVisibility(
-                visible = activeSeekSide == SeekSide.LEFT && !isScreenLocked,
-                enter = fadeIn(animationSpec = tween(100)) + scaleIn(initialScale = 0.8f),
-                exit = fadeOut(animationSpec = tween(250)),
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(start = 56.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(100.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.8f))
-                        .border(1.5.dp, CinemaPrimary, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FastRewind,
-                            contentDescription = "Перемотка назад",
-                            tint = CinemaPrimary,
-                            modifier = Modifier.size(36.dp)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "-$accumulatedSeekSeconds сек",
-                            color = CinemaTextWhite,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
 
-            AnimatedVisibility(
-                visible = activeSeekSide == SeekSide.RIGHT && !isScreenLocked,
-                enter = fadeIn(animationSpec = tween(100)) + scaleIn(initialScale = 0.8f),
-                exit = fadeOut(animationSpec = tween(250)),
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 56.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(100.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.8f))
-                        .border(1.5.dp, CinemaPrimary, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FastForward,
-                            contentDescription = "Перемотка вперед",
-                            tint = CinemaPrimary,
-                            modifier = Modifier.size(36.dp)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "+$accumulatedSeekSeconds сек",
-                            color = CinemaTextWhite,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
 
             // Central On-screen Notification Banner (e.g. Video Scaling Mode, Screen Lock / Unlock)
             AnimatedVisibility(
@@ -2042,7 +2022,6 @@ fun RezkaPlayer(
                                                             unlockHoldProgress = 0f
                                                             showLockOverlay = false
                                                             showControls = true
-                                                            screenNotificationMessage = "Экран разблокирован"
                                                             view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                                                             break
                                                         }
@@ -2221,7 +2200,6 @@ fun RezkaPlayer(
                                     isScreenLocked = true
                                     showControls = false
                                     showLockOverlay = true
-                                    screenNotificationMessage = "Экран заблокирован. Удерживайте 2 сек. для разблокировки."
                                     view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                                 },
                                 modifier = Modifier
@@ -2253,8 +2231,23 @@ fun RezkaPlayer(
                     Row(
                         modifier = Modifier.align(Alignment.Center),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(40.dp)
+                        horizontalArrangement = Arrangement.spacedBy(28.dp)
                     ) {
+                        // LEFT SEEK INDICATOR (-10) - Above screen darkening
+                        AnimatedVisibility(
+                            visible = activeSeekSide == SeekSide.LEFT && !isScreenLocked,
+                            enter = fadeIn(animationSpec = tween(100)) + scaleIn(initialScale = 0.8f),
+                            exit = fadeOut(animationSpec = tween(200))
+                        ) {
+                            Text(
+                                text = if (accumulatedSeekSeconds > 0) "-$accumulatedSeekSeconds" else "-10",
+                                color = Color.White,
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
+                        }
+
                         if (isSeries) {
                             IconButton(
                                 onClick = {
@@ -2297,40 +2290,62 @@ fun RezkaPlayer(
                             }
                         }
 
-                        // Play / Pause Button with prominent TV Remote Cursor
-                        IconButton(
-                            onClick = {
-                                controlsInteractionKey++
-                                currentFocusArea = PlayerFocusArea.MAIN
-                                selectedCenterIndex = if (isSeries) 1 else 0
-                                if (isPlaying) {
-                                    exoPlayer.pause()
-                                } else {
-                                    exoPlayer.play()
-                                }
-                            },
+                        // Play / Pause / Buffering Spinner Button
+                        val showSpinner = isBuffering || isLoading || !hasInitialPlayStarted
+                        val canPlayPause = hasInitialPlayStarted && !isLoading
+
+                        Box(
+                            contentAlignment = Alignment.Center,
                             modifier = Modifier
                                 .size(72.dp)
-                                .scale(if (isPlayPauseRemoteFocused) 1.22f else 1.0f)
-                                .background(
-                                    if (isPlayPauseRemoteFocused) CinemaPrimary else CinemaPrimary.copy(alpha = 0.9f),
-                                    CircleShape
-                                )
-                                .then(
-                                    if (isPlayPauseRemoteFocused) {
-                                        Modifier
-                                            .border(3.5.dp, Color.White, CircleShape)
-                                            .border(5.5.dp, CinemaPrimary.copy(alpha = 0.6f), CircleShape)
-                                    } else Modifier
-                                )
-                                .testTag("player_play_pause_button")
+                                .scale(if (isPlayPauseRemoteFocused && canPlayPause) 1.22f else 1.0f)
                         ) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = "Воспроизведение/Пауза",
-                                tint = CinemaTextWhite,
-                                modifier = Modifier.size(40.dp)
-                            )
+                            if (canPlayPause) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(
+                                            if (isPlayPauseRemoteFocused) CinemaPrimary else CinemaPrimary.copy(alpha = 0.9f),
+                                            CircleShape
+                                        )
+                                        .border(3.dp, Color.White, CircleShape)
+                                        .then(
+                                            if (isPlayPauseRemoteFocused) {
+                                                Modifier.border(5.5.dp, CinemaPrimary.copy(alpha = 0.6f), CircleShape)
+                                            } else Modifier
+                                        )
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) {
+                                            controlsInteractionKey++
+                                            currentFocusArea = PlayerFocusArea.MAIN
+                                            selectedCenterIndex = if (isSeries) 1 else 0
+                                            if (isPlaying) {
+                                                exoPlayer.pause()
+                                            } else {
+                                                exoPlayer.play()
+                                            }
+                                        }
+                                        .testTag("player_play_pause_button"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                        contentDescription = "Воспроизведение/Пауза",
+                                        tint = CinemaTextWhite,
+                                        modifier = Modifier.size(40.dp)
+                                    )
+                                }
+                            }
+
+                            if (showSpinner) {
+                                CircularProgressIndicator(
+                                    color = CinemaPrimary,
+                                    strokeWidth = 3.5.dp,
+                                    modifier = Modifier.size(if (canPlayPause) 72.dp else 64.dp)
+                                )
+                            }
                         }
 
                         if (isSeries) {
@@ -2374,6 +2389,21 @@ fun RezkaPlayer(
                                 )
                             }
                         }
+
+                        // RIGHT SEEK INDICATOR (+10) - Above screen darkening
+                        AnimatedVisibility(
+                            visible = activeSeekSide == SeekSide.RIGHT && !isScreenLocked,
+                            enter = fadeIn(animationSpec = tween(100)) + scaleIn(initialScale = 0.8f),
+                            exit = fadeOut(animationSpec = tween(200))
+                        ) {
+                            Text(
+                                text = if (accumulatedSeekSeconds > 0) "+$accumulatedSeekSeconds" else "+10",
+                                color = Color.White,
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
+                        }
                     }
 
                     // ---- BOTTOM BAR (Time, Slider, Quality, Speed, Stretch/Resize) ----
@@ -2412,7 +2442,7 @@ fun RezkaPlayer(
                             },
                             valueRange = 0f..(totalDuration.toFloat().coerceAtLeast(1f)),
                             colors = SliderDefaults.colors(
-                                thumbColor = CinemaPrimary,
+                                thumbColor = Color.Transparent,
                                 activeTrackColor = CinemaPrimary,
                                 inactiveTrackColor = CinemaSecondary
                             ),
@@ -2655,54 +2685,14 @@ fun RezkaPlayer(
             }
         }
 
-        // ---- BUFFERING OVERLAY (ПЕРЕКРЫВАЕТ КНОПКИ ПЛЕЕРА) ----
-        // Расположен выше контролов в Z-order, благодаря чему крутящееся колечко буферизации
-        // гарантированно перекрывает кнопки в плеере (включая кнопку паузы/воспроизведения в центре)
-        if ((isBuffering || isLoading) && playerErrorMessage == null) {
-            if (!hasInitialPlayStarted) {
-                FallingSkullsBufferingOverlay(
-                    text = "Буферизация... Приятного просмотра!"
-                )
-            } else {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    // Контрастная круглая подложка поверх кнопок плеера (в частности Play/Pause кнопки),
-                    // гарантирующая идеальную читаемость и видимость крутящегося колечка буферизации
-                    Surface(
-                        shape = CircleShape,
-                        color = Color.Black.copy(alpha = 0.75f),
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
-                        shadowElevation = 8.dp,
-                        modifier = Modifier
-                            .size(76.dp)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {
-                                controlsInteractionKey++
-                                if (isPlaying) {
-                                    exoPlayer.pause()
-                                } else {
-                                    exoPlayer.play()
-                                }
-                            }
-                    ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            CircularProgressIndicator(
-                                color = CinemaPrimary,
-                                trackColor = Color.White.copy(alpha = 0.15f),
-                                strokeWidth = 3.5.dp,
-                                modifier = Modifier.size(48.dp)
-                            )
-                        }
-                    }
-                }
-            }
+
+
+        // Central Buffering Overlay with floating skulls when main controls overlay is hidden or video is buffering/loading
+        val isControlsOverlayVisible = showControls && playerErrorMessage == null && !isScreenLocked && !isLoading && streams.isNotEmpty()
+        if (!isControlsOverlayVisible && (isLoading || isBuffering || !hasInitialPlayStarted) && playerErrorMessage == null && !isScreenLocked) {
+            FallingSkullsBufferingOverlay(
+                text = "Буферизация... Приятного просмотра!"
+            )
         }
 
         // Top Bar with Back button and Title during buffering or when streams are loading

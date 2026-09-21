@@ -12,7 +12,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.withTransform
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -24,6 +23,7 @@ import androidx.core.graphics.PathParser
 import com.example.ui.theme.CinemaPrimary
 import com.example.ui.theme.CinemaTextWhite
 import kotlinx.coroutines.android.awaitFrame
+import kotlinx.coroutines.isActive
 import kotlin.math.max
 import kotlin.random.Random
 
@@ -38,29 +38,29 @@ private class SkullParticle(
     var alpha: Float = 1f
 ) {
     fun initRandom(screenWidthPx: Float, screenHeightPx: Float, density: Float) {
-        val sizeDp = Random.nextFloat() * 12f + 22f // 22dp to 34dp
+        val sizeDp = Random.nextFloat() * 14f + 20f // 20dp to 34dp
         radius = (sizeDp * density) / 2f
         x = Random.nextFloat() * screenWidthPx
         y = Random.nextFloat() * screenHeightPx
 
-        val speedDp = Random.nextFloat() * 35f + 20f // 20 to 55 dp/sec speed
+        val speedDp = Random.nextFloat() * 35f + 15f // 15 to 50 dp/sec speed
         val speedPx = speedDp * density
-        
-        // Преобладающий поток слева направо (углы от -35° до +35°) для красивого перелета через весь широкий ландшафтный экран
-        val angleDeg = Random.nextFloat() * 70f - 35f
+
+        // Равномерный 360° угол движения во все стороны для красивого заполнения всего экрана
+        val angleDeg = Random.nextFloat() * 360f
         val angleRad = angleDeg * (Math.PI.toFloat() / 180f)
         vx = kotlin.math.cos(angleRad) * speedPx
         vy = kotlin.math.sin(angleRad) * speedPx
 
         rotation = Random.nextFloat() * 360f
         vRot = (Random.nextFloat() - 0.5f) * 36f // Медленное плавное вращение
-        alpha = Random.nextFloat() * 0.45f + 0.45f
+        alpha = Random.nextFloat() * 0.45f + 0.40f
     }
 }
 
 /**
  * Высокопроизводительный оверлей буферизации с плавно плывущими черепками.
- * Черепки плывут по экрану с рандомным вектором движения и плавным вращением.
+ * Черепки плывут по всему экрану без пустующих зон с минимальной нагрузкой на CPU.
  */
 @Composable
 fun FallingSkullsBufferingOverlay(
@@ -143,7 +143,7 @@ fun FallingSkullsBufferingOverlay(
 }
 
 /**
- * Изолированный слой анимации частиц черепков для нулевой лишней нагрузки на CPU и исключения рекомпозиций родительского дерева UI.
+ * Изолированный слой анимации частиц черепков для минимальной нагрузки на CPU и исключения рекомпозиций UI.
  */
 @Composable
 private fun SkullsParticleCanvas(
@@ -151,65 +151,57 @@ private fun SkullsParticleCanvas(
     density: Float,
     modifier: Modifier = Modifier
 ) {
-    var canvasWidth by remember { mutableFloatStateOf(0f) }
-    var canvasHeight by remember { mutableFloatStateOf(0f) }
-
-    val numParticles = 48
+    val numParticles = 50
     val particles = remember { Array(numParticles) { SkullParticle() } }
     var tick by remember { mutableLongStateOf(0L) }
 
-    var prevWidth by remember { mutableFloatStateOf(0f) }
-    var prevHeight by remember { mutableFloatStateOf(0f) }
+    var currentWidth by remember { mutableFloatStateOf(0f) }
+    var currentHeight by remember { mutableFloatStateOf(0f) }
+    var isInitialized by remember { mutableStateOf(false) }
 
-    LaunchedEffect(canvasWidth, canvasHeight) {
-        if (canvasWidth <= 0f || canvasHeight <= 0f) return@LaunchedEffect
-
-        if (prevWidth <= 0f || prevHeight <= 0f) {
-            // Первичная инициализация
-            particles.forEach { p ->
-                p.initRandom(canvasWidth, canvasHeight, density)
-            }
-        } else if (prevWidth != canvasWidth || prevHeight != canvasHeight) {
-            // Масштабирование координат при смене ориентации экранов (портрет -> ландшафт)
-            val scaleX = canvasWidth / prevWidth
-            val scaleY = canvasHeight / prevHeight
-            particles.forEach { p ->
-                p.x = (p.x * scaleX).coerceIn(0f, canvasWidth)
-                p.y = (p.y * scaleY).coerceIn(0f, canvasHeight)
-            }
-        }
-        prevWidth = canvasWidth
-        prevHeight = canvasHeight
-
+    // Запускаем цикл анимации ровно 1 раз, чтобы он не пересоздавался при изменении размера экрана
+    LaunchedEffect(Unit) {
         var lastNanos = System.nanoTime()
-        while (true) {
+        while (isActive) {
             awaitFrame()
             val now = System.nanoTime()
             val dt = ((now - lastNanos) / 1e9f).coerceIn(0.005f, 0.05f)
             lastNanos = now
 
-            particles.forEach { p ->
-                p.x += p.vx * dt
-                p.y += p.vy * dt
-                p.rotation = (p.rotation + p.vRot * dt) % 360f
+            val w = currentWidth
+            val h = currentHeight
 
-                val margin = p.radius * 3.0f + 16f * density
-
-                // Перенос черепков с вылетом за противоположные границы экрана
-                if (p.x > canvasWidth + margin) {
-                    p.x = -margin
-                    p.y = Random.nextFloat() * canvasHeight
-                } else if (p.x < -margin) {
-                    p.x = canvasWidth + margin
-                    p.y = Random.nextFloat() * canvasHeight
+            if (w > 0f && h > 0f) {
+                if (!isInitialized) {
+                    particles.forEach { p ->
+                        p.initRandom(w, h, density)
+                    }
+                    isInitialized = true
                 }
 
-                if (p.y > canvasHeight + margin) {
-                    p.y = -margin
-                    p.x = Random.nextFloat() * canvasWidth
-                } else if (p.y < -margin) {
-                    p.y = canvasHeight + margin
-                    p.x = Random.nextFloat() * canvasWidth
+                particles.forEach { p ->
+                    p.x += p.vx * dt
+                    p.y += p.vy * dt
+                    p.rotation = (p.rotation + p.vRot * dt) % 360f
+
+                    val margin = p.radius * 2.5f + 16f * density
+
+                    // Зацикливание по всем 4 границам (право, лево, низ, верх)
+                    if (p.x > w + margin) {
+                        p.x = -margin
+                        p.y = Random.nextFloat() * h
+                    } else if (p.x < -margin) {
+                        p.x = w + margin
+                        p.y = Random.nextFloat() * h
+                    }
+
+                    if (p.y > h + margin) {
+                        p.y = -margin
+                        p.x = Random.nextFloat() * w
+                    } else if (p.y < -margin) {
+                        p.y = h + margin
+                        p.x = Random.nextFloat() * w
+                    }
                 }
             }
 
@@ -218,15 +210,35 @@ private fun SkullsParticleCanvas(
     }
 
     Canvas(
-        modifier = modifier
-            .fillMaxSize()
-            .onGloballyPositioned { coords ->
-                canvasWidth = coords.size.width.toFloat()
-                canvasHeight = coords.size.height.toFloat()
-            }
+        modifier = modifier.fillMaxSize()
     ) {
+        // Точные актуальные габариты Canvas напрямую из DrawScope
+        val w = size.width
+        val h = size.height
+
+        if (w > 0f && h > 0f) {
+            if (currentWidth != w || currentHeight != h) {
+                val oldW = currentWidth
+                currentWidth = w
+                currentHeight = h
+
+                // Если экран расширился (например, при переходе из портрета в ландшафт),
+                // распределяем черепки по всей ширине, чтобы не создавались пустые зоны
+                if (isInitialized && oldW > 0f && w > oldW) {
+                    val ratio = (w - oldW) / w
+                    particles.forEach { p ->
+                        if (p.x > w || Random.nextFloat() < ratio) {
+                            p.x = Random.nextFloat() * w
+                            p.y = Random.nextFloat() * h
+                        }
+                    }
+                }
+            }
+        }
+
         @Suppress("UNUSED_VARIABLE")
-        val frame = tick
+        val frame = tick // Чтение tick вызовет только перерисовку DrawScope без рекомпозиции Composables
+
         val bmp = skullBitmap
         val bmpW = bmp.width.toFloat()
         val bmpH = bmp.height.toFloat()
@@ -234,8 +246,8 @@ private fun SkullsParticleCanvas(
         val halfBmpH = (bmpH / 2f).toInt()
 
         particles.forEach { p ->
-            if (p.x + p.radius >= 0f && p.x - p.radius <= size.width &&
-                p.y + p.radius >= 0f && p.y - p.radius <= size.height) {
+            if (p.x + p.radius >= 0f && p.x - p.radius <= w &&
+                p.y + p.radius >= 0f && p.y - p.radius <= h) {
                 withTransform({
                     translate(left = p.x, top = p.y)
                     rotate(degrees = p.rotation)

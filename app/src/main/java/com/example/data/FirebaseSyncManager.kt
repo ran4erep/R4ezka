@@ -54,6 +54,9 @@ object FirebaseSyncManager {
     private val _currentUserAvatar = MutableStateFlow<String?>(null)
     val currentUserAvatar: StateFlow<String?> = _currentUserAvatar.asStateFlow()
 
+    private val _currentUserRegisteredAt = MutableStateFlow<Long?>(null)
+    val currentUserRegisteredAt: StateFlow<Long?> = _currentUserRegisteredAt.asStateFlow()
+
     private val _userKey = MutableStateFlow<String?>(null)
     val userKey: StateFlow<String?> = _userKey.asStateFlow()
 
@@ -73,9 +76,13 @@ object FirebaseSyncManager {
         val savedUser = prefs?.getString("auth_username", null)
         val savedKey = prefs?.getString("auth_user_key", null)
         val savedAvatar = prefs?.getString("auth_avatar", null)
+        val savedRegAt = prefs?.getLong("auth_registered_at", 0L) ?: 0L
 
         if (!savedAvatar.isNullOrBlank()) {
             _currentUserAvatar.value = savedAvatar
+        }
+        if (savedRegAt > 0L) {
+            _currentUserRegisteredAt.value = savedRegAt
         }
 
         if (!savedUser.isNullOrBlank() && !savedKey.isNullOrBlank()) {
@@ -178,11 +185,12 @@ object FirebaseSyncManager {
             val salt = generateSalt()
             val passwordHash = hashPassword(password, salt)
 
+            val regAt = System.currentTimeMillis()
             val profileJson = JSONObject().apply {
                 put("username", cleanName)
                 put("passwordHash", passwordHash)
                 put("salt", salt)
-                put("registeredAt", System.currentTimeMillis())
+                put("registeredAt", regAt)
             }
 
             val putProfileRequest = Request.Builder()
@@ -213,11 +221,13 @@ object FirebaseSyncManager {
             // 4. Сохраняем сессию
             _currentUser.value = cleanName
             _userKey.value = key
+            _currentUserRegisteredAt.value = regAt
             _isLoggedIn.value = true
 
             prefs?.edit()
                 ?.putString("auth_username", cleanName)
                 ?.putString("auth_user_key", key)
+                ?.putLong("auth_registered_at", regAt)
                 ?.apply()
 
             // 5. Выгружаем текущие локальные закладки и историю в облако
@@ -263,6 +273,7 @@ object FirebaseSyncManager {
             val storedHash = json.optString("passwordHash", "")
             val storedSalt = json.optString("salt", "")
             val realUsername = json.optString("username", cleanName)
+            val registeredAt = json.optLong("registeredAt", 0L)
 
             if (storedHash.isEmpty() || storedSalt.isEmpty()) {
                 return@withContext Result.failure(Exception("Ошибка структуры профиля в базе данных"))
@@ -299,11 +310,17 @@ object FirebaseSyncManager {
             _currentUser.value = realUsername
             _userKey.value = key
             _currentUserAvatar.value = fetchedAvatar
+            if (registeredAt > 0L) {
+                _currentUserRegisteredAt.value = registeredAt
+            }
             _isLoggedIn.value = true
 
             val editor = prefs?.edit()
                 ?.putString("auth_username", realUsername)
                 ?.putString("auth_user_key", key)
+            if (registeredAt > 0L) {
+                editor?.putLong("auth_registered_at", registeredAt)
+            }
             if (fetchedAvatar != null) {
                 editor?.putString("auth_avatar", fetchedAvatar)
             } else {
@@ -372,10 +389,12 @@ object FirebaseSyncManager {
         _currentUser.value = null
         _userKey.value = null
         _currentUserAvatar.value = null
+        _currentUserRegisteredAt.value = null
         prefs?.edit()
             ?.remove("auth_username")
             ?.remove("auth_user_key")
             ?.remove("auth_avatar")
+            ?.remove("auth_registered_at")
             ?.apply()
     }
 
@@ -754,6 +773,25 @@ object FirebaseSyncManager {
         _isSyncing.value = true
 
         try {
+            // 0. Синхронизация профиля (дата регистрации)
+            try {
+                val profReq = Request.Builder().url("$DATABASE_URL/users/$key/profile.json").get().build()
+                val profResp = httpClient.newCall(profReq).execute()
+                if (profResp.isSuccessful) {
+                    val body = profResp.body?.string()?.trim() ?: ""
+                    if (body != "null" && body.isNotEmpty()) {
+                        val pJson = JSONObject(body)
+                        val regAt = pJson.optLong("registeredAt", 0L)
+                        if (regAt > 0L) {
+                            _currentUserRegisteredAt.value = regAt
+                            prefs?.edit()?.putLong("auth_registered_at", regAt)?.apply()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to sync profile info: ${e.message}")
+            }
+
             // 1. Синхронизация Избранного
             val favReq = Request.Builder().url("$DATABASE_URL/users/$key/favorites.json").get().build()
             val favResp = httpClient.newCall(favReq).execute()
