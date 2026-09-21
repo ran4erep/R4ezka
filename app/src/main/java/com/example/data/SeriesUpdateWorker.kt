@@ -189,10 +189,6 @@ object SeriesUpdateScheduler {
                     "SeriesUpdateScheduler",
                     "Точный AlarmManager установлен: kind=$kind, trigger=$triggerAtMs, delay=${delayMs / 1000}s"
                 )
-
-                if (kind == ALARM_KIND_PERIODIC) {
-                    schedulePeriodicBackupAlarm(context, triggerAtMs)
-                }
                 return
             } catch (e: SecurityException) {
                 Log.w("SeriesUpdateScheduler", "Exact alarm недоступен, используется резервный AlarmManager: ${e.message}")

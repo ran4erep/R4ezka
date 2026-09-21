@@ -50,6 +50,8 @@ object SeriesUpdateEngine {
     private const val TAG = "SeriesUpdateEngine"
     const val CHANNEL_ID = "rezka_series_updates_channel"
 
+    private val isCheckRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+
     // Регулярные выражения скомпилированы один раз для максимальной производительности O(1)
     private val EPISODE_TAG_REGEX = Regex(
         """<li[^>]*?class=["'][^"']*?b-simple_episode__item[^"']*?["'][^>]*?data-season_id=["'](\d+)["'][^>]*?data-episode_id=["'](\d+)["'][^>]*?>(.*?)</li>""",
@@ -316,7 +318,12 @@ object SeriesUpdateEngine {
         repository: RezkaRepository,
         onUpdateFound: ((SeriesSubscriptionEntity, Int, Int, String) -> Unit)? = null
     ): List<SeriesSubscriptionEntity> = withContext(Dispatchers.IO) {
-        val subscriptions = repository.getAllSubscriptionsList()
+        if (!isCheckRunning.compareAndSet(false, true)) {
+            Log.w(TAG, "Фоновая проверка подписок уже выполняется. Повторный запуск пропущен.")
+            return@withContext emptyList()
+        }
+        try {
+            val subscriptions = repository.getAllSubscriptionsList()
         SeriesUpdateLogger.logCheckStarted(context, subscriptions.size)
 
         if (subscriptions.isEmpty()) {
@@ -601,8 +608,163 @@ object SeriesUpdateEngine {
             }
         }
 
-        SeriesUpdateLogger.logCheckFinished(context, updatedList.size)
-        return@withContext updatedList
+            SeriesUpdateLogger.logCheckFinished(context, updatedList.size)
+            return@withContext updatedList
+        } finally {
+            isCheckRunning.set(false)
+        }
+    }
+
+    /**
+     * Точечная мгновенная проверка обновлений для одного сериала/фильма при запуске/открытии просмотра.
+     */
+    suspend fun checkSingleSubscriptionUpdate(
+        context: Context,
+        repository: RezkaRepository,
+        subscription: SeriesSubscriptionEntity,
+        forceCheck: Boolean = false
+    ): SeriesScanResult? = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        // Таймаут безопасности: не опрашиваем повторно тот же сериал чаще чем раз в 30 секунд
+        if (!forceCheck && (now - subscription.lastCheckedAt) < 30_000L) {
+            return@withContext null
+        }
+
+        return@withContext if (subscription.isMovie()) {
+            val movieScan = MovieReleaseEngine.checkMovieRelease(subscription.url)
+            val isTestTriggered = subscription.lastEpisodeName.contains("[TEST]")
+            val wasUnreleased = (subscription.lastKnownSeason == 0 && subscription.lastKnownEpisode == 0) || isTestTriggered
+            val shouldNotify = wasUnreleased && (movieScan.isReleased || isTestTriggered)
+
+            if (shouldNotify) {
+                val epName = if (movieScan.translatorName.isNotBlank() && !movieScan.translatorName.equals("HDRezka", ignoreCase = true)) {
+                    "Фильм вышел (${movieScan.translatorName})"
+                } else {
+                    "Фильм вышел"
+                }
+
+                repository.updateSubscriptionProgress(
+                    id = subscription.id,
+                    season = 1,
+                    episode = 1,
+                    episodeName = epName,
+                    checkedAt = now,
+                    hasUpdate = true
+                )
+                FirebaseSyncManager.onSubscriptionProgressUpdated(
+                    id = subscription.id,
+                    season = 1,
+                    episode = 1,
+                    episodeName = epName,
+                    hasUpdate = true
+                )
+
+                val updatedSub = subscription.copy(
+                    lastKnownSeason = 1,
+                    lastKnownEpisode = 1,
+                    lastEpisodeName = epName,
+                    lastCheckedAt = now,
+                    hasUnseenUpdate = true
+                )
+
+                MovieReleaseEngine.showMovieReleasedNotification(context, updatedSub, movieScan.translatorName)
+                SeriesUpdateLogger.logItemChecked(
+                    context = context,
+                    title = subscription.title,
+                    type = subscription.type,
+                    translatorId = subscription.translatorId,
+                    currentSeason = subscription.lastKnownSeason,
+                    currentEpisode = subscription.lastKnownEpisode,
+                    lastEpName = subscription.lastEpisodeName,
+                    expectedSeason = 1,
+                    expectedEpisode = 1,
+                    foundSeason = 1,
+                    foundEpisode = 1,
+                    foundEpName = epName,
+                    isNewFound = true
+                )
+            } else if (movieScan.isSuccess) {
+                repository.updateSubscriptionCheckedTime(subscription.id, now)
+            }
+            SeriesScanResult(
+                latestSeason = if (movieScan.isReleased) 1 else 0,
+                latestEpisode = if (movieScan.isReleased) 1 else 0,
+                latestEpisodeName = if (movieScan.isReleased) "Фильм вышел" else "",
+                isSuccess = movieScan.isSuccess,
+                errorMessage = movieScan.errorMessage
+            )
+        } else {
+            val scanResult = if (subscription.numericPostId.isNotBlank()) {
+                val ajaxRes = fetchSeriesLatestEpisodeAjax(subscription.numericPostId, subscription.translatorId)
+                if (ajaxRes.isSuccess) ajaxRes else fetchSeriesLatestEpisode(subscription.url)
+            } else {
+                fetchSeriesLatestEpisode(subscription.url)
+            }
+
+            val expSeason = if (subscription.lastKnownSeason == 0 && subscription.lastKnownEpisode == 0) 1 else subscription.lastKnownSeason
+            val expEpisode = if (subscription.lastKnownSeason == 0 && subscription.lastKnownEpisode == 0) 1 else subscription.lastKnownEpisode + 1
+
+            if (scanResult.isSuccess) {
+                val isNewSeason = scanResult.latestSeason > subscription.lastKnownSeason
+                val isNewEpisodeInSeason = scanResult.latestSeason == subscription.lastKnownSeason &&
+                        scanResult.latestEpisode > subscription.lastKnownEpisode
+
+                if (isNewSeason || isNewEpisodeInSeason) {
+                    Log.i(TAG, "🔥 [Запуск] Найдена новая серия для '${subscription.title}'! S${subscription.lastKnownSeason}E${subscription.lastKnownEpisode} -> S${scanResult.latestSeason}E${scanResult.latestEpisode}")
+
+                    repository.updateSubscriptionProgress(
+                        id = subscription.id,
+                        season = scanResult.latestSeason,
+                        episode = scanResult.latestEpisode,
+                        episodeName = scanResult.latestEpisodeName,
+                        checkedAt = now,
+                        hasUpdate = true
+                    )
+                    FirebaseSyncManager.onSubscriptionProgressUpdated(
+                        id = subscription.id,
+                        season = scanResult.latestSeason,
+                        episode = scanResult.latestEpisode,
+                        episodeName = scanResult.latestEpisodeName,
+                        hasUpdate = true
+                    )
+
+                    val updatedSub = subscription.copy(
+                        lastKnownSeason = scanResult.latestSeason,
+                        lastKnownEpisode = scanResult.latestEpisode,
+                        lastEpisodeName = scanResult.latestEpisodeName,
+                        lastCheckedAt = now,
+                        hasUnseenUpdate = true
+                    )
+
+                    showNewEpisodeNotification(
+                        context = context,
+                        subscription = updatedSub,
+                        season = scanResult.latestSeason,
+                        episode = scanResult.latestEpisode,
+                        episodeName = scanResult.latestEpisodeName
+                    )
+
+                    SeriesUpdateLogger.logItemChecked(
+                        context = context,
+                        title = subscription.title,
+                        type = subscription.type,
+                        translatorId = subscription.translatorId,
+                        currentSeason = subscription.lastKnownSeason,
+                        currentEpisode = subscription.lastKnownEpisode,
+                        lastEpName = subscription.lastEpisodeName,
+                        expectedSeason = expSeason,
+                        expectedEpisode = expEpisode,
+                        foundSeason = scanResult.latestSeason,
+                        foundEpisode = scanResult.latestEpisode,
+                        foundEpName = scanResult.latestEpisodeName,
+                        isNewFound = true
+                    )
+                } else {
+                    repository.updateSubscriptionCheckedTime(subscription.id, now)
+                }
+            }
+            scanResult
+        }
     }
 
     /**

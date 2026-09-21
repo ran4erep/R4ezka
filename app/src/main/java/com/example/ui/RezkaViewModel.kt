@@ -733,6 +733,16 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Точечная фоновая проверка обновлений для конкретного сериала при его запуске/просмотре.
+     */
+    fun checkSeriesUpdateOnLaunch(context: Context, itemId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val sub = repository.getSubscription(itemId) ?: return@launch
+            SeriesUpdateEngine.checkSingleSubscriptionUpdate(context, repository, sub)
+        }
+    }
+
+    /**
      * Высокоточный детектор типа подписки: фильм или сериал.
      */
     fun isMovieSubscription(sub: SeriesSubscriptionEntity): Boolean = sub.isMovie()
