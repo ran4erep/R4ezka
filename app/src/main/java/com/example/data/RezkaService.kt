@@ -2110,6 +2110,59 @@ object RezkaService {
     }
 
     /**
+     * Быстрое подтягивание актуальной плашки (сезоны/серии/рейтинг) с сайта для тайтла без построения DOM
+     */
+    suspend fun fetchLatestRatingForUrl(rawUrl: String, typeStr: String = ""): String? = withContext(Dispatchers.IO) {
+        if (rawUrl.isBlank()) return@withContext null
+        val adjustedUrl = adjustUrlToCurrentMirror(rawUrl)
+
+        try {
+            val request = Request.Builder()
+                .url(adjustedUrl)
+                .header("User-Agent", USER_AGENT)
+                .header("Referer", "$currentBaseUrl/")
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+                .build()
+
+            val html = client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) response.body?.string().orEmpty() else ""
+            }
+
+            if (html.isBlank()) return@withContext null
+
+            val isSeriesType = typeStr.equals("SERIES", ignoreCase = true) ||
+                    typeStr.equals("ANIME", ignoreCase = true) ||
+                    typeStr.equals("CARTOON", ignoreCase = true) ||
+                    adjustedUrl.contains("/series/") ||
+                    adjustedUrl.contains("/animation/") ||
+                    adjustedUrl.contains("/cartoons/")
+
+            if (isSeriesType) {
+                val scanResult = SeriesUpdateEngine.parseLatestEpisodeFromHtml(html)
+                if (scanResult.isSuccess && (scanResult.latestSeason > 0 || scanResult.latestEpisode > 0)) {
+                    return@withContext "${scanResult.latestSeason} сезон ${scanResult.latestEpisode} серия"
+                }
+            }
+
+            val doc = Jsoup.parse(html)
+            val ratingEl = doc.selectFirst(".rating, .num, .b-content__inline_item-cover .info, .b-post__info_episodes_all, .b-post__status, i.imdb, i.kp, .info")
+            val parsedRating = ratingEl?.text()?.trim() ?: ""
+            if (parsedRating.isNotEmpty()) {
+                return@withContext parsedRating
+            }
+
+            val (ratingInfo, mainRating) = parseRatingInfo(doc)
+            if (mainRating.isNotEmpty()) {
+                return@withContext mainRating
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Ошибка обновления плашки для $adjustedUrl: ${e.message}")
+        }
+        return@withContext null
+    }
+
+    /**
      * Получение страницы деталей фильма/сериала с rezka-tv.org
      */
     suspend fun getDetail(url: String): RezkaDetail = withContext(Dispatchers.IO) {
