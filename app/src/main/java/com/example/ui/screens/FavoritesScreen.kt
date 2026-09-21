@@ -15,6 +15,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -44,6 +45,10 @@ fun FavoritesScreen(
     modifier: Modifier = Modifier
 ) {
     val favorites by viewModel.favorites.collectAsState()
+
+    LaunchedEffect(favorites.map { it.id }) {
+        viewModel.refreshFavoritesInfo()
+    }
     val cardGridMode by viewModel.cardGridMode.collectAsState()
     val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
     val configuration = LocalConfiguration.current

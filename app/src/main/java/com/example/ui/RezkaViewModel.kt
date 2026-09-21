@@ -9,9 +9,13 @@ import com.example.RezkaApplication
 import com.example.data.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 sealed interface CatalogState {
@@ -419,6 +423,25 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     hasMore = initialHasMore,
                     numericPostId = detail.numericPostId
                 )
+
+                if (repository.isFavorite(detail.id)) {
+                    val currentFav = favorites.value.find { it.id == detail.id }
+                    if (currentFav != null) {
+                        val latestBadge = if (detail.type == RezkaType.SERIES || detail.type == RezkaType.ANIME || detail.type == RezkaType.CARTOON) {
+                            val maxSeason = detail.seasons.maxOfOrNull { it.id } ?: 0
+                            val lastSeasonObj = detail.seasons.find { it.id == maxSeason }
+                            val maxEp = lastSeasonObj?.episodes?.maxOfOrNull { it.id.toIntOrNull() ?: 0 } ?: 0
+                            if (maxSeason > 0 && maxEp > 0) "$maxSeason сезон $maxEp серия" else detail.rating
+                        } else {
+                            detail.rating.ifEmpty { currentFav.rating }
+                        }
+                        if (latestBadge.isNotEmpty() && latestBadge != currentFav.rating) {
+                            val updated = currentFav.copy(rating = latestBadge)
+                            repository.insertFavoriteEntity(updated)
+                            FirebaseSyncManager.onFavoriteAdded(updated)
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 _detailState.value = DetailState.Error("Что-то пошло не так :(")
@@ -577,6 +600,37 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.removeFavorite(itemId)
             FirebaseSyncManager.onFavoriteRemoved(itemId)
+        }
+    }
+
+    private var refreshFavoritesJob: Job? = null
+
+    /**
+     * Подтягивает с сайта актуальные сезоны и серии для всех сериалов в избранном.
+     */
+    fun refreshFavoritesInfo() {
+        val currentFavorites = favorites.value
+        if (currentFavorites.isEmpty()) return
+
+        refreshFavoritesJob?.cancel()
+        refreshFavoritesJob = viewModelScope.launch(Dispatchers.IO) {
+            val semaphore = Semaphore(3)
+            currentFavorites.map { fav ->
+                async {
+                    semaphore.withPermit {
+                        try {
+                            val updatedRating = RezkaService.fetchLatestRatingForUrl(fav.url, fav.type)
+                            if (!updatedRating.isNullOrBlank() && updatedRating != fav.rating) {
+                                val updatedEntity = fav.copy(rating = updatedRating)
+                                repository.insertFavoriteEntity(updatedEntity)
+                                FirebaseSyncManager.onFavoriteAdded(updatedEntity)
+                            }
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                        }
+                    }
+                }
+            }.awaitAll()
         }
     }
 
