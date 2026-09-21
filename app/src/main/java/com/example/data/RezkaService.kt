@@ -865,6 +865,25 @@ object RezkaService {
         prefs?.edit()?.putString("default_resize_mode", mode)?.apply()
     }
 
+    private val itemResizeModesMap = ConcurrentHashMap<String, String>()
+
+    fun getItemResizeMode(itemId: String): String? {
+        if (itemId.isBlank()) return null
+        return itemResizeModesMap[itemId] ?: prefs?.getString("item_resize_mode_$itemId", null)?.also {
+            itemResizeModesMap[itemId] = it
+        }
+    }
+
+    fun setItemResizeMode(itemId: String, mode: String) {
+        if (itemId.isBlank()) return
+        itemResizeModesMap[itemId] = mode
+        prefs?.edit()?.putString("item_resize_mode_$itemId", mode)?.apply()
+    }
+
+    fun getEffectiveResizeMode(itemId: String): String {
+        return getItemResizeMode(itemId) ?: defaultResizeMode.value
+    }
+
     fun setTvModePreference(mode: String) {
         _tvModePreference.value = mode
         prefs?.edit()?.putString("tv_mode_preference", mode)?.apply()

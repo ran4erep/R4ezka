@@ -2268,6 +2268,7 @@ fun DetailScreen(
             RezkaPlayer(
                 title = playerTitle,
                 subtitle = playerSubtitle,
+                itemId = item.id,
                 streams = streams,
                 isLoading = isDecryptingStreams,
                 isTvMode = isTvMode,
