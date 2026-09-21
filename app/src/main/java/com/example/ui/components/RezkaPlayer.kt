@@ -13,6 +13,9 @@ import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.app.PictureInPictureModeChangedInfo
 import androidx.core.util.Consumer
 import kotlin.OptIn
@@ -399,6 +402,25 @@ fun RezkaPlayer(
             ExoPlayer.Builder(context).build().apply {
                 playWhenReady = true
             }
+        }
+    }
+
+    // Auto-pause playback when app is minimized or sent to background (if not in Picture-in-Picture)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, exoPlayer) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                val inPip = compActivity?.isInPictureInPictureMode == true || isInPipMode
+                if (!inPip) {
+                    if (exoPlayer.isPlaying) {
+                        exoPlayer.pause()
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
@@ -917,23 +939,25 @@ fun RezkaPlayer(
         }
     }
 
-    // Динамическое скрытие статус-бара и навигационной панели при изменении состояния диалогов или контролов.
-    // Это гарантирует, что системные панели скроются сразу после закрытия диалогов (например, выбора озвучки),
-    // так как показ диалога заставляет систему временно отобразить статус-бар.
+    val controlsVisible = showControls || showSpeedDialog || showQualityDialog || showTranslatorDialog || showSubtitlesDialog
+
+    // Динамический показ и скрытие статус-бара при изменении состояния контролов и диалогов.
+    // Когда отображаются элементы управления или открыты диалоги — статус-бар виден.
+    // Когда элементы управления прячутся — статус-бар прячется вместе с ними.
     LaunchedEffect(
         isFloating,
-        showControls,
-        showSpeedDialog,
-        showQualityDialog,
-        showTranslatorDialog,
-        showSubtitlesDialog,
+        controlsVisible,
         isScreenLocked
     ) {
         if (!isFloating && window != null) {
             val insetsController = WindowCompat.getInsetsController(window, window.decorView)
             insetsController.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            insetsController.hide(WindowInsetsCompat.Type.systemBars())
+            if (controlsVisible && !isScreenLocked) {
+                insetsController.show(WindowInsetsCompat.Type.statusBars())
+            } else {
+                insetsController.hide(WindowInsetsCompat.Type.systemBars())
+            }
         }
     }
 
@@ -2226,180 +2250,191 @@ fun RezkaPlayer(
                     val isPlayPauseRemoteFocused = isCenterAreaActive && (if (isSeries) selectedCenterIndex == 1 else selectedCenterIndex == 0)
                     val isNextEpisodeRemoteFocused = isCenterAreaActive && isSeries && selectedCenterIndex == 2
 
-                    Row(
-                        modifier = Modifier.align(Alignment.Center),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(28.dp)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.Center),
+                        contentAlignment = Alignment.Center
                     ) {
-                        // LEFT SEEK INDICATOR (-10) - Above screen darkening
+                        // Fixed row containing strictly playback control buttons (will NEVER shift during seek)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(28.dp)
+                        ) {
+                            if (isSeries) {
+                                IconButton(
+                                    onClick = {
+                                        controlsInteractionKey++
+                                        currentFocusArea = PlayerFocusArea.MAIN
+                                        selectedCenterIndex = 0
+                                        onPreviousEpisode?.invoke()
+                                    },
+                                    enabled = hasPreviousEpisode,
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .scale(if (isPrevEpisodeRemoteFocused) 1.22f else 1.0f)
+                                        .background(
+                                            when {
+                                                isPrevEpisodeRemoteFocused -> CinemaPrimary.copy(alpha = 0.45f)
+                                                hasPreviousEpisode -> Color.Black.copy(alpha = 0.5f)
+                                                else -> Color.Black.copy(alpha = 0.2f)
+                                            },
+                                            CircleShape
+                                        )
+                                        .then(
+                                            if (isPrevEpisodeRemoteFocused) {
+                                                Modifier
+                                                    .border(3.dp, CinemaPrimary, CircleShape)
+                                                    .border(1.dp, Color.White.copy(alpha = 0.85f), CircleShape)
+                                            } else Modifier
+                                        )
+                                        .testTag("player_prev_episode_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.SkipPrevious,
+                                        contentDescription = "Предыдущая серия",
+                                        tint = when {
+                                            isPrevEpisodeRemoteFocused -> CinemaPrimary
+                                            hasPreviousEpisode -> CinemaTextWhite
+                                            else -> CinemaTextGray.copy(alpha = 0.4f)
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+                            }
+
+                            // Play / Pause / Buffering Spinner Button
+                            val showSpinner = isBuffering || isLoading || !hasInitialPlayStarted
+                            val canPlayPause = hasInitialPlayStarted && !isLoading
+
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .scale(if (isPlayPauseRemoteFocused && canPlayPause) 1.22f else 1.0f)
+                            ) {
+                                if (canPlayPause) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .background(
+                                                if (isPlayPauseRemoteFocused) CinemaPrimary else CinemaPrimary.copy(alpha = 0.9f),
+                                                CircleShape
+                                            )
+                                            .border(3.dp, Color.White, CircleShape)
+                                            .then(
+                                                if (isPlayPauseRemoteFocused) {
+                                                    Modifier.border(5.5.dp, CinemaPrimary.copy(alpha = 0.6f), CircleShape)
+                                                } else Modifier
+                                            )
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) {
+                                                controlsInteractionKey++
+                                                currentFocusArea = PlayerFocusArea.MAIN
+                                                selectedCenterIndex = if (isSeries) 1 else 0
+                                                if (isPlaying) {
+                                                    exoPlayer.pause()
+                                                } else {
+                                                    exoPlayer.play()
+                                                }
+                                            }
+                                            .testTag("player_play_pause_button"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                            contentDescription = "Воспроизведение/Пауза",
+                                            tint = CinemaTextWhite,
+                                            modifier = Modifier.size(40.dp)
+                                        )
+                                    }
+                                }
+
+                                if (showSpinner) {
+                                    CircularProgressIndicator(
+                                        color = CinemaPrimary,
+                                        strokeWidth = 3.5.dp,
+                                        modifier = Modifier.size(if (canPlayPause) 72.dp else 64.dp)
+                                    )
+                                }
+                            }
+
+                            if (isSeries) {
+                                IconButton(
+                                    onClick = {
+                                        controlsInteractionKey++
+                                        currentFocusArea = PlayerFocusArea.MAIN
+                                        selectedCenterIndex = 2
+                                        onNextEpisode?.invoke()
+                                    },
+                                    enabled = hasNextEpisode,
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .scale(if (isNextEpisodeRemoteFocused) 1.22f else 1.0f)
+                                        .background(
+                                            when {
+                                                isNextEpisodeRemoteFocused -> CinemaPrimary.copy(alpha = 0.45f)
+                                                hasNextEpisode -> Color.Black.copy(alpha = 0.5f)
+                                                else -> Color.Black.copy(alpha = 0.2f)
+                                            },
+                                            CircleShape
+                                        )
+                                        .then(
+                                            if (isNextEpisodeRemoteFocused) {
+                                                Modifier
+                                                    .border(3.dp, CinemaPrimary, CircleShape)
+                                                    .border(1.dp, Color.White.copy(alpha = 0.85f), CircleShape)
+                                            } else Modifier
+                                        )
+                                        .testTag("player_next_episode_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.SkipNext,
+                                        contentDescription = "Следующая серия",
+                                        tint = when {
+                                            isNextEpisodeRemoteFocused -> CinemaPrimary
+                                            hasNextEpisode -> CinemaTextWhite
+                                            else -> CinemaTextGray.copy(alpha = 0.4f)
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // LEFT SEEK INDICATOR (-10) - Positioned beside buttons without shifting layout
                         AnimatedVisibility(
                             visible = activeSeekSide == SeekSide.LEFT && !isScreenLocked,
                             enter = fadeIn(animationSpec = tween(100)) + scaleIn(initialScale = 0.8f),
-                            exit = fadeOut(animationSpec = tween(200))
+                            exit = fadeOut(animationSpec = tween(200)),
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .offset(x = if (isSeries) (-150).dp else (-90).dp)
                         ) {
                             Text(
                                 text = if (accumulatedSeekSeconds > 0) "-$accumulatedSeekSeconds" else "-10",
                                 color = Color.White,
                                 fontSize = 28.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 4.dp)
+                                fontWeight = FontWeight.ExtraBold
                             )
                         }
 
-                        if (isSeries) {
-                            IconButton(
-                                onClick = {
-                                    controlsInteractionKey++
-                                    currentFocusArea = PlayerFocusArea.MAIN
-                                    selectedCenterIndex = 0
-                                    onPreviousEpisode?.invoke()
-                                },
-                                enabled = hasPreviousEpisode,
-                                modifier = Modifier
-                                    .size(56.dp)
-                                    .scale(if (isPrevEpisodeRemoteFocused) 1.22f else 1.0f)
-                                    .background(
-                                        when {
-                                            isPrevEpisodeRemoteFocused -> CinemaPrimary.copy(alpha = 0.45f)
-                                            hasPreviousEpisode -> Color.Black.copy(alpha = 0.5f)
-                                            else -> Color.Black.copy(alpha = 0.2f)
-                                        },
-                                        CircleShape
-                                    )
-                                    .then(
-                                        if (isPrevEpisodeRemoteFocused) {
-                                            Modifier
-                                                .border(3.dp, CinemaPrimary, CircleShape)
-                                                .border(1.dp, Color.White.copy(alpha = 0.85f), CircleShape)
-                                        } else Modifier
-                                    )
-                                    .testTag("player_prev_episode_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.SkipPrevious,
-                                    contentDescription = "Предыдущая серия",
-                                    tint = when {
-                                        isPrevEpisodeRemoteFocused -> CinemaPrimary
-                                        hasPreviousEpisode -> CinemaTextWhite
-                                        else -> CinemaTextGray.copy(alpha = 0.4f)
-                                    },
-                                    modifier = Modifier.size(32.dp)
-                                )
-                            }
-                        }
-
-                        // Play / Pause / Buffering Spinner Button
-                        val showSpinner = isBuffering || isLoading || !hasInitialPlayStarted
-                        val canPlayPause = hasInitialPlayStarted && !isLoading
-
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .size(72.dp)
-                                .scale(if (isPlayPauseRemoteFocused && canPlayPause) 1.22f else 1.0f)
-                        ) {
-                            if (canPlayPause) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(
-                                            if (isPlayPauseRemoteFocused) CinemaPrimary else CinemaPrimary.copy(alpha = 0.9f),
-                                            CircleShape
-                                        )
-                                        .border(3.dp, Color.White, CircleShape)
-                                        .then(
-                                            if (isPlayPauseRemoteFocused) {
-                                                Modifier.border(5.5.dp, CinemaPrimary.copy(alpha = 0.6f), CircleShape)
-                                            } else Modifier
-                                        )
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null
-                                        ) {
-                                            controlsInteractionKey++
-                                            currentFocusArea = PlayerFocusArea.MAIN
-                                            selectedCenterIndex = if (isSeries) 1 else 0
-                                            if (isPlaying) {
-                                                exoPlayer.pause()
-                                            } else {
-                                                exoPlayer.play()
-                                            }
-                                        }
-                                        .testTag("player_play_pause_button"),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                        contentDescription = "Воспроизведение/Пауза",
-                                        tint = CinemaTextWhite,
-                                        modifier = Modifier.size(40.dp)
-                                    )
-                                }
-                            }
-
-                            if (showSpinner) {
-                                CircularProgressIndicator(
-                                    color = CinemaPrimary,
-                                    strokeWidth = 3.5.dp,
-                                    modifier = Modifier.size(if (canPlayPause) 72.dp else 64.dp)
-                                )
-                            }
-                        }
-
-                        if (isSeries) {
-                            IconButton(
-                                onClick = {
-                                    controlsInteractionKey++
-                                    currentFocusArea = PlayerFocusArea.MAIN
-                                    selectedCenterIndex = 2
-                                    onNextEpisode?.invoke()
-                                },
-                                enabled = hasNextEpisode,
-                                modifier = Modifier
-                                    .size(56.dp)
-                                    .scale(if (isNextEpisodeRemoteFocused) 1.22f else 1.0f)
-                                    .background(
-                                        when {
-                                            isNextEpisodeRemoteFocused -> CinemaPrimary.copy(alpha = 0.45f)
-                                            hasNextEpisode -> Color.Black.copy(alpha = 0.5f)
-                                            else -> Color.Black.copy(alpha = 0.2f)
-                                        },
-                                        CircleShape
-                                    )
-                                    .then(
-                                        if (isNextEpisodeRemoteFocused) {
-                                            Modifier
-                                                .border(3.dp, CinemaPrimary, CircleShape)
-                                                .border(1.dp, Color.White.copy(alpha = 0.85f), CircleShape)
-                                        } else Modifier
-                                    )
-                                    .testTag("player_next_episode_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.SkipNext,
-                                    contentDescription = "Следующая серия",
-                                    tint = when {
-                                        isNextEpisodeRemoteFocused -> CinemaPrimary
-                                        hasNextEpisode -> CinemaTextWhite
-                                        else -> CinemaTextGray.copy(alpha = 0.4f)
-                                    },
-                                    modifier = Modifier.size(32.dp)
-                                )
-                            }
-                        }
-
-                        // RIGHT SEEK INDICATOR (+10) - Above screen darkening
+                        // RIGHT SEEK INDICATOR (+10) - Positioned beside buttons without shifting layout
                         AnimatedVisibility(
                             visible = activeSeekSide == SeekSide.RIGHT && !isScreenLocked,
                             enter = fadeIn(animationSpec = tween(100)) + scaleIn(initialScale = 0.8f),
-                            exit = fadeOut(animationSpec = tween(200))
+                            exit = fadeOut(animationSpec = tween(200)),
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .offset(x = if (isSeries) 150.dp else 90.dp)
                         ) {
                             Text(
                                 text = if (accumulatedSeekSeconds > 0) "+$accumulatedSeekSeconds" else "+10",
                                 color = Color.White,
                                 fontSize = 28.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 4.dp)
+                                fontWeight = FontWeight.ExtraBold
                             )
                         }
                     }
@@ -2662,7 +2697,6 @@ fun RezkaPlayer(
                                         RezkaService.setItemResizeMode(itemId, currentResizeMode.name)
                                         FirebaseSyncManager.onItemResizeModeUpdated(itemId, currentResizeMode.name)
                                     }
-                                    screenNotificationMessage = "Масштаб: ${currentResizeMode.title}"
                                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                 },
                                 colors = ButtonDefaults.buttonColors(
