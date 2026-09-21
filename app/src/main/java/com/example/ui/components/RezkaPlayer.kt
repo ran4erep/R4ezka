@@ -2792,9 +2792,9 @@ fun RezkaPlayer(
         }
         }
 
-        // Central Buffering Overlay with floating skulls during buffering, loading streams, or before initial playback
-        val isBufferingOrLoading = (isLoading || isBuffering || !hasInitialPlayStarted) && playerErrorMessage == null && !isScreenLocked
-        if (isBufferingOrLoading) {
+        // Central Buffering Overlay with floating skulls ONLY during initial stream loading (hidden during seek/playback)
+        val showSkullsOverlay = (isLoading || !hasInitialPlayStarted) && activeSeekSide == SeekSide.NONE && playerErrorMessage == null && !isScreenLocked
+        if (showSkullsOverlay) {
             FallingSkullsBufferingOverlay(
                 text = "Буферизация... Приятного просмотра!"
             )
