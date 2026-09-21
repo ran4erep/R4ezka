@@ -4,12 +4,14 @@ import android.graphics.Bitmap
 import android.graphics.Paint
 import android.graphics.RectF
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.platform.LocalContext
@@ -120,24 +122,24 @@ fun FallingSkullsBufferingOverlay(
             )
         }
 
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(24.dp)
-        ) {
-            CircularProgressIndicator(
-                color = CinemaPrimary,
-                modifier = Modifier.size(56.dp)
-            )
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            Text(
-                text = text,
-                color = CinemaTextWhite,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center
-            )
+        if (text.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = 48.dp),
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                Text(
+                    text = text,
+                    color = CinemaTextWhite,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                        .padding(horizontal = 18.dp, vertical = 8.dp)
+                )
+            }
         }
     }
 }
