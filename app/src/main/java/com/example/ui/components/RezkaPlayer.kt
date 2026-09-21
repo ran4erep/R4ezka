@@ -2157,9 +2157,12 @@ fun RezkaPlayer(
                 }
             }
 
-            // ---- MAIN FULLSCREEN CONTROLS OVERLAY (Only visible when unlocked and streams are ready) ----
+            // ---- MAIN FULLSCREEN CONTROLS OVERLAY (Visible when controls requested OR when buffering/loading) ----
+            val showSpinner = isBuffering || isLoading || !hasInitialPlayStarted
+            val canPlayPause = hasInitialPlayStarted && !isLoading && streams.isNotEmpty()
+
             AnimatedVisibility(
-                visible = showControls && playerErrorMessage == null && !isScreenLocked && !isLoading && streams.isNotEmpty(),
+                visible = (showControls || showSpinner) && playerErrorMessage == null && !isScreenLocked,
                 enter = fadeIn() + slideInVertically { it / 10 },
                 exit = fadeOut() + slideOutVertically { it / 10 },
                 modifier = Modifier.fillMaxSize()
@@ -2167,7 +2170,7 @@ fun RezkaPlayer(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.5f))
+                        .background(if (showControls) Color.Black.copy(alpha = 0.5f) else Color.Transparent)
                         .padding(WindowInsets.safeDrawing.asPaddingValues())
                 ) {
                     // ---- TOP BAR ----
@@ -2224,77 +2227,78 @@ fun RezkaPlayer(
                             }
                         }
 
-                        // Top Right Actions: Floating mini-player button & Screen Lock button
-                        // (Duplicate quality badge was removed per user request)
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // 1. Floating mini-player button (PiP with drag & resize)
-                            IconButton(
-                                onClick = {
-                                    controlsInteractionKey++
-                                    selectedTopIndex = 1
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity != null) {
-                                        try {
-                                            val params = PictureInPictureParams.Builder()
-                                                .setAspectRatio(Rational(16, 9))
-                                                .build()
-                                            activity.enterPictureInPictureMode(params)
-                                        } catch (e: Exception) {
-                                            Log.e("RezkaPlayer", "Error entering PiP", e)
+                        // Top Right Actions (shown when controls are active)
+                        if (showControls) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // 1. Floating mini-player button (PiP with drag & resize)
+                                IconButton(
+                                    onClick = {
+                                        controlsInteractionKey++
+                                        selectedTopIndex = 1
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity != null) {
+                                            try {
+                                                val params = PictureInPictureParams.Builder()
+                                                    .setAspectRatio(Rational(16, 9))
+                                                    .build()
+                                                activity.enterPictureInPictureMode(params)
+                                            } catch (e: Exception) {
+                                                Log.e("RezkaPlayer", "Error entering PiP", e)
+                                                isFloating = true
+                                                showControls = false
+                                            }
+                                        } else {
                                             isFloating = true
                                             showControls = false
                                         }
-                                    } else {
-                                        isFloating = true
-                                        showControls = false
-                                    }
-                                },
-                                modifier = Modifier
-                                    .scale(if (isPipRemoteFocused) 1.15f else 1.0f)
-                                    .background(
-                                        if (isPipRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.4f),
-                                        CircleShape
+                                    },
+                                    modifier = Modifier
+                                        .scale(if (isPipRemoteFocused) 1.15f else 1.0f)
+                                        .background(
+                                            if (isPipRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.4f),
+                                            CircleShape
+                                        )
+                                        .then(
+                                            if (isPipRemoteFocused) Modifier.border(2.dp, CinemaPrimary, CircleShape) else Modifier
+                                        )
+                                        .testTag("player_pip_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PictureInPictureAlt,
+                                        contentDescription = "Сделать плеер плавающим",
+                                        tint = if (isPipRemoteFocused) CinemaPrimary else CinemaTextWhite
                                     )
-                                    .then(
-                                        if (isPipRemoteFocused) Modifier.border(2.dp, CinemaPrimary, CircleShape) else Modifier
-                                    )
-                                    .testTag("player_pip_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PictureInPictureAlt,
-                                    contentDescription = "Сделать плеер плавающим",
-                                    tint = if (isPipRemoteFocused) CinemaPrimary else CinemaTextWhite
-                                )
-                            }
+                                }
 
-                            // 2. Lock screen button (locks touches until held 2 seconds)
-                            IconButton(
-                                onClick = {
-                                    controlsInteractionKey++
-                                    selectedTopIndex = 2
-                                    isScreenLocked = true
-                                    showControls = false
-                                    showLockOverlay = true
-                                    view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                                },
-                                modifier = Modifier
-                                    .scale(if (isLockRemoteFocused) 1.15f else 1.0f)
-                                    .background(
-                                        if (isLockRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.4f),
-                                        CircleShape
+                                // 2. Lock screen button
+                                IconButton(
+                                    onClick = {
+                                        controlsInteractionKey++
+                                        selectedTopIndex = 2
+                                        isScreenLocked = true
+                                        showControls = false
+                                        showLockOverlay = true
+                                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                    },
+                                    modifier = Modifier
+                                        .scale(if (isLockRemoteFocused) 1.15f else 1.0f)
+                                        .background(
+                                            if (isLockRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.4f),
+                                            CircleShape
+                                        )
+                                        .then(
+                                            if (isLockRemoteFocused) Modifier.border(2.dp, CinemaPrimary, CircleShape) else Modifier
+                                        )
+                                        .testTag("player_lock_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.LockOpen,
+                                        contentDescription = "Заблокировать касания",
+                                        tint = if (isLockRemoteFocused) CinemaPrimary else CinemaTextWhite
                                     )
-                                    .then(
-                                        if (isLockRemoteFocused) Modifier.border(2.dp, CinemaPrimary, CircleShape) else Modifier
-                                    )
-                                    .testTag("player_lock_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.LockOpen,
-                                    contentDescription = "Заблокировать касания",
-                                    tint = if (isLockRemoteFocused) CinemaPrimary else CinemaTextWhite
-                                )
+                                }
                             }
                         }
                     }
@@ -2311,12 +2315,12 @@ fun RezkaPlayer(
                             .align(Alignment.Center),
                         contentAlignment = Alignment.Center
                     ) {
-                        // Fixed row containing strictly playback control buttons (will NEVER shift during seek)
+                        // Fixed row containing strictly playback control buttons
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(28.dp)
                         ) {
-                            if (isSeries) {
+                            if (isSeries && canPlayPause && showControls) {
                                 IconButton(
                                     onClick = {
                                         controlsInteractionKey++
@@ -2358,17 +2362,15 @@ fun RezkaPlayer(
                                 }
                             }
 
-                            // Play / Pause / Buffering Spinner Button
-                            val showSpinner = isBuffering || isLoading || !hasInitialPlayStarted
-                            val canPlayPause = hasInitialPlayStarted && !isLoading
-
+                            // Central Play / Pause / Buffering Spinner Container
                             Box(
                                 contentAlignment = Alignment.Center,
                                 modifier = Modifier
                                     .size(72.dp)
                                     .scale(if (isPlayPauseRemoteFocused && canPlayPause) 1.22f else 1.0f)
                             ) {
-                                if (canPlayPause) {
+                                // 1. Play / Pause Button: ONLY present when video is ready (canPlayPause == true)
+                                if (canPlayPause && (showControls || isBuffering)) {
                                     Box(
                                         modifier = Modifier
                                             .fillMaxSize()
@@ -2407,6 +2409,7 @@ fun RezkaPlayer(
                                     }
                                 }
 
+                                // 2. Single Buffering Spinner: ONLY present when showSpinner is true
                                 if (showSpinner) {
                                     CircularProgressIndicator(
                                         color = CinemaPrimary,
@@ -2416,7 +2419,7 @@ fun RezkaPlayer(
                                 }
                             }
 
-                            if (isSeries) {
+                            if (isSeries && canPlayPause && showControls) {
                                 IconButton(
                                     onClick = {
                                         controlsInteractionKey++
@@ -2459,7 +2462,7 @@ fun RezkaPlayer(
                             }
                         }
 
-                        // LEFT SEEK INDICATOR (-10) - Positioned beside buttons without shifting layout
+                        // LEFT SEEK INDICATOR (-10)
                         AnimatedVisibility(
                             visible = activeSeekSide == SeekSide.LEFT && !isScreenLocked,
                             enter = fadeIn(animationSpec = tween(100)) + scaleIn(initialScale = 0.8f),
@@ -2476,7 +2479,7 @@ fun RezkaPlayer(
                             )
                         }
 
-                        // RIGHT SEEK INDICATOR (+10) - Positioned beside buttons without shifting layout
+                        // RIGHT SEEK INDICATOR (+10)
                         AnimatedVisibility(
                             visible = activeSeekSide == SeekSide.RIGHT && !isScreenLocked,
                             enter = fadeIn(animationSpec = tween(100)) + scaleIn(initialScale = 0.8f),
@@ -2495,12 +2498,13 @@ fun RezkaPlayer(
                     }
 
                     // ---- BOTTOM BAR (Time, Slider, Quality, Speed, Stretch/Resize) ----
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.BottomCenter)
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
+                    if (showControls && canPlayPause) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.BottomCenter)
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
                         // Time Labels
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -2786,8 +2790,7 @@ fun RezkaPlayer(
                 }
             }
         }
-
-
+        }
 
         // Central Buffering Overlay with floating skulls during buffering, loading streams, or before initial playback
         val isBufferingOrLoading = (isLoading || isBuffering || !hasInitialPlayStarted) && playerErrorMessage == null && !isScreenLocked
@@ -2795,52 +2798,6 @@ fun RezkaPlayer(
             FallingSkullsBufferingOverlay(
                 text = "Буферизация... Приятного просмотра!"
             )
-        }
-
-        // Top Bar with Back button and Title during buffering or when streams are loading
-        if (isBufferingOrLoading && !showControls) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.TopStart)
-                    .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier
-                        .size(44.dp)
-                        .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                        .testTag("player_buffering_back_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Назад",
-                        tint = CinemaTextWhite
-                    )
-                }
-                Spacer(modifier = Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = title,
-                        color = CinemaTextWhite,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (subtitle.isNotEmpty()) {
-                        Text(
-                            text = subtitle,
-                            color = CinemaTextGray,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
         }
 
         // ==========================================
