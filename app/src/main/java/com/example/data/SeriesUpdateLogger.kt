@@ -82,6 +82,22 @@ object SeriesUpdateLogger {
         }
     }
 
+    private fun checkAndAutoClearDaily(file: File) {
+        if (!file.exists()) return
+        val todayDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        val lastModDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(file.lastModified()))
+        if (todayDate != lastModDate) {
+            val header = buildString {
+                append("====================================================\n")
+                append("🎬 HDRezka Client — Журнал работы (Авто-очистка за прошлый день: $lastModDate)\n")
+                append("Файл обновлён: ${getTimestamp()}\n")
+                append("====================================================\n\n")
+            }
+            file.writeText(header, Charsets.UTF_8)
+            Log.i(TAG, "Лог автоматически очищен при наступлении нового дня ($todayDate)")
+        }
+    }
+
     /**
      * Записывает произвольную строку в текстовый лог
      */
@@ -91,7 +107,9 @@ object SeriesUpdateLogger {
                 val file = getLogFile(context)
                 if (!file.exists()) {
                     file.parentFile?.mkdirs()
-                    file.writeText("=== HDRezka Series Check Log ===\nCreated: ${getTimestamp()}\n\n", Charsets.UTF_8)
+                    file.writeText("=== HDRezka Log ===\nCreated: ${getTimestamp()}\n\n", Charsets.UTF_8)
+                } else {
+                    checkAndAutoClearDaily(file)
                 }
 
                 // Ротация: если размер файла превысил 512 КБ, оставляем последние 200 КБ
@@ -108,6 +126,75 @@ object SeriesUpdateLogger {
                 Log.e(TAG, "Ошибка записи в лог-файл: ${e.message}", e)
             }
         }
+    }
+
+    /**
+     * Подробная запись ошибки работы видео-парсера или получения ссылок на видеопоток
+     */
+    suspend fun logParserError(
+        context: Context? = null,
+        title: String,
+        itemId: String,
+        translatorId: String = "",
+        season: Int = 0,
+        episode: String = "",
+        endpointUrl: String,
+        requestParams: String = "",
+        httpCode: Int? = null,
+        responseBody: String? = null,
+        errorMessage: String
+    ) = withContext(Dispatchers.IO) {
+        val ctx = context ?: try { com.example.RezkaApplication.instance } catch (_: Exception) { null }
+        if (ctx == null) return@withContext
+
+        val logEntry = buildString {
+            append("⚠️ ОШИБКА ПАРСИНГА ВИДЕОПОТОКА: \"$title\" (ID: $itemId)\n")
+            val transText = if (translatorId.isNotBlank() && translatorId != "0") "ID озвучки $translatorId" else "По умолчанию"
+            val seText = if (season > 0) " | Сезон $season, Серия $episode" else ""
+            append("   ├─ Параметры: $transText$seText\n")
+            append("   ├─ URL запроса: $endpointUrl\n")
+            if (requestParams.isNotEmpty()) {
+                append("   ├─ Параметры POST: $requestParams\n")
+            }
+            append("   ├─ Ответ сервера: HTTP ${httpCode ?: "Сбой сети / Неизвестно"}\n")
+            if (!responseBody.isNullOrBlank()) {
+                val snippet = if (responseBody.length > 300) responseBody.take(300) + "..." else responseBody
+                append("   ├─ Ответ HDRezka: $snippet\n")
+            }
+            append("   └─ ❌ Причина ошибки: $errorMessage")
+        }
+        appendLog(ctx, logEntry)
+    }
+
+    /**
+     * Подробная запись ошибки воспроизведения в видеоплеере ExoPlayer
+     */
+    suspend fun logPlaybackError(
+        context: Context? = null,
+        title: String,
+        subtitle: String = "",
+        streamUrl: String,
+        errorCodeName: String,
+        errorCode: Int,
+        errorMessage: String,
+        fallbackInfo: String? = null
+    ) = withContext(Dispatchers.IO) {
+        val ctx = context ?: try { com.example.RezkaApplication.instance } catch (_: Exception) { null }
+        if (ctx == null) return@withContext
+
+        val logEntry = buildString {
+            val subText = if (subtitle.isNotEmpty()) " - $subtitle" else ""
+            append("❌ ОШИБКА ВОСПРОИЗВЕДЕНИЯ ВИДЕО (ExoPlayer): \"$title\"$subText\n")
+            append("   ├─ Ссылка на поток: $streamUrl\n")
+            append("   ├─ Код ошибки: $errorCodeName (Код $errorCode)\n")
+            append("   ├─ Сообщение ошибки: $errorMessage\n")
+            if (!fallbackInfo.isNullOrBlank()) {
+                append("   └─ Действие: $fallbackInfo")
+            } else {
+                append("   └─ Воспроизведение остановлено из-за ошибки сервера или сети.")
+            }
+        }
+        appendLog(ctx, logEntry)
     }
 
     /**

@@ -3224,6 +3224,21 @@ object RezkaService {
             return@withContext altStreams
         }
 
+        prefetchScope.launch {
+            SeriesUpdateLogger.logParserError(
+                title = "Тайтл ID $numericId",
+                itemId = numericId,
+                translatorId = effectiveTranslatorId,
+                season = effectiveSeason,
+                episode = effectiveEpisode,
+                endpointUrl = endpoint,
+                requestParams = "id=$numericId, translator_id=$effectiveTranslatorId, isSeries=$isSeries, season=$effectiveSeason, episode=$effectiveEpisode",
+                httpCode = null,
+                responseBody = null,
+                errorMessage = "Все варианты загрузки видеопотока (основная озвучка, дефолт, резервные озвучки 238/56/1) вернули пустой результат. Парсер не смог извлечь прямые ссылки."
+            )
+        }
+
         return@withContext emptyList()
     }
 
@@ -3252,6 +3267,7 @@ object RezkaService {
         episode: String,
         actionParam: String
     ): List<StreamUrl> {
+        val paramSummary = "id=$numericId, translator_id=$translatorId, action=$actionParam, season=$season, episode=$episode"
         try {
             val urlWithTs = "$endpoint?t=${System.currentTimeMillis()}"
             val formBuilder = FormBody.Builder()
@@ -3341,13 +3357,61 @@ object RezkaService {
                             }
                             return finalStreams
                         }
+                    } else {
+                        prefetchScope.launch {
+                            val reason = if (bodyStr.contains("\"url\":false") || bodyStr.contains("\"url\": \"false\"")) {
+                                "Озвучка или видео заблокировано/недоступно (url=false в JSON)"
+                            } else {
+                                "В ответе CDN отсутствует атрибут url с адресом потока"
+                            }
+                            SeriesUpdateLogger.logParserError(
+                                title = "Тайтл ID $numericId",
+                                itemId = numericId,
+                                translatorId = translatorId,
+                                season = season,
+                                episode = episode,
+                                endpointUrl = urlWithTs,
+                                requestParams = paramSummary,
+                                httpCode = response.code,
+                                responseBody = bodyStr,
+                                errorMessage = reason
+                            )
+                        }
                     }
                 } else {
                     Log.w(TAG, "CDN AJAX не сработал [$urlWithTs, id=$numericId]: HTTP ${response.code}")
+                    prefetchScope.launch {
+                        SeriesUpdateLogger.logParserError(
+                            title = "Тайтл ID $numericId",
+                            itemId = numericId,
+                            translatorId = translatorId,
+                            season = season,
+                            episode = episode,
+                            endpointUrl = urlWithTs,
+                            requestParams = paramSummary,
+                            httpCode = response.code,
+                            responseBody = response.message,
+                            errorMessage = "HTTP ошибка сервера CDN (${response.code})"
+                        )
+                    }
                 }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Ошибка CDN запроса ($endpoint, id=$numericId): ${e.message}")
+            prefetchScope.launch {
+                SeriesUpdateLogger.logParserError(
+                    title = "Тайтл ID $numericId",
+                    itemId = numericId,
+                    translatorId = translatorId,
+                    season = season,
+                    episode = episode,
+                    endpointUrl = endpoint,
+                    requestParams = paramSummary,
+                    httpCode = null,
+                    responseBody = null,
+                    errorMessage = "Ошибка подключения / Исключение сети: ${e.message}"
+                )
+            }
         }
         return emptyList()
     }
