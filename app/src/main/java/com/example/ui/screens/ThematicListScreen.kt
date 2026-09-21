@@ -15,7 +15,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import android.content.res.Configuration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -26,6 +28,7 @@ import com.example.ui.theme.*
 import com.example.ui.tv.dpadScrollable
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusableItem
+import com.example.ui.util.rememberSavedLazyGridState
 import kotlinx.coroutines.launch
 
 sealed interface ThematicState {
@@ -42,7 +45,8 @@ fun ThematicListScreen(
     onBack: () -> Unit,
     onNavigateToDetail: (RezkaItem) -> Unit,
     modifier: Modifier = Modifier,
-    isTvMode: Boolean = false
+    isTvMode: Boolean = false,
+    viewModel: com.example.ui.RezkaViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 ) {
     val coroutineScope = rememberCoroutineScope()
     var state by remember(url) { mutableStateOf<ThematicState>(ThematicState.Loading) }
@@ -243,7 +247,7 @@ fun ThematicListScreen(
                             )
                         }
                     } else {
-                        val gridState = rememberLazyGridState()
+                        val gridState = rememberSavedLazyGridState("thematic_${url}", viewModel)
                         val shouldLoadMore by remember {
                             derivedStateOf {
                                 val totalItems = gridState.layoutInfo.totalItemsCount
@@ -258,12 +262,21 @@ fun ThematicListScreen(
                             }
                         }
 
+                        val configuration = LocalConfiguration.current
+                        val columnsCount = remember(configuration.orientation, configuration.screenWidthDp, isTvMode) {
+                            if (isTvMode || configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                                (configuration.screenWidthDp / 150).coerceIn(3, 8)
+                            } else {
+                                2
+                            }
+                        }
+
                         LazyVerticalGrid(
-                            columns = if (isTvMode) GridCells.Adaptive(minSize = 135.dp) else GridCells.Fixed(2),
+                            columns = GridCells.Fixed(columnsCount),
                             state = gridState,
                             contentPadding = PaddingValues(16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(if (columnsCount >= 6) 8.dp else 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(if (columnsCount >= 6) 10.dp else 16.dp),
                             modifier = Modifier
                                 .fillMaxSize()
                                 .dpadScrollable(gridState)
@@ -275,6 +288,7 @@ fun ThematicListScreen(
                             ) { item ->
                                 RezkaItemCard(
                                     item = item,
+                                    columnsCount = columnsCount,
                                     onClick = { onNavigateToDetail(item) }
                                 )
                             }

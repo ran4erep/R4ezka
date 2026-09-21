@@ -46,6 +46,7 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
+import com.example.ui.util.rememberSavedLazyGridState
 import com.example.data.*
 import com.example.ui.CatalogState
 import com.example.ui.RezkaViewModel
@@ -396,7 +397,7 @@ private fun TvCatalogContent(
     entryFocusRequester: FocusRequester,
     isTopScreen: Boolean = true
 ) {
-    val gridState = rememberLazyGridState()
+    val gridState = rememberSavedLazyGridState("catalog", viewModel)
     val searchBarFocusRequester = entryFocusRequester
     val categoryDropdownFocusRequester = remember { FocusRequester() }
     val sectionDropdownFocusRequester = remember { FocusRequester() }

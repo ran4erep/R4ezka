@@ -2046,7 +2046,7 @@ object RezkaService {
                 }
 
                 if (!title.isNullOrEmpty()) {
-                        val origTitle = doc.selectFirst(".b-post__orig_title")?.text() ?: ""
+                        var origTitle = doc.selectFirst(".b-post__orig_title, [itemprop='alternativeHeadline'], .b-post__title .t2, .orig_title")?.text()?.trim() ?: ""
                         val description = doc.selectFirst(".b-post__description_text")?.text() ?: ""
                         val imgEl = doc.selectFirst(".b-sidecover img") ?: doc.selectFirst(".b-post__cover img")
                         var imgUrl = imgEl?.attr("data-src") ?: ""
@@ -2151,8 +2151,15 @@ object RezkaService {
                                         ?: emptyList()
                                     actorsList.addAll(rawActors)
                                 }
+                                label.contains("оригинальное") || label.contains("в оригинале") || label.contains("оригинал") -> {
+                                    if (origTitle.isEmpty()) {
+                                        origTitle = value
+                                    }
+                                }
                             }
                         }
+
+                        origTitle = origTitle.removePrefix("/").removePrefix(":").trim()
 
                         // Тщательный высокопроизводительный парсинг франшизы (связанных частей фильма/сериала)
                         var franchiseTitle = ""

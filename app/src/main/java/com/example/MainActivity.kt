@@ -238,7 +238,8 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                     pushToStack(ScreenState.Detail(item))
                                 },
                                 modifier = Modifier.fillMaxSize(),
-                                isTvMode = true
+                                isTvMode = true,
+                                viewModel = viewModel
                             )
                         }
                         is ScreenState.PersonProfile -> {
@@ -250,7 +251,8 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                     pushToStack(ScreenState.Detail(item))
                                 },
                                 modifier = Modifier.fillMaxSize(),
-                                isTvMode = true
+                                isTvMode = true,
+                                viewModel = viewModel
                             )
                         }
                     }
@@ -463,7 +465,8 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 onBack = { popBackStack() },
                                 onNavigateToDetail = { item ->
                                     pushToStack(ScreenState.Detail(item))
-                                }
+                                },
+                                viewModel = viewModel
                             )
                         }
                         is ScreenState.PersonProfile -> {
@@ -473,7 +476,8 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 onBack = { popBackStack() },
                                 onNavigateToDetail = { item ->
                                     pushToStack(ScreenState.Detail(item))
-                                }
+                                },
+                                viewModel = viewModel
                             )
                         }
                     }

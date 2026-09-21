@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import com.example.ui.util.rememberSavedLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -131,7 +132,7 @@ fun DetailScreen(
     isTvMode: Boolean = false
 ) {
     val context = LocalContext.current
-    val lazyListState = rememberLazyListState()
+    val lazyListState = rememberSavedLazyListState("detail_${item.id}", viewModel)
     val detailState by viewModel.detailState.collectAsState()
     val favorites by viewModel.favorites.collectAsState()
     val defaultQuality by viewModel.defaultQuality.collectAsState()
@@ -654,7 +655,8 @@ fun DetailScreen(
                         onBack = handleBack,
                         onAppendNextCommentsPage = { viewModel.appendNextCommentsPage() },
                         onNavigateToMovie = { targetItem -> onNavigateToDetail(targetItem) },
-                        onNavigateToThematic = { name, url -> onNavigateToThematic(name, url) }
+                        onNavigateToThematic = { name, url -> onNavigateToThematic(name, url) },
+                        scrollState = lazyListState
                     )
                 } else {
                     // ---- SCROLLABLE MOBILE DETAIL PAGE (with TV/D-Pad support) ----
@@ -743,10 +745,11 @@ fun DetailScreen(
                                         Spacer(modifier = Modifier.height(3.dp))
                                         Text(
                                             text = detail.originalTitle,
-                                            color = CinemaTextGray,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            lineHeight = 16.sp
+                                            color = CinemaTextGray.copy(alpha = 0.7f),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Normal,
+                                            letterSpacing = 0.2.sp,
+                                            lineHeight = 17.sp
                                         )
                                     }
 

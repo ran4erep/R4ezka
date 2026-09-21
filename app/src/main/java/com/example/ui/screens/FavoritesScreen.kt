@@ -17,6 +17,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -25,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.RezkaItem
+import com.example.ui.util.rememberSavedLazyGridState
 import com.example.data.RezkaService
 import com.example.data.RezkaType
 import com.example.ui.RezkaViewModel
@@ -40,6 +44,21 @@ fun FavoritesScreen(
     modifier: Modifier = Modifier
 ) {
     val favorites by viewModel.favorites.collectAsState()
+    val cardGridMode by viewModel.cardGridMode.collectAsState()
+    val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
+    val configuration = LocalConfiguration.current
+
+    val columnsCount = remember(parsedCardGrid, configuration.orientation, configuration.screenWidthDp) {
+        if (parsedCardGrid != null) {
+            parsedCardGrid.columns
+        } else {
+            if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                (configuration.screenWidthDp / 150).coerceIn(3, 8)
+            } else {
+                2
+            }
+        }
+    }
 
     Column(
         modifier = modifier
@@ -99,13 +118,14 @@ fun FavoritesScreen(
                     )
                 }
             } else {
-                val gridState = rememberLazyGridState()
+                val gridState = rememberSavedLazyGridState("favorites", viewModel)
+                val isDense = columnsCount >= 5
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
+                    columns = GridCells.Fixed(columnsCount),
                     state = gridState,
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (columnsCount >= 6) 8.dp else 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (columnsCount >= 6) 10.dp else 16.dp),
                     modifier = Modifier
                         .fillMaxSize()
                         .dpadScrollable(gridState)
@@ -132,25 +152,26 @@ fun FavoritesScreen(
                         ) {
                             RezkaItemCard(
                                 item = item,
+                                columnsCount = columnsCount,
                                 onClick = { onNavigateToDetail(item) },
                                 modifier = Modifier.fillMaxWidth()
                             )
                             
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(if (isDense) 4.dp else 8.dp))
                             
                             Surface(
                                 onClick = { viewModel.removeFavorite(fav.id) },
                                 color = CinemaDark,
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
                                 border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.8f)),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(38.dp)
+                                    .height(if (columnsCount >= 7) 28.dp else if (isDense) 32.dp else 38.dp)
                                     .tvFocusableItem(
                                         onClick = { viewModel.removeFavorite(fav.id) },
                                         scaleFactor = 1.04f,
                                         focusedBorderColor = CinemaPrimary,
-                                        shape = RoundedCornerShape(8.dp)
+                                        shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp)
                                     )
                                     .testTag("remove_favorite_${fav.id}")
                             ) {
@@ -163,13 +184,13 @@ fun FavoritesScreen(
                                         imageVector = Icons.Default.DeleteOutline,
                                         contentDescription = "Удалить из избранного",
                                         tint = CinemaPrimary,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(if (isDense) 14.dp else 16.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Spacer(modifier = Modifier.width(if (isDense) 4.dp else 6.dp))
                                     Text(
                                         text = "Удалить",
                                         color = CinemaTextWhite,
-                                        fontSize = 11.sp,
+                                        fontSize = if (columnsCount >= 7) 9.sp else if (isDense) 10.sp else 11.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
