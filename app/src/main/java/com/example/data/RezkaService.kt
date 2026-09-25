@@ -786,9 +786,8 @@ object RezkaService {
     private val _currentUser = MutableStateFlow<String?>(null)
     val currentUser: StateFlow<String?> = _currentUser.asStateFlow()
 
-    // Настройки воспроизведения: качество по умолчанию (1080p, 1080p Ultra, 720p, 480p, 360p, ask)
+    // Настройки воспроизведения: качество по умолчанию (1080p, 720p, 480p, 360p, ask)
     const val QUALITY_1080P = "1080p"
-    const val QUALITY_1080P_ULTRA = "1080p Ultra"
     const val QUALITY_720P = "720p"
     const val QUALITY_480P = "480p"
     const val QUALITY_360P = "360p"
@@ -854,7 +853,13 @@ object RezkaService {
             _isLoggedIn.value = true
         }
 
-        val savedQuality = prefs?.getString("default_video_quality", QUALITY_1080P) ?: QUALITY_1080P
+        val rawQuality = prefs?.getString("default_video_quality", QUALITY_1080P) ?: QUALITY_1080P
+        val savedQuality = if (rawQuality.contains("Ultra", ignoreCase = true)) {
+            prefs?.edit()?.putString("default_video_quality", QUALITY_1080P)?.apply()
+            QUALITY_1080P
+        } else {
+            rawQuality
+        }
         _defaultQuality.value = savedQuality
 
         val savedAutoNext = prefs?.getBoolean("auto_next_episode", true) ?: true
@@ -877,8 +882,9 @@ object RezkaService {
     }
 
     fun setDefaultQuality(quality: String) {
-        _defaultQuality.value = quality
-        prefs?.edit()?.putString("default_video_quality", quality)?.apply()
+        val clean = if (quality.contains("Ultra", ignoreCase = true)) QUALITY_1080P else quality.trim()
+        _defaultQuality.value = clean
+        prefs?.edit()?.putString("default_video_quality", clean)?.apply()
     }
 
     fun setAutoNextEpisode(enabled: Boolean) {
@@ -902,6 +908,7 @@ object RezkaService {
     }
 
     private val itemResizeModesMap = ConcurrentHashMap<String, String>()
+    private val itemZoomScalesMap = ConcurrentHashMap<String, Float>()
 
     fun getItemResizeMode(itemId: String): String? {
         if (itemId.isBlank()) return null
@@ -918,6 +925,24 @@ object RezkaService {
 
     fun getEffectiveResizeMode(itemId: String): String {
         return getItemResizeMode(itemId) ?: defaultResizeMode.value
+    }
+
+    fun getItemZoomScale(itemId: String): Float? {
+        if (itemId.isBlank()) return null
+        return itemZoomScalesMap[itemId] ?: prefs?.getFloat("item_zoom_scale_$itemId", -1f)?.takeIf { it > 0f }?.also {
+            itemZoomScalesMap[itemId] = it
+        }
+    }
+
+    fun setItemZoomScale(itemId: String, scale: Float) {
+        if (itemId.isBlank()) return
+        val cleanScale = scale.coerceIn(0.5f, 3.0f)
+        itemZoomScalesMap[itemId] = cleanScale
+        prefs?.edit()?.putFloat("item_zoom_scale_$itemId", cleanScale)?.apply()
+    }
+
+    fun getEffectiveZoomScale(itemId: String): Float {
+        return getItemZoomScale(itemId) ?: 1.0f
     }
 
     fun setTvModePreference(mode: String) {
@@ -937,42 +962,31 @@ object RezkaService {
      */
     fun findBestQualityIndex(streams: List<StreamUrl>, targetQuality: String): Int {
         if (streams.isEmpty()) return 0
-        val qualityToMatch = if (targetQuality == QUALITY_ASK) QUALITY_1080P else targetQuality
+        val qualityToMatch = if (targetQuality == QUALITY_ASK || targetQuality.contains("Ultra", ignoreCase = true)) QUALITY_1080P else targetQuality
 
         // 1. Точное совпадение
         val exact = streams.indexOfFirst { it.quality.equals(qualityToMatch, ignoreCase = true) }
         if (exact >= 0) return exact
 
-        // 2. Если целевое - 1080p (без Ultra)
+        // 2. Если целевое - 1080p
         if (qualityToMatch.equals(QUALITY_1080P, ignoreCase = true)) {
-            val p1080 = streams.indexOfFirst { it.quality.contains("1080") && !it.quality.contains("Ultra", ignoreCase = true) }
+            val p1080 = streams.indexOfFirst { it.quality.contains("1080") }
             if (p1080 >= 0) return p1080
             val p720 = streams.indexOfFirst { it.quality.contains("720") }
             if (p720 >= 0) return p720
-            val pUltra = streams.indexOfFirst { it.quality.contains("Ultra", ignoreCase = true) }
-            if (pUltra >= 0) return pUltra
             return 0
         }
 
-        // 3. Если целевое - 1080p Ultra
-        if (qualityToMatch.equals(QUALITY_1080P_ULTRA, ignoreCase = true)) {
-            val pUltra = streams.indexOfFirst { it.quality.contains("Ultra", ignoreCase = true) }
-            if (pUltra >= 0) return pUltra
+        // 3. Если целевое - 720p
+        if (qualityToMatch.equals(QUALITY_720P, ignoreCase = true)) {
+            val p720 = streams.indexOfFirst { it.quality.contains("720") }
+            if (p720 >= 0) return p720
             val p1080 = streams.indexOfFirst { it.quality.contains("1080") }
             if (p1080 >= 0) return p1080
             return 0
         }
 
-        // 4. Если целевое - 720p
-        if (qualityToMatch.equals(QUALITY_720P, ignoreCase = true)) {
-            val p720 = streams.indexOfFirst { it.quality.contains("720") }
-            if (p720 >= 0) return p720
-            val p1080 = streams.indexOfFirst { it.quality.contains("1080") && !it.quality.contains("Ultra", ignoreCase = true) }
-            if (p1080 >= 0) return p1080
-            return 0
-        }
-
-        // 5. По весу разрешения
+        // 4. По весу разрешения
         val targetWeight = RezkaDecryptor.getQualityWeight(qualityToMatch)
         var bestIdx = 0
         var minDiff = Int.MAX_VALUE
@@ -1015,6 +1029,14 @@ object RezkaService {
     fun resetMirrorToDefault(): String {
         setMirror(PRIMARY_MIRROR)
         return PRIMARY_MIRROR
+    }
+
+    fun isFirstLaunchAuditDone(): Boolean {
+        return prefs?.getBoolean("first_launch_audit_done", false) ?: false
+    }
+
+    fun markFirstLaunchAuditDone() {
+        prefs?.edit()?.putBoolean("first_launch_audit_done", true)?.apply()
     }
 
     private val testPingClient by lazy {
@@ -1127,6 +1149,55 @@ object RezkaService {
                 else -> e.message ?: "Сетевая ошибка"
             }
             Result.failure(Exception(errorMsg))
+        }
+    }
+
+    /**
+     * Высокопроизводительный аудит зеркала с проверкой реальной отдачи каталога.
+     * Проверяет доступность хоста тем же способом, что и в настройках (testMirror),
+     * а затем подтверждает корректность парсинга разметки каталога Резки.
+     */
+    suspend fun testMirrorWithCatalog(mirrorUrl: String): Result<List<RezkaItem>> = withContext(Dispatchers.IO) {
+        val pingRes = testMirror(mirrorUrl)
+        if (pingRes.isFailure) {
+            return@withContext Result.failure(pingRes.exceptionOrNull() ?: Exception("Недоступно"))
+        }
+
+        val normalized = normalizeMirrorUrl(mirrorUrl)
+        val catalogUrl = buildCatalogUrl(RezkaType.MOVIE, SectionType.LATEST, "", 1, baseUrl = normalized)
+        try {
+            val request = Request.Builder()
+                .url(catalogUrl)
+                .header("User-Agent", USER_AGENT)
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+                .header("Referer", "$normalized/")
+                .build()
+
+            val (html, isSuccess) = client.newCall(request).execute().use { response ->
+                Pair(response.body?.string().orEmpty(), response.isSuccessful)
+            }
+
+            if (!isSuccess || html.isBlank()) {
+                return@withContext Result.failure(Exception("Каталог не вернул данные"))
+            }
+
+            val doc = Jsoup.parse(html)
+            if (isAntiBotPage(html, doc)) {
+                return@withContext Result.failure(Exception("Защита от ботов"))
+            }
+
+            parseGenresFromHtml(doc, RezkaType.MOVIE)
+            val items = parseCatalogHtml(html, RezkaType.MOVIE)
+            if (items.isNotEmpty()) {
+                val cacheKey = "${RezkaType.MOVIE}-${SectionType.LATEST}--1"
+                catalogCache.put(cacheKey, items)
+                Result.success(items)
+            } else {
+                Result.failure(Exception("Фильмы не найдены"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
@@ -2472,8 +2543,8 @@ object RezkaService {
                             }
                         }
 
-                        // Форматируем страны с флагами
-                        val countryFlag = CountryFlags.formatWithFlags(country)
+                        // Форматируем страны с флагами (с гарантированным эмодзи или 🏴☠️)
+                        val countryFlag = CountryFlags.formatCountries(country)
 
                         // Тщательный высокопроизводительный парсинг структурированных рейтингов
                         val (ratingInfo, mainRating) = parseRatingInfo(doc)

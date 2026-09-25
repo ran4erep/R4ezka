@@ -150,7 +150,7 @@ data class SubtitleTrack(
 ) : Serializable
 
 data class StreamUrl(
-    val quality: String, // e.g. "1080p Ultra", "1080p", "720p", "480p", "360p"
+    val quality: String, // e.g. "1080p", "720p", "480p", "360p"
     val url: String,
     val backupUrls: List<String> = emptyList(),
     val directMp4Url: String = "",
@@ -187,6 +187,7 @@ data class WatchHistoryEntity(
     val totalEpisodes: Int = 0,
     val episodeIndex: Int = 0,
     val totalSeasons: Int = 0,
+    val isFullyWatched: Boolean = false,
     val timestamp: Long = System.currentTimeMillis()
 )
 
@@ -232,7 +233,8 @@ data class AggregatedHistoryItem(
     val watchedEpisodesCount: Int,
     val totalEpisodesCount: Int,
     val latestHistoryId: String,
-    val timestamp: Long
+    val timestamp: Long,
+    val isFullyWatched: Boolean = false
 ) : Serializable
 
 sealed interface ScreenState : Serializable {

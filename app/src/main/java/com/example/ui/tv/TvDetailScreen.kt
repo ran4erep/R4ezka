@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.example.data.CountryFlags
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -72,6 +73,7 @@ fun TvDetailContent(
     onToggleFavorite: () -> Unit,
     isSubscribed: Boolean = false,
     onToggleSubscription: (() -> Unit)? = null,
+    onDownloadClick: (() -> Unit)? = null,
     selectedTranslator: Translator?,
     onSelectTranslator: (Translator) -> Unit,
     selectedSeasonId: Int?,
@@ -617,7 +619,7 @@ fun TvDetailContent(
                                 )
                             }
 
-                            val displayCountry = detail.countryFlag.ifEmpty { detail.country }
+                            val displayCountry = detail.countryFlag.ifEmpty { CountryFlags.formatCountries(detail.country) }
                             if (displayCountry.isNotEmpty()) {
                                 DetailMetaRow(
                                     icon = Icons.Default.Public,
@@ -998,70 +1000,119 @@ fun TvDetailContent(
                 if (detail.type != RezkaType.SERIES) {
                     item {
                         val isPlayEnabled = detail.isReleased
-                        Button(
-                            onClick = { if (isPlayEnabled) onPlayMovie() },
-                            enabled = isPlayEnabled,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isPlayEnabled) CinemaPrimary else Color.Gray.copy(alpha = 0.3f),
-                                contentColor = if (isPlayEnabled) Color.Black else Color.White.copy(alpha = 0.5f),
-                                disabledContainerColor = Color.Gray.copy(alpha = 0.2f),
-                                disabledContentColor = Color.White.copy(alpha = 0.5f)
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .focusProperties {
-                                    left = trailerButtonFocusRequester
-                                    if (displayComments.isEmpty()) {
-                                        down = FocusRequester.Cancel
-                                    }
-                                }
-                                .onKeyEvent { event ->
-                                    if (event.type == KeyEventType.KeyDown) {
-                                        when (event.nativeKeyEvent.keyCode) {
-                                            AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                                                trailerButtonFocusRequester.requestFocusSafe()
-                                                true
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Button(
+                                    onClick = { if (isPlayEnabled) onPlayMovie() },
+                                    enabled = isPlayEnabled,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isPlayEnabled) CinemaPrimary else Color.Gray.copy(alpha = 0.3f),
+                                        contentColor = if (isPlayEnabled) Color.Black else Color.White.copy(alpha = 0.5f),
+                                        disabledContainerColor = Color.Gray.copy(alpha = 0.2f),
+                                        disabledContentColor = Color.White.copy(alpha = 0.5f)
+                                    ),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .focusProperties {
+                                            left = trailerButtonFocusRequester
+                                            if (displayComments.isEmpty()) {
+                                                down = FocusRequester.Cancel
                                             }
-                                            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                                if (displayComments.isEmpty()) {
-                                                    true
-                                                } else false
-                                            }
-                                            else -> false
                                         }
-                                    } else false
+                                        .onKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown) {
+                                                when (event.nativeKeyEvent.keyCode) {
+                                                    AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                        trailerButtonFocusRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                        if (displayComments.isEmpty()) {
+                                                            true
+                                                        } else false
+                                                    }
+                                                    else -> false
+                                                }
+                                            } else false
+                                        }
+                                        .let {
+                                            if (isPlayEnabled) {
+                                                it.tvFocusableItem(
+                                                    onClick = onPlayMovie,
+                                                    scaleFactor = 1.03f,
+                                                    focusedBorderColor = Color.White,
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    focusRequester = mainActionFocusRequester,
+                                                    lazyListState = rightScrollState
+                                                )
+                                            } else {
+                                                it
+                                            }
+                                        }
+                                        .testTag("tv_movie_play_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = null,
+                                        tint = if (isPlayEnabled) Color.Black else Color.White.copy(alpha = 0.5f),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = if (isPlayEnabled) "СМОТРЕТЬ" else "ЕЩЕ НЕ ВЫШЕЛ",
+                                        color = if (isPlayEnabled) Color.Black else Color.White.copy(alpha = 0.5f),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
-                                .let {
-                                    if (isPlayEnabled) {
-                                        it.tvFocusableItem(
-                                            onClick = onPlayMovie,
+                            }
+
+                            if (onDownloadClick != null && isPlayEnabled) {
+                                Button(
+                                    onClick = onDownloadClick,
+                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .tvFocusableItem(
+                                            onClick = onDownloadClick,
                                             scaleFactor = 1.03f,
-                                            focusedBorderColor = Color.White,
                                             shape = RoundedCornerShape(10.dp),
-                                            focusRequester = mainActionFocusRequester,
                                             lazyListState = rightScrollState
                                         )
-                                    } else {
-                                        it
+                                        .testTag("tv_movie_download_button")
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Download,
+                                            contentDescription = "Загрузить фильм",
+                                            tint = CinemaPrimary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Загрузить фильм",
+                                            color = CinemaTextWhite,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
                                     }
                                 }
-                                .testTag("tv_movie_play_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = null,
-                                tint = if (isPlayEnabled) Color.Black else Color.White.copy(alpha = 0.5f),
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (isPlayEnabled) "СМОТРЕТЬ" else "ЕЩЕ НЕ ВЫШЕЛ",
-                                color = if (isPlayEnabled) Color.Black else Color.White.copy(alpha = 0.5f),
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            }
                         }
                     }
                 }
@@ -1188,6 +1239,52 @@ fun TvDetailContent(
                             }
 
                             Spacer(modifier = Modifier.height(10.dp))
+
+                            if (onDownloadClick != null) {
+                                Button(
+                                    onClick = onDownloadClick,
+                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(38.dp)
+                                        .focusProperties { left = trailerButtonFocusRequester }
+                                        .onKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                                trailerButtonFocusRequester.requestFocusSafe()
+                                                true
+                                            } else false
+                                        }
+                                        .tvFocusableItem(
+                                            onClick = onDownloadClick,
+                                            scaleFactor = 1.05f,
+                                            shape = RoundedCornerShape(8.dp),
+                                            lazyListState = rightScrollState
+                                        )
+                                        .testTag("tv_series_download_button")
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Download,
+                                            contentDescription = "Загрузить сериал",
+                                            tint = CinemaPrimary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Загрузить сериал",
+                                            color = CinemaTextWhite,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                            }
 
                             // Сетка серий по 3 штуки в строке
                             val chunks = currentSeason.episodes.chunked(3)

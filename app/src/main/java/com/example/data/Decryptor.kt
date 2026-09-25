@@ -164,8 +164,9 @@ object RezkaDecryptor {
 
     /**
      * Parses the decrypted string into a list of StreamUrls with mirror links and direct MP4 fallback.
-     * Accurately extracts all resolutions (1080p Ultra, 1080p, 720p, 480p, 360p) whether delimited by " or ", ",",
+     * Accurately extracts all free resolutions (1080p, 720p, 480p, 360p) whether delimited by " or ", ",",
      * or newline, and sorts them from highest resolution down to lowest resolution.
+     * 1080p Ultra is excluded completely as it requires a paid account.
      */
     fun parseStreams(decodedStr: String): List<StreamUrl> {
         if (decodedStr.isBlank()) return emptyList()
@@ -177,11 +178,15 @@ object RezkaDecryptor {
         if (matches.isNotEmpty()) {
             for (match in matches) {
                 val qualityRaw = match.groupValues[1].trim()
+                // Skip premium 1080p Ultra streams completely
+                if (qualityRaw.contains("ultra", ignoreCase = true)) {
+                    continue
+                }
                 val urlsPart = match.groupValues[2]
 
                 val urls = urlRegex.findAll(urlsPart)
                     .map { it.value.trim() }
-                    .filter { it.isNotEmpty() }
+                    .filter { it.isNotEmpty() && !it.contains("ultra", ignoreCase = true) }
                     .distinct()
                     .toList()
 
@@ -196,12 +201,14 @@ object RezkaDecryptor {
                     }
 
                     val normalizedQuality = normalizeQualityLabel(qualityRaw)
-                    streamsMap[normalizedQuality] = StreamUrl(
-                        quality = normalizedQuality,
-                        url = primaryUrl,
-                        backupUrls = backupUrls,
-                        directMp4Url = directMp4
-                    )
+                    if (!normalizedQuality.contains("ultra", ignoreCase = true)) {
+                        streamsMap[normalizedQuality] = StreamUrl(
+                            quality = normalizedQuality,
+                            url = primaryUrl,
+                            backupUrls = backupUrls,
+                            directMp4Url = directMp4
+                        )
+                    }
                 }
             }
         }
@@ -210,11 +217,14 @@ object RezkaDecryptor {
         if (streamsMap.isEmpty()) {
             val allUrls = urlRegex.findAll(decodedStr)
                 .map { it.value.trim() }
+                .filter { it.isNotEmpty() && !it.contains("ultra", ignoreCase = true) }
                 .distinct()
                 .toList()
 
             for (url in allUrls) {
                 val quality = deduceQualityFromUrl(url)
+                if (quality.contains("ultra", ignoreCase = true)) continue
+
                 val directMp4 = when {
                     url.contains(":hls:manifest.m3u8") -> url.substringBefore(":hls:manifest.m3u8")
                     url.endsWith(".mp4") || url.contains(".mp4?") -> url.substringBefore(":")
@@ -229,18 +239,19 @@ object RezkaDecryptor {
             }
         }
 
-        // 3. Sort streams descending by quality (highest resolution first: 1080p Ultra -> 1080p -> 720p -> 480p -> 360p)
-        return streamsMap.values.sortedWith { a, b ->
-            val weightA = getQualityWeight(a.quality)
-            val weightB = getQualityWeight(b.quality)
-            weightB.compareTo(weightA)
-        }
+        // 3. Sort streams descending by quality (highest resolution first: 1080p -> 720p -> 480p -> 360p)
+        return streamsMap.values
+            .filterNot { it.quality.contains("ultra", ignoreCase = true) || it.url.contains("ultra", ignoreCase = true) }
+            .sortedWith { a, b ->
+                val weightA = getQualityWeight(a.quality)
+                val weightB = getQualityWeight(b.quality)
+                weightB.compareTo(weightA)
+            }
     }
 
     private fun normalizeQualityLabel(raw: String): String {
         val lower = raw.lowercase()
         return when {
-            lower.contains("ultra") || lower.contains("1080p ultra") -> "1080p Ultra"
             lower.contains("2160") || lower.contains("4k") -> "4K (2160p)"
             lower.contains("1440") || lower.contains("2k") -> "2K (1440p)"
             lower.contains("1080") || lower.contains("fhd") || lower.contains("full hd") -> "1080p"
@@ -255,7 +266,6 @@ object RezkaDecryptor {
     private fun deduceQualityFromUrl(url: String): String {
         val lower = url.lowercase()
         return when {
-            lower.contains("1080p_ultra") || lower.contains("1080ultra") -> "1080p Ultra"
             lower.contains("2160") || lower.contains("4k") -> "4K (2160p)"
             lower.contains("1440") || lower.contains("2k") -> "2K (1440p)"
             lower.contains("1080") -> "1080p"
@@ -272,7 +282,6 @@ object RezkaDecryptor {
         return when {
             lower.contains("4k") || lower.contains("2160") -> 2160
             lower.contains("2k") || lower.contains("1440") -> 1440
-            lower.contains("ultra") -> 1085
             lower.contains("1080") -> 1080
             lower.contains("720") -> 720
             lower.contains("480") -> 480

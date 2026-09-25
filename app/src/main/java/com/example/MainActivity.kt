@@ -33,8 +33,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.RezkaItem
 import com.example.data.ScreenState
 import com.example.ui.RezkaViewModel
+import com.example.ui.MirrorAuditUiState
 import com.example.ui.components.AppHeader
 import com.example.ui.components.AuthDialog
+import com.example.ui.components.MirrorAuditOverlay
 import com.example.ui.screens.CatalogScreen
 import com.example.ui.screens.FavoritesScreen
 import com.example.ui.screens.HistoryScreen
@@ -143,11 +145,11 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val currentUserAvatar by viewModel.currentUserAvatar.collectAsState()
+    val mirrorAuditState by viewModel.mirrorAuditState.collectAsState()
     var showAuthDialog by remember { mutableStateOf(false) }
 
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-
     val context = LocalContext.current
     val tvModePrefString by viewModel.tvModePreference.collectAsState()
     val isPlayerActive by viewModel.isPlayerActive.collectAsState()
@@ -189,8 +191,10 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     }
 
     // System Back Press Handler inside Compose
-    BackHandler(enabled = isSettingsOpen || navigationStack.isNotEmpty()) {
-        if (navigationStack.isNotEmpty()) {
+    BackHandler(enabled = (mirrorAuditState !is MirrorAuditUiState.Idle) || isSettingsOpen || navigationStack.isNotEmpty()) {
+        if (mirrorAuditState !is MirrorAuditUiState.Idle) {
+            viewModel.cancelMirrorAudit()
+        } else if (navigationStack.isNotEmpty()) {
             popBackStack()
         } else if (isSettingsOpen) {
             isSettingsOpen = false
@@ -488,6 +492,17 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                 UpdateBanner(
                     isBottomBarVisible = navigationStack.isEmpty() && !isSettingsOpen && !isTvMode,
                     modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+                )
+            }
+
+            if (mirrorAuditState !is MirrorAuditUiState.Idle) {
+                MirrorAuditOverlay(
+                    state = mirrorAuditState,
+                    onCancel = { viewModel.cancelMirrorAudit() },
+                    onOpenSettings = {
+                        viewModel.dismissMirrorAudit()
+                        isSettingsOpen = true
+                    }
                 )
             }
         }

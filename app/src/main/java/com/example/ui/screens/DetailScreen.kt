@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import com.example.data.CountryFlags
 import com.example.ui.util.rememberSavedLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -61,6 +62,7 @@ import com.example.ui.RezkaViewModel
 import com.example.ui.components.FallingSkullsBufferingOverlay
 import com.example.ui.components.RezkaPlayer
 import com.example.ui.components.ScheduleCalendarDialog
+import com.example.ui.components.SeriesDownloadDialog
 import com.example.ui.theme.*
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -254,7 +256,55 @@ fun DetailScreen(
     }
 
     var showScheduleCalendarDialog by remember { mutableStateOf(false) }
+    var showSeriesDownloadDialog by remember { mutableStateOf(false) }
+    var isDownloadExecuting by remember { mutableStateOf(false) }
     var isActorsExpanded by remember { mutableStateOf(false) }
+
+    val startMediaDownload: (Translator, Int, String, String) -> Unit = { trans, seasonId, epId, quality ->
+        showSeriesDownloadDialog = false
+        val currentDetail = (detailState as? DetailState.Success)?.detail
+        if (currentDetail != null && !isDownloadExecuting) {
+            isDownloadExecuting = true
+            Toast.makeText(context, "Получение ссылки...", Toast.LENGTH_SHORT).show()
+            scope.launch {
+                try {
+                    val isSeries = currentDetail.type == RezkaType.SERIES
+                    val targetId = currentDetail.numericPostId.ifEmpty { item.id }
+                    val streams = viewModel.getStreamUrls(
+                        itemId = targetId,
+                        translatorId = trans.id,
+                        isSeries = isSeries,
+                        season = if (isSeries) seasonId else 0,
+                        episode = if (isSeries) epId else ""
+                    )
+                    if (streams.isNotEmpty()) {
+                        val chosenIdx = RezkaService.findBestQualityIndex(streams, quality)
+                        val stream = streams.getOrNull(chosenIdx) ?: streams.first()
+                        val downloadUrl = stream.directMp4Url.ifEmpty { stream.url }
+                        val subtitleText = if (isSeries) "Сезон $seasonId, Серия $epId" else ""
+                        DownloadHelper.downloadStream(
+                            context = context,
+                            title = currentDetail.title,
+                            subtitle = subtitleText,
+                            quality = stream.quality,
+                            translatorName = trans.name,
+                            streamUrl = downloadUrl
+                        )
+                    } else {
+                        Toast.makeText(context, "Не удалось получить ссылку на файл", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Ошибка при получении видеопотока", Toast.LENGTH_SHORT).show()
+                } finally {
+                    isDownloadExecuting = false
+                }
+            }
+        }
+    }
+
+    val onDownloadClick: () -> Unit = {
+        showSeriesDownloadDialog = true
+    }
 
     // Intercept system Back button so exiting player returns to movie details, NOT to home/search!
     BackHandler(enabled = isPlayerOpen) {
@@ -591,6 +641,7 @@ fun DetailScreen(
                         onToggleFavorite = { viewModel.toggleFavorite(item, isFavorite) },
                         isSubscribed = isSubscribed,
                         onToggleSubscription = onToggleSubscriptionClick,
+                        onDownloadClick = onDownloadClick,
                         selectedTranslator = selectedTranslator,
                         onSelectTranslator = { trans ->
                             selectedTranslator = trans
@@ -822,7 +873,7 @@ fun DetailScreen(
                                         )
                                     }
 
-                                    val displayCountry = detail.countryFlag.ifEmpty { detail.country }
+                                    val displayCountry = detail.countryFlag.ifEmpty { CountryFlags.formatCountries(detail.country) }
                                     if (displayCountry.isNotEmpty()) {
                                         DetailMetaRow(
                                             icon = Icons.Default.Public,
@@ -1516,6 +1567,42 @@ fun DetailScreen(
                                         }
                                     }
                                 }
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Кнопка Загрузить сериал
+                                Button(
+                                    onClick = onDownloadClick,
+                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .tvFocusableItem(
+                                            onClick = onDownloadClick,
+                                            shape = RoundedCornerShape(10.dp)
+                                        )
+                                        .testTag("series_download_button")
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Download,
+                                            contentDescription = "Загрузить сериал",
+                                            tint = CinemaPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Загрузить сериал",
+                                            color = CinemaTextWhite,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
                                 Spacer(modifier = Modifier.height(12.dp))
 
                                 // Fast grid of episodes in Rows (2-columns) to minimize heavy compositions
@@ -1586,101 +1673,141 @@ fun DetailScreen(
                     if (detail.type == RezkaType.MOVIE) {
                         item {
                             Spacer(modifier = Modifier.height(28.dp))
-                            Row(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                if (detail.isReleased) {
-                                    Button(
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (detail.isReleased) {
+                                        Button(
+                                            onClick = {
+                                                val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
+                                                startPlayback(translator, 0, "")
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
+                                            shape = RoundedCornerShape(10.dp),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(52.dp)
+                                                .tvFocusableItem(
+                                                    onClick = {
+                                                        val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
+                                                        startPlayback(translator, 0, "")
+                                                    },
+                                                    shape = RoundedCornerShape(10.dp)
+                                                )
+                                                .testTag("movie_play_button")
+                                        ) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(22.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("СМОТРЕТЬ", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    } else {
+                                        Button(
+                                            onClick = {},
+                                            enabled = false,
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = androidx.compose.ui.graphics.Color.Gray.copy(alpha = 0.3f),
+                                                disabledContainerColor = androidx.compose.ui.graphics.Color.Gray.copy(alpha = 0.2f),
+                                                disabledContentColor = CinemaTextWhite.copy(alpha = 0.5f)
+                                            ),
+                                            shape = RoundedCornerShape(10.dp),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(52.dp)
+                                                .testTag("movie_play_button_disabled")
+                                        ) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(22.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("ЕЩЕ НЕ ВЫШЕЛ", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+
+                                    Surface(
                                         onClick = {
-                                            val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
-                                            startPlayback(translator, 0, "")
+                                            launchTrailer(
+                                                context = context,
+                                                scope = scope,
+                                                trailerUrl = detail.trailerUrl,
+                                                numericPostId = detail.numericPostId,
+                                                title = detail.title,
+                                                year = detail.year,
+                                                originalTitle = detail.originalTitle
+                                            )
                                         },
-                                        colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
+                                        color = CinemaCard,
                                         shape = RoundedCornerShape(10.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF0000).copy(alpha = 0.6f)),
                                         modifier = Modifier
-                                            .weight(1.35f)
+                                            .weight(1f)
                                             .height(52.dp)
                                             .tvFocusableItem(
                                                 onClick = {
-                                                    val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
-                                                    startPlayback(translator, 0, "")
+                                                    launchTrailer(
+                                                        context = context,
+                                                        scope = scope,
+                                                        trailerUrl = detail.trailerUrl,
+                                                        numericPostId = detail.numericPostId,
+                                                        title = detail.title,
+                                                        year = detail.year,
+                                                        originalTitle = detail.originalTitle
+                                                    )
                                                 },
                                                 shape = RoundedCornerShape(10.dp)
                                             )
-                                            .testTag("movie_play_button")
+                                            .testTag("trailer_button")
                                     ) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(22.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("СМОТРЕТЬ", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                } else {
-                                    Button(
-                                        onClick = {},
-                                        enabled = false,
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = androidx.compose.ui.graphics.Color.Gray.copy(alpha = 0.3f),
-                                            disabledContainerColor = androidx.compose.ui.graphics.Color.Gray.copy(alpha = 0.2f),
-                                            disabledContentColor = CinemaTextWhite.copy(alpha = 0.5f)
-                                        ),
-                                        shape = RoundedCornerShape(10.dp),
-                                        modifier = Modifier
-                                            .weight(1.35f)
-                                            .height(52.dp)
-                                            .testTag("movie_play_button_disabled")
-                                    ) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(22.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("ЕЩЕ НЕ ВЫШЕЛ", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Row(
+                                            modifier = Modifier.fillMaxSize(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            YouTubeLogoIcon(width = 22.dp, height = 15.dp, playIconSize = 11.dp)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Трейлер",
+                                                color = CinemaTextWhite,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
 
-                                 Surface(
-                                    onClick = {
-                                        launchTrailer(
-                                            context = context,
-                                            scope = scope,
-                                            trailerUrl = detail.trailerUrl,
-                                            numericPostId = detail.numericPostId,
-                                            title = detail.title,
-                                            year = detail.year,
-                                            originalTitle = detail.originalTitle
-                                        )
-                                    },
-                                    color = CinemaCard,
+                                // Кнопка Загрузить фильм (под кнопками "Смотреть" и "Трейлер")
+                                Button(
+                                    onClick = onDownloadClick,
+                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
                                     shape = RoundedCornerShape(10.dp),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF0000).copy(alpha = 0.6f)),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
                                     modifier = Modifier
-                                        .weight(1f)
+                                        .fillMaxWidth()
                                         .height(52.dp)
                                         .tvFocusableItem(
-                                            onClick = {
-                                                launchTrailer(
-                                                    context = context,
-                                                    scope = scope,
-                                                    trailerUrl = detail.trailerUrl,
-                                                    numericPostId = detail.numericPostId,
-                                                    title = detail.title,
-                                                    year = detail.year,
-                                                    originalTitle = detail.originalTitle
-                                                )
-                                            },
+                                            onClick = onDownloadClick,
                                             shape = RoundedCornerShape(10.dp)
                                         )
-                                        .testTag("trailer_button")
+                                        .testTag("movie_download_button")
                                 ) {
                                     Row(
-                                        modifier = Modifier.fillMaxSize(),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.Center
                                     ) {
-                                        YouTubeLogoIcon(width = 22.dp, height = 15.dp, playIconSize = 11.dp)
+                                        Icon(
+                                            imageVector = Icons.Default.Download,
+                                            contentDescription = "Загрузить фильм",
+                                            tint = CinemaPrimary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = "Трейлер",
+                                            text = "Загрузить фильм",
                                             color = CinemaTextWhite,
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold
@@ -2153,6 +2280,23 @@ fun DetailScreen(
                         )
                     }
                 }
+            }
+        }
+
+        if (showSeriesDownloadDialog) {
+            val currentDetail = (detailState as? DetailState.Success)?.detail
+            if (currentDetail != null) {
+                val seasonsToUse = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else currentDetail.seasons
+                SeriesDownloadDialog(
+                    detail = currentDetail,
+                    initialTranslator = selectedTranslator,
+                    initialSeasonId = selectedSeasonId,
+                    initialEpisodeId = selectedEpisodeId,
+                    effectiveSeasons = seasonsToUse,
+                    defaultQuality = defaultQuality,
+                    onDismiss = { showSeriesDownloadDialog = false },
+                    onDownload = startMediaDownload
+                )
             }
         }
 
