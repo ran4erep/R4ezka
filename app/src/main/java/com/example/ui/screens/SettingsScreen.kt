@@ -52,6 +52,12 @@ import com.example.ui.tv.dpadScrollable
 import com.example.ui.tv.tvFocusableItem
 import kotlinx.coroutines.launch
 
+private data class QualityOption(
+    val key: String,
+    val title: String,
+    val subtitle: String? = null
+)
+
 @Composable
 fun SettingsScreen(
     viewModel: RezkaViewModel,
@@ -317,6 +323,32 @@ fun SettingsScreen(
                             }
                         }
 
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Button(
+                            onClick = { viewModel.startMirrorAudit(isFirstLaunch = false) },
+                            colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("run_mirror_audit_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                tint = CinemaPrimary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Провести аудит",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = CinemaTextWhite
+                            )
+                        }
+
                         AnimatedVisibility(visible = pingResult != null) {
                             pingResult?.let { text ->
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -575,27 +607,21 @@ fun SettingsScreen(
                             color = CinemaPrimary,
                             letterSpacing = 1.sp
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Применяется ко всем фильмам и сериалам. Если видеофайл не содержит выбранного качества, будет автоматически запущен наиболее подходящий доступный поток.",
-                            fontSize = 12.sp,
-                            color = CinemaTextGray,
-                            lineHeight = 16.sp
-                        )
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                        val qualityOptions = listOf(
-                            RezkaService.QUALITY_1080P to ("1080p (Full HD)" to "Рекомендуется для большинства экранов"),
-                            RezkaService.QUALITY_1080P_ULTRA to ("1080p Ultra" to "Максимальный битрейт и чёткость"),
-                            RezkaService.QUALITY_720P to ("720p (HD)" to "Оптимально при среднем интернете"),
-                            RezkaService.QUALITY_480P to ("480p (SD)" to "Экономия трафика"),
-                            RezkaService.QUALITY_360P to ("360p" to "Минимальное качество"),
-                            RezkaService.QUALITY_ASK to ("Спрашивать" to "Выбор качества в диалоге перед каждым запуском")
-                        )
+                        val qualityOptions = remember {
+                            listOf(
+                                QualityOption(RezkaService.QUALITY_1080P, "1080p (Full HD)", null),
+                                QualityOption(RezkaService.QUALITY_720P, "720p (HD)", null),
+                                QualityOption(RezkaService.QUALITY_480P, "480p (SD)", null),
+                                QualityOption(RezkaService.QUALITY_360P, "360p", null),
+                                QualityOption(RezkaService.QUALITY_ASK, "Спрашивать", "Выбор качества в диалоге перед каждым запуском")
+                            )
+                        }
 
                         var qualityDropdownExpanded by remember { mutableStateOf(false) }
-                        val selectedQualityPair = qualityOptions.find { it.first == defaultQuality } ?: qualityOptions[0]
+                        val selectedQualityOption = qualityOptions.find { it.key == defaultQuality } ?: qualityOptions[0]
 
                         Box(modifier = Modifier.fillMaxWidth()) {
                             Row(
@@ -611,16 +637,18 @@ fun SettingsScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f, fill = false)) {
                                     Text(
-                                        text = selectedQualityPair.second.first,
+                                        text = selectedQualityOption.title,
                                         color = CinemaTextWhite,
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.SemiBold
                                     )
-                                    Text(
-                                        text = selectedQualityPair.second.second,
-                                        color = CinemaTextGray,
-                                        fontSize = 11.sp
-                                    )
+                                    if (selectedQualityOption.subtitle != null) {
+                                        Text(
+                                            text = selectedQualityOption.subtitle,
+                                            color = CinemaTextGray,
+                                            fontSize = 11.sp
+                                        )
+                                    }
                                 }
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Icon(
@@ -639,30 +667,31 @@ fun SettingsScreen(
                                     .fillMaxWidth(0.85f)
                                     .heightIn(max = 300.dp)
                             ) {
-                                qualityOptions.forEach { (key, info) ->
-                                    val (title, subtitle) = info
-                                    val isSelected = defaultQuality == key
+                                qualityOptions.forEach { option ->
+                                    val isSelected = defaultQuality == option.key
                                     DropdownMenuItem(
                                         text = {
                                             Column {
                                                 Text(
-                                                    text = title,
+                                                    text = option.title,
                                                     color = if (isSelected) CinemaPrimary else CinemaTextWhite,
                                                     fontSize = 13.sp,
                                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                                 )
-                                                Text(
-                                                    text = subtitle,
-                                                    color = if (isSelected) CinemaPrimary.copy(alpha = 0.8f) else CinemaTextGray,
-                                                    fontSize = 10.sp
-                                                )
+                                                if (option.subtitle != null) {
+                                                    Text(
+                                                        text = option.subtitle,
+                                                        color = if (isSelected) CinemaPrimary.copy(alpha = 0.8f) else CinemaTextGray,
+                                                        fontSize = 10.sp
+                                                    )
+                                                }
                                             }
                                         },
                                         onClick = {
                                             qualityDropdownExpanded = false
                                             if (!isSelected) {
-                                                viewModel.setDefaultQuality(key)
-                                                Toast.makeText(context, "Качество по умолчанию: $title", Toast.LENGTH_SHORT).show()
+                                                viewModel.setDefaultQuality(option.key)
+                                                Toast.makeText(context, "Качество по умолчанию: ${option.title}", Toast.LENGTH_SHORT).show()
                                             }
                                         },
                                         colors = MenuDefaults.itemColors(

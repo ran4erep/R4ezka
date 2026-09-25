@@ -44,6 +44,15 @@ interface WatchHistoryDao {
     @Query("SELECT * FROM watch_history WHERE itemId = :itemId AND season = :season AND episode = :episode ORDER BY timestamp DESC LIMIT 1")
     suspend fun getHistoryByEpisode(itemId: String, season: Int, episode: String): WatchHistoryEntity?
 
+    @Query("UPDATE watch_history SET totalEpisodes = :totalEpisodes, totalSeasons = :totalSeasons WHERE itemId = :itemId AND (totalEpisodes < :totalEpisodes OR totalSeasons < :totalSeasons)")
+    suspend fun updateHistoryTotalEpisodes(itemId: String, totalEpisodes: Int, totalSeasons: Int)
+
+    @Query("UPDATE watch_history SET isFullyWatched = CASE WHEN isFullyWatched = 1 THEN 0 ELSE 1 END WHERE itemId = :itemId")
+    suspend fun toggleHistoryWatched(itemId: String)
+
+    @Query("UPDATE watch_history SET isFullyWatched = 0 WHERE itemId = :itemId")
+    suspend fun resetHistoryWatched(itemId: String)
+
     @Query("DELETE FROM watch_history WHERE id = :id")
     suspend fun deleteHistoryById(id: String)
 
@@ -129,7 +138,13 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
     }
 }
 
-@Database(entities = [FavoriteEntity::class, WatchHistoryEntity::class, SeriesSubscriptionEntity::class], version = 6, exportSchema = false)
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE watch_history ADD COLUMN isFullyWatched INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+@Database(entities = [FavoriteEntity::class, WatchHistoryEntity::class, SeriesSubscriptionEntity::class], version = 7, exportSchema = false)
 abstract class RezkaDatabase : RoomDatabase() {
     abstract fun favoriteDao(): FavoriteDao
     abstract fun watchHistoryDao(): WatchHistoryDao
@@ -146,7 +161,7 @@ abstract class RezkaDatabase : RoomDatabase() {
                     RezkaDatabase::class.java,
                     "rezka_database"
                 )
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
                 INSTANCE = instance
@@ -215,6 +230,7 @@ class RezkaRepository(private val db: RezkaDatabase) {
         totalSeasons: Int = 0
     ) {
         val id = "${itemId}_${season}_${episode}"
+        db.watchHistoryDao().resetHistoryWatched(itemId)
         db.watchHistoryDao().insertHistory(
             WatchHistoryEntity(
                 id = id,
@@ -235,6 +251,14 @@ class RezkaRepository(private val db: RezkaDatabase) {
                 timestamp = System.currentTimeMillis()
             )
         )
+    }
+
+    suspend fun updateHistoryTotalEpisodes(itemId: String, totalEpisodes: Int, totalSeasons: Int) {
+        db.watchHistoryDao().updateHistoryTotalEpisodes(itemId, totalEpisodes, totalSeasons)
+    }
+
+    suspend fun toggleHistoryWatched(itemId: String) {
+        db.watchHistoryDao().toggleHistoryWatched(itemId)
     }
 
     suspend fun getWatchHistoryForMovie(itemId: String): WatchHistoryEntity? {

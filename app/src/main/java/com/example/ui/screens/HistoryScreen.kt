@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PlayArrow
@@ -45,6 +46,12 @@ fun HistoryScreen(
     modifier: Modifier = Modifier
 ) {
     val historyList by viewModel.aggregatedWatchHistory.collectAsStateWithLifecycle()
+
+    androidx.compose.runtime.LaunchedEffect(historyList.size) {
+        if (historyList.isNotEmpty()) {
+            viewModel.checkHistorySeriesUpdates()
+        }
+    }
 
     Column(
         modifier = modifier
@@ -165,6 +172,7 @@ fun HistoryScreen(
                                 )
                                 onNavigateToDetail(item)
                             },
+                            onMarkWatched = { viewModel.toggleHistoryWatched(history.itemId) },
                             onDelete = { viewModel.deleteHistoryByItemId(history.itemId) }
                         )
                     }
@@ -178,6 +186,7 @@ fun HistoryScreen(
 fun HistoryCardItem(
     history: AggregatedHistoryItem,
     onClick: () -> Unit,
+    onMarkWatched: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -187,13 +196,7 @@ fun HistoryCardItem(
     val progressPercentage = remember(progressFraction) {
         (progressFraction * 100f).roundToInt()
     }
-    val isFullyWatched = remember(history.isSeries, history.watchedEpisodesCount, history.totalEpisodesCount, progressPercentage, history.totalProgressFraction) {
-        if (history.isSeries) {
-            (history.watchedEpisodesCount >= history.totalEpisodesCount && history.totalEpisodesCount > 0) || progressPercentage >= 100
-        } else {
-            progressPercentage >= 100 || history.totalProgressFraction >= 0.85f
-        }
-    }
+    val isFullyWatched = history.isFullyWatched
 
     Column(
         modifier = modifier
@@ -330,40 +333,125 @@ fun HistoryCardItem(
             }
         }
 
-        // Продолговатая аккуратная кнопка удаления из истории под карточкой
-        Surface(
-            color = CinemaDark,
-            shape = RoundedCornerShape(8.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(36.dp)
-                .tvFocusableItem(
-                    onClick = onDelete,
-                    scaleFactor = 1.01f,
-                    focusedBorderColor = CinemaPrimary,
-                    shape = RoundedCornerShape(8.dp)
-                )
-                .testTag("history_item_delete_${history.itemId}"),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
-        ) {
+        if (isFullyWatched) {
+            // Кнопка на всю ширину: "Удалить из истории"
+            Surface(
+                color = CinemaDark,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(36.dp)
+                    .tvFocusableItem(
+                        onClick = onDelete,
+                        scaleFactor = 1.01f,
+                        focusedBorderColor = CinemaPrimary,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    .testTag("history_item_delete_${history.itemId}"),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Удалить из истории",
+                        tint = CinemaMuted,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Удалить из истории",
+                        color = CinemaTextGray,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        } else {
+            // Ряд двух кнопок под карточкой: слева "Просмотрено", справа "Удалить"
             Row(
-                modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(36.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = null,
-                    tint = CinemaMuted,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Удалить из истории",
-                    color = CinemaTextGray,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                // Кнопка слева: "Просмотрено"
+                Surface(
+                    color = CinemaDark,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .tvFocusableItem(
+                            onClick = onMarkWatched,
+                            scaleFactor = 1.01f,
+                            focusedBorderColor = CinemaPrimary,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .testTag("history_item_mark_watched_${history.itemId}")
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Отметить просмотренным",
+                            tint = CinemaMuted,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Просмотрено",
+                            color = CinemaTextGray,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                // Кнопка справа: "Удалить"
+                Surface(
+                    color = CinemaDark,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .tvFocusableItem(
+                            onClick = onDelete,
+                            scaleFactor = 1.01f,
+                            focusedBorderColor = CinemaPrimary,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .testTag("history_item_delete_${history.itemId}")
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Удалить из истории",
+                            tint = CinemaMuted,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Удалить",
+                            color = CinemaTextGray,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
             }
         }
     }

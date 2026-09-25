@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -398,6 +399,29 @@ private fun TvCatalogContent(
     isTopScreen: Boolean = true
 ) {
     val gridState = rememberSavedLazyGridState("catalog", viewModel)
+    var lastFocusedIndex by remember { mutableStateOf(0) }
+
+    val currentCatalogKey = remember(currentType, currentSection, currentGenre, viewModel.searchQuery) {
+        "${currentType.name}_${currentSection.name}_${currentGenre}_${viewModel.searchQuery.trim()}"
+    }
+    var lastRenderedCatalogKey by rememberSaveable { mutableStateOf(currentCatalogKey) }
+
+    LaunchedEffect(currentCatalogKey) {
+        if (currentCatalogKey != lastRenderedCatalogKey) {
+            lastRenderedCatalogKey = currentCatalogKey
+            gridState.scrollToItem(0, 0)
+            lastFocusedIndex = 0
+            viewModel.resetScrollPosition("catalog")
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.catalogScrollResetEvent.collect {
+            gridState.scrollToItem(0, 0)
+            lastFocusedIndex = 0
+        }
+    }
+
     val searchBarFocusRequester = entryFocusRequester
     val categoryDropdownFocusRequester = remember { FocusRequester() }
     val sectionDropdownFocusRequester = remember { FocusRequester() }
@@ -406,7 +430,6 @@ private fun TvCatalogContent(
     val coroutineScope = rememberCoroutineScope()
     val cardGridMode by viewModel.cardGridMode.collectAsState()
     val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
-    var lastFocusedIndex by remember { mutableStateOf(0) }
     val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
     fun getFocusRequesterForIndex(index: Int): FocusRequester {
         return itemFocusRequesters.getOrPut(index) { FocusRequester() }

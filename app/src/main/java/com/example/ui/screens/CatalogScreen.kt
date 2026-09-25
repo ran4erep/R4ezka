@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -74,6 +75,28 @@ fun CatalogScreen(
     var searchInput by remember { mutableStateOf(viewModel.searchQuery) }
     val searchHistory by viewModel.searchHistory.collectAsState()
     var isSearchFocused by remember { mutableStateOf(false) }
+
+    // Persistent grid state for catalog with smart scroll reset on search or filter change
+    val gridState = rememberSavedLazyGridState("catalog", viewModel)
+
+    val currentCatalogKey = remember(currentType, currentSection, currentGenre, viewModel.searchQuery) {
+        "${currentType.name}_${currentSection.name}_${currentGenre}_${viewModel.searchQuery.trim()}"
+    }
+    var lastRenderedCatalogKey by rememberSaveable { mutableStateOf(currentCatalogKey) }
+
+    LaunchedEffect(currentCatalogKey) {
+        if (currentCatalogKey != lastRenderedCatalogKey) {
+            lastRenderedCatalogKey = currentCatalogKey
+            gridState.scrollToItem(0, 0)
+            viewModel.resetScrollPosition("catalog")
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.catalogScrollResetEvent.collect {
+            gridState.scrollToItem(0, 0)
+        }
+    }
 
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -379,9 +402,6 @@ fun CatalogScreen(
                             )
                         }
                     } else {
-                        // High-performance vertical grid with optimized pagination and saved scroll state
-                        val gridState = rememberSavedLazyGridState("catalog", viewModel)
-
                         // Ultra-efficient scroll observer via derivedStateOf
                         val shouldLoadMore by remember {
                             derivedStateOf {
@@ -472,7 +492,8 @@ fun RezkaItemCard(
     item: RezkaItem,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    columnsCount: Int = 2
+    columnsCount: Int = 2,
+    showMovieRating: Boolean = true
 ) {
     val bottomFadeBrush = remember {
         Brush.verticalGradient(
@@ -512,7 +533,8 @@ fun RezkaItemCard(
                 )
 
                 // Rating / Episode Badge
-                if (item.rating.isNotEmpty()) {
+                val shouldShowBadge = item.rating.isNotEmpty() && (showMovieRating || item.type != RezkaType.MOVIE)
+                if (shouldShowBadge) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)

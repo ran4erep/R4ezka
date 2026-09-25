@@ -159,6 +159,7 @@ fun FavoritesScreen(
                                 item = item,
                                 columnsCount = columnsCount,
                                 onClick = { onNavigateToDetail(item) },
+                                showMovieRating = false,
                                 modifier = Modifier.fillMaxWidth()
                             )
                             
