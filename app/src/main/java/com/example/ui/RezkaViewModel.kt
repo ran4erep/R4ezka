@@ -1079,6 +1079,12 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleHistoryWatched(itemId: String) {
         viewModelScope.launch {
             repository.toggleHistoryWatched(itemId)
+            // Синхронизируем обновленные локальные элементы с Firebase
+            val updatedEntities = repository.getAllHistoryList().filter { it.itemId == itemId }
+            for (entity in updatedEntities) {
+                FirebaseSyncManager.onWatchProgress(entity)
+            }
+            FirebaseSyncManager.flushWatchProgress()
         }
     }
 
