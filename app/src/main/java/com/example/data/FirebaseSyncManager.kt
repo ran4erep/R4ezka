@@ -1243,6 +1243,7 @@ object FirebaseSyncManager {
             put("totalEpisodes", h.totalEpisodes)
             put("episodeIndex", h.episodeIndex)
             put("totalSeasons", h.totalSeasons)
+            put("isFullyWatched", h.isFullyWatched)
             put("timestamp", h.timestamp)
         }
     }
@@ -1269,6 +1270,7 @@ object FirebaseSyncManager {
             totalEpisodes = json.optInt("totalEpisodes", 0),
             episodeIndex = json.optInt("episodeIndex", 0),
             totalSeasons = json.optInt("totalSeasons", 0),
+            isFullyWatched = json.optBoolean("isFullyWatched", false),
             timestamp = json.optLong("timestamp", System.currentTimeMillis())
         )
     }
