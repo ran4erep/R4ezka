@@ -28,8 +28,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -1512,8 +1516,7 @@ fun SettingsScreen(
 }
 
 /**
- * Премиальный диалог ручной настройки сетки каталога.
- * Высокопроизводительный, с живым матричным превью и полноценной поддержкой пульта TV (D-Pad).
+ * Диалог ручной настройки сетки каталога.
  */
 @Composable
 private fun CustomGridDialog(
@@ -1524,6 +1527,11 @@ private fun CustomGridDialog(
 ) {
     var tempCols by remember { mutableStateOf(initialCols.coerceIn(1, 10)) }
     var tempRows by remember { mutableStateOf(initialRows.coerceIn(1, 5)) }
+
+    val decColsRequester = remember { FocusRequester() }
+    val incColsRequester = remember { FocusRequester() }
+    val decRowsRequester = remember { FocusRequester() }
+    val incRowsRequester = remember { FocusRequester() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1566,7 +1574,8 @@ private fun CustomGridDialog(
                                 .tvFocusableItem(
                                     onClick = { if (tempCols > 1) tempCols-- },
                                     shape = RoundedCornerShape(8.dp),
-                                    scaleFactor = 1.1f
+                                    scaleFactor = 1.1f,
+                                    focusRequester = decColsRequester
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
@@ -1595,7 +1604,8 @@ private fun CustomGridDialog(
                                 .tvFocusableItem(
                                     onClick = { if (tempCols < 10) tempCols++ },
                                     shape = RoundedCornerShape(8.dp),
-                                    scaleFactor = 1.1f
+                                    scaleFactor = 1.1f,
+                                    focusRequester = incColsRequester
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
@@ -1633,7 +1643,8 @@ private fun CustomGridDialog(
                                 .tvFocusableItem(
                                     onClick = { if (tempRows > 1) tempRows-- },
                                     shape = RoundedCornerShape(8.dp),
-                                    scaleFactor = 1.1f
+                                    scaleFactor = 1.1f,
+                                    focusRequester = decRowsRequester
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
@@ -1662,7 +1673,8 @@ private fun CustomGridDialog(
                                 .tvFocusableItem(
                                     onClick = { if (tempRows < 5) tempRows++ },
                                     shape = RoundedCornerShape(8.dp),
-                                    scaleFactor = 1.1f
+                                    scaleFactor = 1.1f,
+                                    focusRequester = incRowsRequester
                                 ),
                             contentAlignment = Alignment.Center
                         ) {

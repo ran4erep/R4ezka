@@ -101,6 +101,7 @@ import com.example.data.RezkaService
 import com.example.data.StreamUrl
 import com.example.data.SubtitleTrack
 import com.example.data.Translator
+import com.example.ui.tv.LocalTvShowCursor
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
@@ -120,9 +121,22 @@ enum class SeekSide { NONE, LEFT, RIGHT }
  * Секции трехуровневой навигации пульта в плеере:
  * - MAIN: центральная часть (видео: Center/OK - пауза/воспроизведение, Left/Right - перемотка)
  * - TOP: верхний ряд кнопок (Назад, PiP / Картинка в картинке, Блокировка экрана)
- * - BOTTOM: нижний ряд кнопок (Качество, Скорость, Субтитры, Масштаб)
+ * - BOTTOM: нижний ряд кнопок (Качество, Скорость, Озвучка, Субтитры, Зум -, Зум +, Масштаб)
  */
 enum class PlayerFocusArea { MAIN, TOP, BOTTOM }
+
+/**
+ * Элементы управления в нижней панели плеера (динамический порядок под пульт D-Pad / курсор).
+ */
+enum class BottomControl {
+    QUALITY,
+    SPEED,
+    TRANSLATOR,
+    SUBTITLES,
+    ZOOM_OUT,
+    ZOOM_IN,
+    RESIZE_MODE
+}
 
 /**
  * Режимы масштабирования видео (ExoPlayer AspectRatioFrameLayout)
@@ -557,6 +571,7 @@ fun RezkaPlayer(
     var totalDuration by remember { mutableLongStateOf(0L) }
     var isBuffering by remember { mutableStateOf(false) }
     var hasInitialPlayStarted by remember { mutableStateOf(false) }
+    var hasPlaybackEnded by remember { mutableStateOf(false) }
 
     // Флаг того, что активен режим воспроизведения (включая буферизацию и перемотку),
     // чтобы кнопка показывала иконку Паузы, а не Воспроизведения во время загрузки/перемотки
@@ -713,6 +728,7 @@ fun RezkaPlayer(
                         exoPlayer.setPlaybackSpeed(playbackSpeed)
                     }
                 } else if (state == Player.STATE_ENDED) {
+                    hasPlaybackEnded = true
                     if (totalDuration > 0) {
                         onProgressUpdate(totalDuration, totalDuration)
                     }
@@ -837,7 +853,10 @@ fun RezkaPlayer(
             try {
                 val pos = try { exoPlayer.currentPosition } catch (_: Exception) { 0L }
                 val dur = try { exoPlayer.duration } catch (_: Exception) { 0L }
-                if (pos > 0) {
+                val isCompleted = hasPlaybackEnded || playbackState == Player.STATE_ENDED || (dur > 0L && (dur - pos <= 20_000L || pos.toDouble() / dur.toDouble() >= 0.98))
+                if (isCompleted && dur > 0L) {
+                    onProgressUpdate(dur, dur)
+                } else if (pos > 0L) {
                     onProgressUpdate(pos, dur)
                 }
                 exoPlayer.stop()
@@ -985,7 +1004,52 @@ fun RezkaPlayer(
     var currentFocusArea by remember { mutableStateOf(PlayerFocusArea.MAIN) }
     var selectedTopIndex by remember { mutableIntStateOf(1) } // 0: Back, 1: PiP, 2: Lock
     var selectedCenterIndex by remember { mutableIntStateOf(if (isSeries) 1 else 0) } // 0: Prev Episode, 1: Play/Pause, 2: Next Episode
-    var selectedBottomIndex by remember { mutableIntStateOf(0) } // 0: Quality, 1: Speed, 2: Subtitles, 3: Resize
+    var selectedBottomIndex by remember { mutableIntStateOf(0) }
+
+    // Детектор пульта и курсора:
+    // Кнопки масштаба "+" и "-" отображаются строго тогда, когда управление осуществляется курсором / пультом,
+    // и скрываются, если курсора нет (например, обычный мобильный интерфейс с сенсорным управлением жестами).
+    val isTvCursorConfigured = LocalTvShowCursor.current
+    var isRemoteActive by remember { mutableStateOf(false) }
+    val showZoomControls = isTvCursorConfigured || isRemoteActive
+
+    val performZoomOut: () -> Unit = {
+        controlsInteractionKey++
+        val newScale = (customZoomScale - 0.02f).coerceAtLeast(0.5f)
+        customZoomScale = (newScale * 100).roundToInt() / 100f
+        showZoomIndicator = true
+        zoomInteractionKey++
+        if (itemId.isNotBlank()) {
+            RezkaService.setItemZoomScale(itemId, customZoomScale)
+        }
+        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    val performZoomIn: () -> Unit = {
+        controlsInteractionKey++
+        val newScale = (customZoomScale + 0.02f).coerceAtMost(3.0f)
+        customZoomScale = (newScale * 100).roundToInt() / 100f
+        showZoomIndicator = true
+        zoomInteractionKey++
+        if (itemId.isNotBlank()) {
+            RezkaService.setItemZoomScale(itemId, customZoomScale)
+        }
+        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    val cycleResizeMode: () -> Unit = {
+        controlsInteractionKey++
+        currentResizeMode = when (currentResizeMode) {
+            VideoResizeMode.FIT -> VideoResizeMode.ZOOM
+            VideoResizeMode.ZOOM -> VideoResizeMode.FILL
+            VideoResizeMode.FILL -> VideoResizeMode.FIT
+        }
+        if (itemId.isNotBlank()) {
+            RezkaService.setItemResizeMode(itemId, currentResizeMode.name)
+            FirebaseSyncManager.onItemResizeModeUpdated(itemId, currentResizeMode.name)
+        }
+        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
 
     // Reset remote focus tier back to MAIN whenever controls are dismissed
     LaunchedEffect(showControls) {
@@ -1329,6 +1393,21 @@ fun RezkaPlayer(
                     if (keyEvent.type != KeyEventType.KeyDown) return@onKeyEvent false
 
                     val keyCode = keyEvent.nativeKeyEvent.keyCode
+
+                    // Активируем режим управления пультом/курсором при нажатии навигационных клавиш
+                    when (keyCode) {
+                        android.view.KeyEvent.KEYCODE_DPAD_UP,
+                        android.view.KeyEvent.KEYCODE_DPAD_DOWN,
+                        android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
+                        android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                        android.view.KeyEvent.KEYCODE_ENTER,
+                        android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                            if (!isRemoteActive) {
+                                isRemoteActive = true
+                            }
+                        }
+                    }
 
                     // 1. Phone hardware volume keys: NEVER block or absorb, even when screen is locked!
                     if (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP ||
@@ -1842,14 +1921,29 @@ fun RezkaPlayer(
                             showControls = true
                             controlsInteractionKey++
                             val hasTranslators = translators.isNotEmpty()
-                            val maxBottomIndex = if (hasTranslators) 4 else 3
+                            val bottomControls = buildList {
+                                add(BottomControl.QUALITY)
+                                add(BottomControl.SPEED)
+                                if (hasTranslators) {
+                                    add(BottomControl.TRANSLATOR)
+                                }
+                                add(BottomControl.SUBTITLES)
+                                if (showZoomControls) {
+                                    add(BottomControl.ZOOM_OUT)
+                                    add(BottomControl.ZOOM_IN)
+                                }
+                                add(BottomControl.RESIZE_MODE)
+                            }
+                            val safeBottomIndex = selectedBottomIndex.coerceIn(0, (bottomControls.size - 1).coerceAtLeast(0))
+                            val currentBottomControl = bottomControls.getOrNull(safeBottomIndex)
+
                             when (keyEvent.nativeKeyEvent.keyCode) {
                                 android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
-                                    selectedBottomIndex = (selectedBottomIndex - 1).coerceAtLeast(0)
+                                    selectedBottomIndex = (safeBottomIndex - 1).coerceAtLeast(0)
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                    selectedBottomIndex = (selectedBottomIndex + 1).coerceAtMost(maxBottomIndex)
+                                    selectedBottomIndex = (safeBottomIndex + 1).coerceAtMost(bottomControls.size - 1)
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_DPAD_UP -> {
@@ -1864,43 +1958,15 @@ fun RezkaPlayer(
                                 android.view.KeyEvent.KEYCODE_DPAD_CENTER,
                                 android.view.KeyEvent.KEYCODE_ENTER,
                                 android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                                    if (hasTranslators) {
-                                        when (selectedBottomIndex) {
-                                            0 -> showQualityDialog = true
-                                            1 -> showSpeedDialog = true
-                                            2 -> showTranslatorDialog = true
-                                            3 -> showSubtitlesDialog = true
-                                            4 -> {
-                                                currentResizeMode = when (currentResizeMode) {
-                                                    VideoResizeMode.FIT -> VideoResizeMode.ZOOM
-                                                    VideoResizeMode.ZOOM -> VideoResizeMode.FILL
-                                                    VideoResizeMode.FILL -> VideoResizeMode.FIT
-                                                }
-                                                 if (itemId.isNotBlank()) {
-                                                    RezkaService.setItemResizeMode(itemId, currentResizeMode.name)
-                                                    FirebaseSyncManager.onItemResizeModeUpdated(itemId, currentResizeMode.name)
-                                                }
-                                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                            }
-                                        }
-                                    } else {
-                                        when (selectedBottomIndex) {
-                                            0 -> showQualityDialog = true
-                                            1 -> showSpeedDialog = true
-                                            2 -> showSubtitlesDialog = true
-                                            3 -> {
-                                                currentResizeMode = when (currentResizeMode) {
-                                                    VideoResizeMode.FIT -> VideoResizeMode.ZOOM
-                                                    VideoResizeMode.ZOOM -> VideoResizeMode.FILL
-                                                    VideoResizeMode.FILL -> VideoResizeMode.FIT
-                                                }
-                                                if (itemId.isNotBlank()) {
-                                                    RezkaService.setItemResizeMode(itemId, currentResizeMode.name)
-                                                    FirebaseSyncManager.onItemResizeModeUpdated(itemId, currentResizeMode.name)
-                                                }
-                                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                            }
-                                        }
+                                    when (currentBottomControl) {
+                                        BottomControl.QUALITY -> showQualityDialog = true
+                                        BottomControl.SPEED -> showSpeedDialog = true
+                                        BottomControl.TRANSLATOR -> showTranslatorDialog = true
+                                        BottomControl.SUBTITLES -> showSubtitlesDialog = true
+                                        BottomControl.ZOOM_OUT -> performZoomOut()
+                                        BottomControl.ZOOM_IN -> performZoomIn()
+                                        BottomControl.RESIZE_MODE -> cycleResizeMode()
+                                        null -> {}
                                     }
                                     true
                                 }
@@ -2127,6 +2193,9 @@ fun RezkaPlayer(
                                                 if (currentSide == SeekSide.NONE) {
                                                     showControls = !showControls
                                                     controlsInteractionKey++
+                                                    if (!isTvCursorConfigured) {
+                                                        isRemoteActive = false
+                                                    }
                                                 }
                                             }
                                         }
@@ -2764,11 +2833,31 @@ fun RezkaPlayer(
 
                         // Secondary Bottom Controls
                         val hasTranslators = translators.isNotEmpty()
-                        val isQualityRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == 0
-                        val isSpeedRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == 1
-                        val isTranslatorRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && hasTranslators && selectedBottomIndex == 2
-                        val isSubtitlesRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == (if (hasTranslators) 3 else 2)
-                        val isResizeRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && selectedBottomIndex == (if (hasTranslators) 4 else 3)
+                        val bottomControls = remember(hasTranslators, showZoomControls) {
+                            buildList {
+                                add(BottomControl.QUALITY)
+                                add(BottomControl.SPEED)
+                                if (hasTranslators) {
+                                    add(BottomControl.TRANSLATOR)
+                                }
+                                add(BottomControl.SUBTITLES)
+                                if (showZoomControls) {
+                                    add(BottomControl.ZOOM_OUT)
+                                    add(BottomControl.ZOOM_IN)
+                                }
+                                add(BottomControl.RESIZE_MODE)
+                            }
+                        }
+                        val safeBottomIndex = selectedBottomIndex.coerceIn(0, (bottomControls.size - 1).coerceAtLeast(0))
+                        val currentBottomControl = bottomControls.getOrNull(safeBottomIndex)
+
+                        val isQualityRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && currentBottomControl == BottomControl.QUALITY
+                        val isSpeedRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && currentBottomControl == BottomControl.SPEED
+                        val isTranslatorRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && currentBottomControl == BottomControl.TRANSLATOR
+                        val isSubtitlesRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && currentBottomControl == BottomControl.SUBTITLES
+                        val isZoomOutRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && currentBottomControl == BottomControl.ZOOM_OUT
+                        val isZoomInRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && currentBottomControl == BottomControl.ZOOM_IN
+                        val isResizeRemoteFocused = showControls && currentFocusArea == PlayerFocusArea.BOTTOM && currentBottomControl == BottomControl.RESIZE_MODE
 
                         Row(
                             modifier = Modifier
@@ -2783,7 +2872,7 @@ fun RezkaPlayer(
                                 Button(
                                     onClick = {
                                         controlsInteractionKey++
-                                        selectedBottomIndex = 0
+                                        selectedBottomIndex = bottomControls.indexOf(BottomControl.QUALITY)
                                         showQualityDialog = true
                                     },
                                     colors = ButtonDefaults.buttonColors(
@@ -2815,7 +2904,7 @@ fun RezkaPlayer(
                                 Button(
                                     onClick = {
                                         controlsInteractionKey++
-                                        selectedBottomIndex = 1
+                                        selectedBottomIndex = bottomControls.indexOf(BottomControl.SPEED)
                                         showSpeedDialog = true
                                     },
                                     colors = ButtonDefaults.buttonColors(
@@ -2847,7 +2936,7 @@ fun RezkaPlayer(
                                     Button(
                                         onClick = {
                                             controlsInteractionKey++
-                                            selectedBottomIndex = 2
+                                            selectedBottomIndex = bottomControls.indexOf(BottomControl.TRANSLATOR)
                                             showTranslatorDialog = true
                                         },
                                         colors = ButtonDefaults.buttonColors(
@@ -2908,7 +2997,7 @@ fun RezkaPlayer(
                                 Button(
                                     onClick = {
                                         controlsInteractionKey++
-                                        selectedBottomIndex = if (hasTranslators) 3 else 2
+                                        selectedBottomIndex = bottomControls.indexOf(BottomControl.SUBTITLES)
                                         showSubtitlesDialog = true
                                     },
                                     colors = ButtonDefaults.buttonColors(
@@ -2945,34 +3034,38 @@ fun RezkaPlayer(
                                 }
                             }
 
-                            // Right side: Video Stretch / Resize Mode with "-" and "+" zoom buttons on TV
+                            // Right side: Video Stretch / Resize Mode with "-" and "+" zoom buttons on TV / Remote cursor
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                if (isTvMode) {
+                                if (showZoomControls) {
                                     // "-" Zoom Out button
                                     IconButton(
                                         onClick = {
-                                            controlsInteractionKey++
-                                            val newScale = (customZoomScale - 0.01f).coerceAtLeast(0.5f)
-                                            customZoomScale = (newScale * 100).roundToInt() / 100f
-                                            showZoomIndicator = true
-                                            zoomInteractionKey++
-                                            if (itemId.isNotBlank()) {
-                                                RezkaService.setItemZoomScale(itemId, customZoomScale)
-                                            }
-                                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                            selectedBottomIndex = bottomControls.indexOf(BottomControl.ZOOM_OUT)
+                                            performZoomOut()
                                         },
                                         modifier = Modifier
                                             .size(32.dp)
-                                            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                            .scale(if (isZoomOutRemoteFocused) 1.2f else 1.0f)
+                                            .background(
+                                                if (isZoomOutRemoteFocused) CinemaPrimary.copy(alpha = 0.55f) else Color.Black.copy(alpha = 0.5f),
+                                                CircleShape
+                                            )
+                                            .then(
+                                                if (isZoomOutRemoteFocused) {
+                                                    Modifier
+                                                        .border(2.5.dp, CinemaPrimary, CircleShape)
+                                                        .border(1.dp, Color.White.copy(alpha = 0.85f), CircleShape)
+                                                } else Modifier
+                                            )
                                             .testTag("player_zoom_out_button")
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Remove,
                                             contentDescription = "Уменьшить масштаб",
-                                            tint = CinemaTextWhite,
+                                            tint = if (isZoomOutRemoteFocused) Color.White else CinemaTextWhite,
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
@@ -2980,25 +3073,29 @@ fun RezkaPlayer(
                                     // "+" Zoom In button
                                     IconButton(
                                         onClick = {
-                                            controlsInteractionKey++
-                                            val newScale = (customZoomScale + 0.01f).coerceAtMost(3.0f)
-                                            customZoomScale = (newScale * 100).roundToInt() / 100f
-                                            showZoomIndicator = true
-                                            zoomInteractionKey++
-                                            if (itemId.isNotBlank()) {
-                                                RezkaService.setItemZoomScale(itemId, customZoomScale)
-                                            }
-                                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                            selectedBottomIndex = bottomControls.indexOf(BottomControl.ZOOM_IN)
+                                            performZoomIn()
                                         },
                                         modifier = Modifier
                                             .size(32.dp)
-                                            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                            .scale(if (isZoomInRemoteFocused) 1.2f else 1.0f)
+                                            .background(
+                                                if (isZoomInRemoteFocused) CinemaPrimary.copy(alpha = 0.55f) else Color.Black.copy(alpha = 0.5f),
+                                                CircleShape
+                                            )
+                                            .then(
+                                                if (isZoomInRemoteFocused) {
+                                                    Modifier
+                                                        .border(2.5.dp, CinemaPrimary, CircleShape)
+                                                        .border(1.dp, Color.White.copy(alpha = 0.85f), CircleShape)
+                                                } else Modifier
+                                            )
                                             .testTag("player_zoom_in_button")
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Add,
                                             contentDescription = "Увеличить масштаб",
-                                            tint = CinemaTextWhite,
+                                            tint = if (isZoomInRemoteFocused) Color.White else CinemaTextWhite,
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
@@ -3007,18 +3104,8 @@ fun RezkaPlayer(
                                 // Base Scale Mode Button
                                 Button(
                                     onClick = {
-                                        controlsInteractionKey++
-                                        selectedBottomIndex = if (hasTranslators) 4 else 3
-                                        currentResizeMode = when (currentResizeMode) {
-                                            VideoResizeMode.FIT -> VideoResizeMode.ZOOM
-                                            VideoResizeMode.ZOOM -> VideoResizeMode.FILL
-                                            VideoResizeMode.FILL -> VideoResizeMode.FIT
-                                        }
-                                        if (itemId.isNotBlank()) {
-                                            RezkaService.setItemResizeMode(itemId, currentResizeMode.name)
-                                            FirebaseSyncManager.onItemResizeModeUpdated(itemId, currentResizeMode.name)
-                                        }
-                                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                        selectedBottomIndex = bottomControls.indexOf(BottomControl.RESIZE_MODE)
+                                        cycleResizeMode()
                                     },
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = if (isResizeRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)

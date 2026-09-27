@@ -263,49 +263,59 @@ fun ThematicListScreen(
                         }
 
                         val configuration = LocalConfiguration.current
-                        val columnsCount = remember(configuration.orientation, configuration.screenWidthDp, isTvMode) {
-                            if (isTvMode || configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                                (configuration.screenWidthDp / 150).coerceIn(3, 8)
-                            } else {
-                                2
-                            }
-                        }
+                        val isLandscape = isTvMode || configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                        val cardGridMode by viewModel.cardGridMode.collectAsState()
 
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(columnsCount),
-                            state = gridState,
-                            contentPadding = PaddingValues(16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(if (columnsCount >= 6) 8.dp else 14.dp),
-                            verticalArrangement = Arrangement.spacedBy(if (columnsCount >= 6) 10.dp else 16.dp),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .dpadScrollable(gridState)
-                                .testTag("thematic_items_grid")
-                        ) {
-                            items(
-                                items = loadedItems,
-                                key = { it.id }
-                            ) { item ->
-                                RezkaItemCard(
-                                    item = item,
-                                    columnsCount = columnsCount,
-                                    onClick = { onNavigateToDetail(item) }
+                        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                            val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight, isLandscape) {
+                                com.example.ui.tv.CardGridEngine.calculate(
+                                    cardGridMode = cardGridMode,
+                                    availableWidth = maxWidth - 32.dp,
+                                    availableHeight = maxHeight - 16.dp,
+                                    isLandscapeOrTv = isLandscape
                                 )
                             }
 
-                            if (isLoadingMore) {
-                                item(span = { GridItemSpan(maxLineSpan) }) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 16.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        CircularProgressIndicator(
-                                            color = CinemaPrimary,
-                                            modifier = Modifier.size(32.dp),
-                                            strokeWidth = 3.dp
-                                        )
+                            val columnsCount = resolvedGrid.columns
+                            val cardHeight = resolvedGrid.cardHeight
+
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(columnsCount),
+                                state = gridState,
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = if (isLandscape) 16.dp else 40.dp),
+                                horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
+                                verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .dpadScrollable(gridState)
+                                    .testTag("thematic_items_grid")
+                            ) {
+                                items(
+                                    items = loadedItems,
+                                    key = { it.id }
+                                ) { item ->
+                                    RezkaItemCard(
+                                        item = item,
+                                        columnsCount = columnsCount,
+                                        cardHeight = cardHeight,
+                                        onClick = { onNavigateToDetail(item) }
+                                    )
+                                }
+
+                                if (isLoadingMore) {
+                                    item(span = { GridItemSpan(maxLineSpan) }) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 16.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            CircularProgressIndicator(
+                                                color = CinemaPrimary,
+                                                modifier = Modifier.size(32.dp),
+                                                strokeWidth = 3.dp
+                                            )
+                                        }
                                     }
                                 }
                             }

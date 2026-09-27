@@ -47,10 +47,8 @@ fun HistoryScreen(
 ) {
     val historyList by viewModel.aggregatedWatchHistory.collectAsStateWithLifecycle()
 
-    androidx.compose.runtime.LaunchedEffect(historyList.size) {
-        if (historyList.isNotEmpty()) {
-            viewModel.checkHistorySeriesUpdates()
-        }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.checkHistorySeriesUpdates()
     }
 
     Column(
@@ -190,13 +188,13 @@ fun HistoryCardItem(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val progressFraction = remember(history.totalProgressFraction) {
-        history.totalProgressFraction.coerceIn(0f, 1f)
-    }
-    val progressPercentage = remember(progressFraction) {
-        (progressFraction * 100f).roundToInt()
-    }
     val isFullyWatched = history.isFullyWatched
+    val progressFraction = remember(history.totalProgressFraction, isFullyWatched) {
+        if (isFullyWatched) 1f else history.totalProgressFraction.coerceIn(0f, 0.99f)
+    }
+    val progressPercentage = remember(progressFraction, isFullyWatched) {
+        if (isFullyWatched) 100 else (progressFraction * 100f).toInt().coerceIn(0, 99)
+    }
 
     Column(
         modifier = modifier

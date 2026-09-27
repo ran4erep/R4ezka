@@ -47,6 +47,12 @@ interface WatchHistoryDao {
     @Query("UPDATE watch_history SET totalEpisodes = :totalEpisodes, totalSeasons = :totalSeasons WHERE itemId = :itemId AND (totalEpisodes < :totalEpisodes OR totalSeasons < :totalSeasons)")
     suspend fun updateHistoryTotalEpisodes(itemId: String, totalEpisodes: Int, totalSeasons: Int)
 
+    @Query("UPDATE watch_history SET totalEpisodes = :totalEpisodes, totalSeasons = :totalSeasons WHERE itemId = :itemId")
+    suspend fun updateExactTotalEpisodes(itemId: String, totalEpisodes: Int, totalSeasons: Int)
+
+    @Query("UPDATE watch_history SET isFullyWatched = :isWatched WHERE itemId = :itemId")
+    suspend fun setHistoryWatched(itemId: String, isWatched: Boolean)
+
     @Query("UPDATE watch_history SET isFullyWatched = CASE WHEN isFullyWatched = 1 THEN 0 ELSE 1 END WHERE itemId = :itemId")
     suspend fun toggleHistoryWatched(itemId: String)
 
@@ -227,10 +233,13 @@ class RezkaRepository(private val db: RezkaDatabase) {
         durationMs: Long = 0L,
         totalEpisodes: Int = 0,
         episodeIndex: Int = 0,
-        totalSeasons: Int = 0
+        totalSeasons: Int = 0,
+        isFullyWatched: Boolean = false
     ) {
         val id = "${itemId}_${season}_${episode}"
-        db.watchHistoryDao().resetHistoryWatched(itemId)
+        if (isFullyWatched) {
+            db.watchHistoryDao().setHistoryWatched(itemId, true)
+        }
         db.watchHistoryDao().insertHistory(
             WatchHistoryEntity(
                 id = id,
@@ -248,6 +257,7 @@ class RezkaRepository(private val db: RezkaDatabase) {
                 totalEpisodes = totalEpisodes,
                 episodeIndex = episodeIndex,
                 totalSeasons = totalSeasons,
+                isFullyWatched = isFullyWatched,
                 timestamp = System.currentTimeMillis()
             )
         )
@@ -255,6 +265,14 @@ class RezkaRepository(private val db: RezkaDatabase) {
 
     suspend fun updateHistoryTotalEpisodes(itemId: String, totalEpisodes: Int, totalSeasons: Int) {
         db.watchHistoryDao().updateHistoryTotalEpisodes(itemId, totalEpisodes, totalSeasons)
+    }
+
+    suspend fun updateExactTotalEpisodes(itemId: String, totalEpisodes: Int, totalSeasons: Int) {
+        db.watchHistoryDao().updateExactTotalEpisodes(itemId, totalEpisodes, totalSeasons)
+    }
+
+    suspend fun setHistoryWatched(itemId: String, isWatched: Boolean) {
+        db.watchHistoryDao().setHistoryWatched(itemId, isWatched)
     }
 
     suspend fun toggleHistoryWatched(itemId: String) {

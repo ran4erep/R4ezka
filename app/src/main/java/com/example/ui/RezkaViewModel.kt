@@ -100,6 +100,19 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val _isCheckingSeriesUpdates = MutableStateFlow(false)
     val isCheckingSeriesUpdates: StateFlow<Boolean> = _isCheckingSeriesUpdates.asStateFlow()
 
+    private val autoWatchedPersistedSet = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    fun markItemAutoWatchedIfNeeded(itemId: String, entity: WatchHistoryEntity) {
+        if (autoWatchedPersistedSet.add(itemId)) {
+            viewModelScope.launch(Dispatchers.IO) {
+                repository.setHistoryWatched(itemId, true)
+                val updated = entity.copy(isFullyWatched = true)
+                FirebaseSyncManager.onWatchProgress(updated)
+                FirebaseSyncManager.flushWatchProgress()
+            }
+        }
+    }
+
     val aggregatedWatchHistory: StateFlow<List<AggregatedHistoryItem>> = repository.watchHistory
         .map { list ->
             val now = System.currentTimeMillis()
@@ -114,16 +127,24 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 val isFullyWatched: Boolean
 
                 if (!isSeries) {
+                    val isCompletedToEnd = latest.durationMs > 0L && (
+                        latest.progressMs >= latest.durationMs ||
+                        (latest.durationMs - latest.progressMs) <= 20_000L ||
+                        (latest.progressMs.toDouble() / latest.durationMs.toDouble()) >= 0.98
+                    )
                     val isAutoWatched = isAutoWatchedRuleMet(latest.progressMs, latest.durationMs, latest.timestamp, now)
-                    isFullyWatched = isManualWatched || isAutoWatched
+                    isFullyWatched = isManualWatched || isCompletedToEnd || isAutoWatched
 
                     if (isFullyWatched) {
                         totalProgressFraction = 1.0f
                         watchedEpisodesCount = 1
                         totalEpisodesCount = 1
+                        if (!latest.isFullyWatched) {
+                            markItemAutoWatchedIfNeeded(itemId, latest)
+                        }
                     } else {
                         val exactFraction = if (latest.durationMs > 0) {
-                            (latest.progressMs.toDouble() / latest.durationMs.toDouble()).coerceIn(0.0, 1.0).toFloat()
+                            (latest.progressMs.toDouble() / latest.durationMs.toDouble()).coerceIn(0.0, 0.99).toFloat()
                         } else 0f
                         totalProgressFraction = exactFraction
                         watchedEpisodesCount = 0
@@ -135,6 +156,9 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     watchedEpisodesCount = calc.watchedEpisodesCount
                     totalEpisodesCount = calc.totalEpisodesCount
                     isFullyWatched = calc.isFullyWatched
+                    if (isFullyWatched && !latest.isFullyWatched) {
+                        markItemAutoWatchedIfNeeded(itemId, latest)
+                    }
                 }
 
                 val rawEpDigit = latest.episode.filter { it.isDigit() }.toIntOrNull() ?: 0
@@ -869,7 +893,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Проверяет появление новых серий у всех сериалов в истории просмотров.
-     * При обнаружении новых серий мгновенно обновляет totalEpisodes в базе данных для пересчёта прогресса.
+     * При обнаружении новых серий мгновенно обновляет totalEpisodes в базе данных для пересчёта прогресса,
+     * а также сбрасывает статус "просмотрено", если вышли новые серии.
      */
     fun checkHistorySeriesUpdates() {
         val seriesItems = aggregatedWatchHistory.value.filter { it.isSeries && it.url.isNotBlank() }
@@ -883,38 +908,67 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             seriesItems.map { historyItem ->
                 async {
                     val lastCheck = lastHistoryCheckTimestamps[historyItem.itemId] ?: 0L
-                    if (now - lastCheck < 30_000L) return@async
+                    if (now - lastCheck < 3_000L) return@async // Защита от спама чаще 3 сек при быстрой перекомпозиции
 
                     semaphore.withPermit {
                         try {
                             lastHistoryCheckTimestamps[historyItem.itemId] = now
 
                             val targetUrl = RezkaService.adjustUrlToCurrentMirror(historyItem.url, RezkaType.SERIES, historyItem.itemId)
+                            val numericPostId = RezkaService.extractNumericId(historyItem.url).ifEmpty { RezkaService.extractNumericId(historyItem.itemId) }
+                            val lastHist = repository.getWatchHistoryForMovie(historyItem.itemId)
+                            val transId = lastHist?.translatorId ?: ""
+
                             var newTotalEpisodes = 0
                             var newTotalSeasons = 0
 
-                            try {
-                                val detail = RezkaService.getDetail(targetUrl)
-                                if (detail.seasons.isNotEmpty()) {
-                                    newTotalEpisodes = detail.seasons.sumOf { it.episodes.size }
-                                    newTotalSeasons = detail.seasons.maxOfOrNull { it.id } ?: detail.seasons.size
-                                }
-                            } catch (_: Exception) {}
-
-                            if (newTotalEpisodes == 0) {
-                                val scanRes = SeriesUpdateEngine.fetchSeriesLatestEpisode(targetUrl)
-                                if (scanRes.isSuccess && (scanRes.latestSeason > 0 || scanRes.latestEpisode > 0)) {
-                                    val latestS = scanRes.latestSeason.coerceAtLeast(1)
-                                    val latestE = scanRes.latestEpisode.coerceAtLeast(1)
-                                    newTotalSeasons = maxOf(historyItem.latestSeason, latestS)
-                                    val epsPerSeason = maxOf(latestE, if (historyItem.latestSeason > 0) historyItem.totalEpisodesCount / historyItem.latestSeason else 1, 1)
-                                    newTotalEpisodes = maxOf((latestS - 1) * epsPerSeason + latestE, historyItem.totalEpisodesCount)
-                                }
+                            // 1. Сверхбыстрый точечный AJAX-запрос к API HDRezka
+                            if (numericPostId.isNotBlank()) {
+                                try {
+                                    val ajaxRes = SeriesUpdateEngine.fetchSeriesLatestEpisodeAjax(numericPostId, transId)
+                                    if (ajaxRes.isSuccess && ajaxRes.totalEpisodes > 0) {
+                                        newTotalEpisodes = ajaxRes.totalEpisodes
+                                        newTotalSeasons = ajaxRes.totalSeasons
+                                    }
+                                } catch (_: Exception) {}
                             }
 
-                            if (newTotalEpisodes > 0 && newTotalEpisodes > historyItem.totalEpisodesCount) {
+                            // 2. Сканирование страницы если AJAX не дал результата
+                            if (newTotalEpisodes == 0) {
+                                try {
+                                    val scanRes = SeriesUpdateEngine.fetchSeriesLatestEpisode(targetUrl)
+                                    if (scanRes.isSuccess && scanRes.totalEpisodes > 0) {
+                                        newTotalEpisodes = scanRes.totalEpisodes
+                                        newTotalSeasons = scanRes.totalSeasons
+                                    }
+                                } catch (_: Exception) {}
+                            }
+
+                            // 3. Fallback: RezkaService.getDetail
+                            if (newTotalEpisodes == 0) {
+                                try {
+                                    val detail = RezkaService.getDetail(targetUrl)
+                                    if (detail.seasons.isNotEmpty()) {
+                                        newTotalEpisodes = detail.seasons.sumOf { it.episodes.size }
+                                        newTotalSeasons = detail.seasons.maxOfOrNull { it.id } ?: detail.seasons.size
+                                    }
+                                } catch (_: Exception) {}
+                            }
+
+                            if (newTotalEpisodes > 0) {
                                 val finalSeasons = maxOf(newTotalSeasons, 1)
-                                repository.updateHistoryTotalEpisodes(historyItem.itemId, newTotalEpisodes, finalSeasons)
+                                repository.updateExactTotalEpisodes(historyItem.itemId, newTotalEpisodes, finalSeasons)
+
+                                // Если появились новые серии, а сериал числился полностью просмотренным:
+                                if (newTotalEpisodes > historyItem.watchedEpisodesCount && historyItem.isFullyWatched) {
+                                    autoWatchedPersistedSet.remove(historyItem.itemId)
+                                    repository.setHistoryWatched(historyItem.itemId, false)
+                                    val updated = lastHist?.copy(isFullyWatched = false, totalEpisodes = newTotalEpisodes, totalSeasons = finalSeasons)
+                                    if (updated != null) {
+                                        FirebaseSyncManager.onWatchProgress(updated)
+                                        FirebaseSyncManager.flushWatchProgress()
+                                    }
+                                }
                             }
                         } catch (e: Exception) {
                             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -1038,7 +1092,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         durationMs: Long = 0L,
         totalEpisodes: Int = 0,
         episodeIndex: Int = 0,
-        totalSeasons: Int = 0
+        totalSeasons: Int = 0,
+        isFullyWatched: Boolean = false
     ) {
         val id = "${itemId}_${season}_${episode}"
         val entity = WatchHistoryEntity(
@@ -1057,9 +1112,13 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             totalEpisodes = totalEpisodes,
             episodeIndex = episodeIndex,
             totalSeasons = totalSeasons,
+            isFullyWatched = isFullyWatched,
             timestamp = System.currentTimeMillis()
         )
         viewModelScope.launch {
+            if (isFullyWatched) {
+                repository.setHistoryWatched(itemId, true)
+            }
             repository.insertHistoryEntity(entity)
             FirebaseSyncManager.onWatchProgress(entity)
         }
@@ -1359,7 +1418,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
         /**
          * Высокопроизводительный движок вычисления прогресса сериала по последней просмотренной серии.
-         * Учитывает сквозной номер серии из общего числа, прогресс текущей серии, правило 24ч + <5% и ручные отметки.
+         * Учитывает фактическое распределение серий по сезонам, сквозной номер серии из общего числа,
+         * прогресс текущей серии, правило 24ч + <5% и ручные отметки.
          */
         fun calculateSeriesProgress(
             latest: WatchHistoryEntity,
@@ -1369,51 +1429,56 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             val isManualWatched = latest.isFullyWatched
             val latestSeason = latest.season.coerceAtLeast(1)
             val rawEpNum = parseEpisodeNumber(latest.episode)
-            val latestEpNumber = if (rawEpNum > 2500) 1 else rawEpNum
+            val latestEpNumber = if (rawEpNum in 1..2500) rawEpNum else 1
 
             val rawStoredTotalEpisodes = items.mapNotNull { it.totalEpisodes.takeIf { ep -> ep in 1..2500 } }.maxOrNull() ?: 0
             val storedTotalEpisodes = if (rawStoredTotalEpisodes > 2500) 0 else rawStoredTotalEpisodes
             val storedTotalSeasons = items.mapNotNull { it.totalSeasons.takeIf { s -> s in 1..100 } }.maxOrNull() ?: 0
 
-            val rawEpIndex = if (latest.episodeIndex in 1..2500) latest.episodeIndex else 0
-
-            val absoluteEpisodeIndex: Int
-            val estimatedTotalEpisodes: Int
-
-            if (rawEpIndex > 0) {
-                absoluteEpisodeIndex = maxOf(rawEpIndex, latestEpNumber)
-                estimatedTotalEpisodes = if (storedTotalEpisodes > 0) {
-                    maxOf(storedTotalEpisodes, absoluteEpisodeIndex)
-                } else {
-                    absoluteEpisodeIndex
+            // 1. Точный подсчёт количества серий во всех предшествующих сезонах (s < latestSeason)
+            val priorEpisodesFromHistory = if (latestSeason > 1) {
+                (1 until latestSeason).sumOf { s ->
+                    val seasonEntries = items.filter { it.season == s }
+                    val maxEpInSeason = seasonEntries.mapNotNull { parseEpisodeNumber(it.episode).takeIf { e -> e in 1..2500 } }.maxOrNull() ?: 0
+                    val distinctEpCount = seasonEntries.map { it.episode }.distinct().size
+                    maxOf(maxEpInSeason, distinctEpCount)
                 }
-            } else {
-                if (storedTotalEpisodes > 0 && storedTotalSeasons > 0) {
-                    val epsPerSeason = (storedTotalEpisodes.toDouble() / storedTotalSeasons.toDouble()).coerceAtLeast(1.0)
-                    val priorEpisodes = ((latestSeason - 1) * epsPerSeason).toInt()
-                    absoluteEpisodeIndex = maxOf(1, priorEpisodes + latestEpNumber)
-                    estimatedTotalEpisodes = maxOf(storedTotalEpisodes, absoluteEpisodeIndex)
-                } else if (storedTotalEpisodes > 0) {
-                    val maxEpSeen = items.mapNotNull { parseEpisodeNumber(it.episode).takeIf { e -> e in 1..2500 } }.maxOrNull()?.coerceAtLeast(1) ?: latestEpNumber
-                    val epsPerSeason = maxOf(maxEpSeen, latestEpNumber)
-                    val priorEpisodes = (latestSeason - 1) * epsPerSeason
-                    absoluteEpisodeIndex = maxOf(1, priorEpisodes + latestEpNumber)
-                    estimatedTotalEpisodes = maxOf(storedTotalEpisodes, absoluteEpisodeIndex)
-                } else {
-                    val maxEpSeen = items.mapNotNull { parseEpisodeNumber(it.episode).takeIf { e -> e in 1..2500 } }.maxOrNull()?.coerceAtLeast(1) ?: latestEpNumber
-                    val maxSeasonSeen = maxOf(latestSeason, items.mapNotNull { it.season.takeIf { s -> s in 1..100 } }.maxOrNull() ?: 1)
-                    val epsPerSeason = maxOf(maxEpSeen, latestEpNumber)
-                    val priorEpisodes = (latestSeason - 1) * epsPerSeason
-                    absoluteEpisodeIndex = priorEpisodes + latestEpNumber
-                    estimatedTotalEpisodes = maxOf(maxSeasonSeen * epsPerSeason, absoluteEpisodeIndex, items.size)
-                }
+            } else 0
+
+            // Если в истории предшествующих сезонов нет (например, пользователь начал смотреть сразу со 2-го сезона),
+            // но известно общее число серий и сезонов:
+            val priorEpisodes = when {
+                priorEpisodesFromHistory > 0 -> priorEpisodesFromHistory
+                storedTotalEpisodes > 0 && storedTotalSeasons > 0 && latestSeason == storedTotalSeasons ->
+                    (storedTotalEpisodes - latestEpNumber).coerceAtLeast(0)
+                storedTotalEpisodes > 0 && storedTotalSeasons > 0 ->
+                    (((latestSeason - 1).toDouble() * storedTotalEpisodes.toDouble()) / storedTotalSeasons.toDouble()).toInt().coerceAtLeast(0)
+                else -> 0
             }
 
-            val distinctEpisodesCount = items.map { "${it.season}_${it.episode}" }.distinct().size
-            val totalEpisodesCount = maxOf(estimatedTotalEpisodes, absoluteEpisodeIndex, distinctEpisodesCount, 1)
+            val rawEpIndex = if (latest.episodeIndex in 1..2500) latest.episodeIndex else 0
+            val absoluteEpisodeIndex = when {
+                rawEpIndex > 0 -> maxOf(rawEpIndex, priorEpisodes + latestEpNumber, latestEpNumber)
+                priorEpisodes > 0 -> priorEpisodes + latestEpNumber
+                else -> latestEpNumber
+            }.coerceAtLeast(1)
 
+            val distinctEpisodesCount = items.map { "${it.season}_${it.episode}" }.distinct().size
+            val totalEpisodesCount = maxOf(storedTotalEpisodes, absoluteEpisodeIndex, distinctEpisodesCount, 1)
+
+            val isLastEpisode = absoluteEpisodeIndex >= totalEpisodesCount
+
+            // Завершена ли серия до конца (окончание видео / последние 20 секунд / >= 98%):
+            val isCompletedToEnd = latest.durationMs > 0L && (
+                latest.progressMs >= latest.durationMs ||
+                (latest.durationMs - latest.progressMs) <= 20_000L ||
+                (latest.progressMs.toDouble() / latest.durationMs.toDouble()) >= 0.98
+            )
+
+            // Правило автозавершения: осталось менее 5% и прошло не менее 24 часов:
             val isLatestEpAutoWatched = isAutoWatchedRuleMet(latest.progressMs, latest.durationMs, latest.timestamp, now)
-            val isFullyWatched = isManualWatched || (absoluteEpisodeIndex >= totalEpisodesCount && isLatestEpAutoWatched)
+
+            val isFullyWatched = isManualWatched || (isLastEpisode && (isCompletedToEnd || isLatestEpAutoWatched))
 
             val watchedEpisodesCount: Int
             val totalProgressFraction: Float
@@ -1422,15 +1487,20 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 watchedEpisodesCount = totalEpisodesCount
                 totalProgressFraction = 1.0f
             } else {
-                val priorCompletedCount = (absoluteEpisodeIndex - 1).coerceAtLeast(0)
-                val currentEpCompleted = if (isLatestEpAutoWatched) 1 else 0
-                watchedEpisodesCount = maxOf(priorCompletedCount + currentEpCompleted, 1).coerceAtMost(totalEpisodesCount)
-
-                val currentEpProgress = if (latest.durationMs > 0) {
+                val currentEpProgress = if (latest.durationMs > 0L) {
                     (latest.progressMs.toDouble() / latest.durationMs.toDouble()).coerceIn(0.0, 1.0)
                 } else 0.0
-                val exactFraction = ((priorCompletedCount.toDouble() + currentEpProgress) / totalEpisodesCount.toDouble()).coerceIn(0.0, 1.0).toFloat()
-                totalProgressFraction = exactFraction
+
+                val isCurrentEpFinished = currentEpProgress >= 0.95 || isCompletedToEnd
+
+                watchedEpisodesCount = if (!isLastEpisode && isCurrentEpFinished) {
+                    absoluteEpisodeIndex.coerceIn(0, totalEpisodesCount - 1)
+                } else {
+                    (absoluteEpisodeIndex - 1).coerceIn(0, totalEpisodesCount - 1)
+                }
+
+                val rawFraction = ((absoluteEpisodeIndex - 1).toDouble() + currentEpProgress) / totalEpisodesCount.toDouble()
+                totalProgressFraction = rawFraction.coerceIn(0.0, 0.99).toFloat()
             }
 
             return SeriesProgressCalculation(

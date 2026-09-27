@@ -124,81 +124,103 @@ fun FavoritesScreen(
                 }
             } else {
                 val gridState = rememberSavedLazyGridState("favorites", viewModel)
-                val isDense = columnsCount >= 5
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(columnsCount),
-                    state = gridState,
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
-                    horizontalArrangement = Arrangement.spacedBy(if (columnsCount >= 6) 8.dp else 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(if (columnsCount >= 6) 10.dp else 16.dp),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .dpadScrollable(gridState)
-                        .testTag("favorites_grid")
-                ) {
-                    items(
-                        items = favorites,
-                        key = { it.id }
-                    ) { fav ->
-                        val itemType = RezkaType.valueOf(fav.type)
-                        val item = RezkaItem(
-                            id = fav.id,
-                            title = fav.title,
-                            subtitle = fav.subtitle,
-                            imageUrl = fav.imageUrl,
-                            rating = fav.rating,
-                            url = RezkaService.adjustUrlToCurrentMirror(fav.url, itemType, fav.id),
-                            type = itemType
+                val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight, isLandscape) {
+                        com.example.ui.tv.CardGridEngine.calculate(
+                            cardGridMode = cardGridMode,
+                            availableWidth = maxWidth - 32.dp,
+                            availableHeight = maxHeight - 16.dp,
+                            isLandscapeOrTv = isLandscape
                         )
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 4.dp)
-                        ) {
-                            RezkaItemCard(
-                                item = item,
-                                columnsCount = columnsCount,
-                                onClick = { onNavigateToDetail(item) },
-                                showMovieRating = false,
-                                modifier = Modifier.fillMaxWidth()
+                    }
+
+                    val columnsCount = resolvedGrid.columns
+                    val isDense = columnsCount >= 5
+                    // Для избранного учитываем кнопку "Удалить" снизу
+                    val buttonHeight = if (columnsCount >= 7) 28.dp else if (isDense) 32.dp else 38.dp
+                    val spacerHeight = if (isDense) 4.dp else 8.dp
+                    val itemCardHeight = if (resolvedGrid.cardHeight != androidx.compose.ui.unit.Dp.Unspecified) {
+                        (resolvedGrid.cardHeight - buttonHeight - spacerHeight).coerceAtLeast(60.dp)
+                    } else androidx.compose.ui.unit.Dp.Unspecified
+
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(columnsCount),
+                        state = gridState,
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
+                        horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
+                        verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .dpadScrollable(gridState)
+                            .testTag("favorites_grid")
+                    ) {
+                        items(
+                            items = favorites,
+                            key = { it.id }
+                        ) { fav ->
+                            val itemType = RezkaType.valueOf(fav.type)
+                            val item = RezkaItem(
+                                id = fav.id,
+                                title = fav.title,
+                                subtitle = fav.subtitle,
+                                imageUrl = fav.imageUrl,
+                                rating = fav.rating,
+                                url = RezkaService.adjustUrlToCurrentMirror(fav.url, itemType, fav.id),
+                                type = itemType
                             )
-                            
-                            Spacer(modifier = Modifier.height(if (isDense) 4.dp else 8.dp))
-                            
-                            Surface(
-                                onClick = { viewModel.removeFavorite(fav.id) },
-                                color = CinemaDark,
-                                shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
-                                border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.8f)),
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(if (columnsCount >= 7) 28.dp else if (isDense) 32.dp else 38.dp)
-                                    .tvFocusableItem(
-                                        onClick = { viewModel.removeFavorite(fav.id) },
-                                        scaleFactor = 1.04f,
-                                        focusedBorderColor = CinemaPrimary,
-                                        shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp)
-                                    )
-                                    .testTag("remove_favorite_${fav.id}")
+                                    .padding(bottom = 4.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxSize(),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically
+                                RezkaItemCard(
+                                    item = item,
+                                    columnsCount = columnsCount,
+                                    cardHeight = itemCardHeight,
+                                    onClick = { onNavigateToDetail(item) },
+                                    showMovieRating = false,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                
+                                Spacer(modifier = Modifier.height(spacerHeight))
+                                
+                                Surface(
+                                    onClick = { viewModel.removeFavorite(fav.id) },
+                                    color = CinemaDark,
+                                    shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
+                                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.8f)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(buttonHeight)
+                                        .tvFocusableItem(
+                                            onClick = { viewModel.removeFavorite(fav.id) },
+                                            scaleFactor = 1.04f,
+                                            focusedBorderColor = CinemaPrimary,
+                                            shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp)
+                                        )
+                                        .testTag("remove_favorite_${fav.id}")
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.DeleteOutline,
-                                        contentDescription = "Удалить из избранного",
-                                        tint = CinemaPrimary,
-                                        modifier = Modifier.size(if (isDense) 14.dp else 16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(if (isDense) 4.dp else 6.dp))
-                                    Text(
-                                        text = "Удалить",
-                                        color = CinemaTextWhite,
-                                        fontSize = if (columnsCount >= 7) 9.sp else if (isDense) 10.sp else 11.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxSize(),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.DeleteOutline,
+                                            contentDescription = "Удалить из избранного",
+                                            tint = CinemaPrimary,
+                                            modifier = Modifier.size(if (isDense) 14.dp else 16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(if (isDense) 4.dp else 6.dp))
+                                        Text(
+                                            text = "Удалить",
+                                            color = CinemaTextWhite,
+                                            fontSize = if (columnsCount >= 7) 9.sp else if (isDense) 10.sp else 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
                             }
                         }

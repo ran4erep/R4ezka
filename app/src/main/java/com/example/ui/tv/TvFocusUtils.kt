@@ -167,9 +167,10 @@ fun Modifier.tvFocusableItem(
             if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier
         )
         .onFocusChanged { focusState ->
-            isFocused = focusState.isFocused
-            onFocusChanged?.invoke(focusState.isFocused)
-            if (focusState.isFocused) {
+            val hasFocus = focusState.isFocused || focusState.hasFocus
+            isFocused = hasFocus
+            onFocusChanged?.invoke(hasFocus)
+            if (hasFocus) {
                 onFocused?.invoke()
                 scrollJob?.cancel()
                 scrollJob = coroutineScope.launch {
@@ -198,7 +199,6 @@ fun Modifier.tvFocusableItem(
                 }
             }
         }
-        .focusable()
         .clickable(
             interactionSource = remember { MutableInteractionSource() },
             indication = null,

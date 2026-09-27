@@ -41,6 +41,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.PopupProperties
@@ -560,91 +561,110 @@ private fun TvCatalogContent(
             }
 
             // ---- 3. TV MOVIES GRID ----
-            when (catalogState) {
-                is CatalogState.Loading -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
-                    }
-                }
-                is CatalogState.Error -> {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(catalogState.message, color = CinemaTextWhite, fontSize = 16.sp)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Button(
-                            onClick = { viewModel.loadCatalog(forceRefresh = true) },
-                            colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
-                        ) {
-                            Text("Повторить")
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
+                when (catalogState) {
+                    is CatalogState.Loading -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
                         }
                     }
-                }
-                is CatalogState.Success -> {
-                    val tvGridCols = parsedCardGrid?.columns
-                    LazyVerticalGrid(
-                        columns = if (tvGridCols != null) GridCells.Fixed(tvGridCols) else GridCells.Adaptive(minSize = 150.dp),
-                        state = gridState,
-                        contentPadding = PaddingValues(bottom = 32.dp),
-                        horizontalArrangement = Arrangement.spacedBy(if ((tvGridCols ?: 0) >= 7) 8.dp else 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(if ((tvGridCols ?: 0) >= 7) 10.dp else 16.dp),
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("tv_catalog_grid")
-                    ) {
-                        itemsIndexed(
-                            items = catalogState.items,
-                            key = { _, item -> item.id }
-                        ) { index, item ->
-                            val navigateToItem: (Int) -> Unit = { targetIndex ->
-                                val total = catalogState.items.size
-                                if (total > 0) {
-                                    val clampedIndex = targetIndex.coerceIn(0, total - 1)
-                                    coroutineScope.launch {
-                                        try {
-                                            val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
-                                            if (!isVisible) {
-                                                gridState.scrollToItem(clampedIndex)
-                                            }
-                                        } catch (_: Exception) {}
-                                        getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
-                                    }
-                                }
+                    is CatalogState.Error -> {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(catalogState.message, color = CinemaTextWhite, fontSize = 16.sp)
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = { viewModel.loadCatalog(forceRefresh = true) },
+                                colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
+                            ) {
+                                Text("Повторить")
                             }
-
-                            TvMovieCard(
-                                item = item,
-                                index = index,
-                                totalItems = catalogState.items.size,
-                                columnCount = columnCount,
-                                onClick = {
-                                    viewModel.commitSearchQuery(searchInput)
-                                    onNavigateToDetail(item)
-                                },
-                                onFocused = {
-                                    lastFocusedIndex = index
-                                    if (searchInput.isNotBlank()) {
-                                        viewModel.commitSearchQuery(searchInput)
-                                    }
-                                },
-                                focusRequester = getFocusRequesterForIndex(index),
-                                onNavigateIndex = navigateToItem,
-                                onUp = { categoryDropdownFocusRequester.requestFocusSafe() },
-                                onLeft = { sidebarFocusRequester.requestFocusSafe() }
+                        }
+                    }
+                    is CatalogState.Success -> {
+                        val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight) {
+                            CardGridEngine.calculate(
+                                cardGridMode = cardGridMode,
+                                availableWidth = maxWidth,
+                                availableHeight = maxHeight,
+                                isLandscapeOrTv = true
                             )
                         }
 
-                    if (isLoadingMore) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(32.dp))
+                        val tvGridCols = resolvedGrid.columns
+                        val tvCardHeight = resolvedGrid.cardHeight
+
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(tvGridCols),
+                            state = gridState,
+                            contentPadding = PaddingValues(top = 2.dp, bottom = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
+                            verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("tv_catalog_grid")
+                        ) {
+                            itemsIndexed(
+                                items = catalogState.items,
+                                key = { _, item -> item.id }
+                            ) { index, item ->
+                                val navigateToItem: (Int) -> Unit = { targetIndex ->
+                                    val total = catalogState.items.size
+                                    if (total > 0) {
+                                        val clampedIndex = targetIndex.coerceIn(0, total - 1)
+                                        coroutineScope.launch {
+                                            try {
+                                                val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
+                                                if (!isVisible) {
+                                                    gridState.scrollToItem(clampedIndex)
+                                                }
+                                            } catch (_: Exception) {}
+                                            getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
+                                        }
+                                    }
+                                }
+
+                                TvMovieCard(
+                                    item = item,
+                                    index = index,
+                                    totalItems = catalogState.items.size,
+                                    columnCount = tvGridCols,
+                                    cardHeight = tvCardHeight,
+                                    onClick = {
+                                        viewModel.commitSearchQuery(searchInput)
+                                        onNavigateToDetail(item)
+                                    },
+                                    onFocused = {
+                                        lastFocusedIndex = index
+                                        if (searchInput.isNotBlank()) {
+                                            viewModel.commitSearchQuery(searchInput)
+                                        }
+                                    },
+                                    focusRequester = getFocusRequesterForIndex(index),
+                                    onNavigateIndex = navigateToItem,
+                                    onUp = { categoryDropdownFocusRequester.requestFocusSafe() },
+                                    onLeft = { sidebarFocusRequester.requestFocusSafe() }
+                                )
+                            }
+
+                            if (isLoadingMore) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 16.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(32.dp))
+                                    }
+                                }
                             }
                         }
                     }
@@ -652,7 +672,6 @@ private fun TvCatalogContent(
             }
         }
     }
-}
 }
 
 /**
@@ -1402,6 +1421,7 @@ fun TvCompactSearchBar(
 /**
  * Карточка фильма для ТВ.
  * Поддерживает фокус с пульта, плавное GPU-увеличение, поднятие zIndex и обновление Hero Preview.
+ * Динамически вписывается по высоте карточки для отображения целых рядов без обрезки.
  */
 @Composable
 private fun TvMovieCard(
@@ -1409,6 +1429,7 @@ private fun TvMovieCard(
     index: Int,
     totalItems: Int,
     columnCount: Int,
+    cardHeight: Dp = Dp.Unspecified,
     onClick: () -> Unit,
     onFocused: () -> Unit,
     onNavigateIndex: (Int) -> Unit,
@@ -1420,12 +1441,13 @@ private fun TvMovieCard(
     val safeCols = if (columnCount > 0) columnCount else 4
     val isFirstColumn = index % safeCols == 0
 
-    val isDense = columnCount >= 6
-    val isUltraDense = columnCount >= 8
+    val isDense = columnCount >= 6 || (cardHeight != Dp.Unspecified && cardHeight.value < 140f)
+    val isUltraDense = columnCount >= 8 || (cardHeight != Dp.Unspecified && cardHeight.value < 100f)
 
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .then(if (cardHeight != Dp.Unspecified) Modifier.height(cardHeight) else Modifier)
             .onKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyDown) {
                     when (keyEvent.nativeKeyEvent.keyCode) {
@@ -1474,20 +1496,26 @@ private fun TvMovieCard(
             .tvFocusableItem(
                 onClick = onClick,
                 onFocused = onFocused,
-                scaleFactor = if (isDense) 1.05f else 1.08f,
-                focusedBorderWidth = if (isDense) 2.dp else 3.dp,
-                shape = RoundedCornerShape(if (isDense) 8.dp else 12.dp),
+                scaleFactor = if (isUltraDense) 1.04f else if (isDense) 1.05f else 1.08f,
+                focusedBorderWidth = if (isUltraDense) 1.5.dp else if (isDense) 2.dp else 3.dp,
+                shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp),
                 focusRequester = focusRequester
             )
             .testTag("tv_movie_card_${item.id}"),
         colors = CardDefaults.cardColors(containerColor = CinemaDark),
-        shape = RoundedCornerShape(if (isDense) 8.dp else 12.dp)
+        shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp)
     ) {
-        Column {
+        Column(modifier = if (cardHeight != Dp.Unspecified) Modifier.fillMaxSize() else Modifier.fillMaxWidth()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(0.68f)
+                    .then(
+                        if (cardHeight != Dp.Unspecified) {
+                            Modifier.weight(1f)
+                        } else {
+                            Modifier.aspectRatio(0.68f)
+                        }
+                    )
             ) {
                 AsyncImage(
                     model = item.imageUrl,
@@ -1500,14 +1528,17 @@ private fun TvMovieCard(
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(if (isDense) 4.dp else 6.dp)
-                            .background(CinemaPrimary, RoundedCornerShape(if (isDense) 4.dp else 6.dp))
-                            .padding(horizontal = if (isDense) 4.dp else 6.dp, vertical = if (isDense) 2.dp else 3.dp)
+                            .padding(if (isUltraDense) 2.dp else if (isDense) 4.dp else 6.dp)
+                            .background(CinemaPrimary, RoundedCornerShape(if (isUltraDense) 3.dp else if (isDense) 4.dp else 6.dp))
+                            .padding(
+                                horizontal = if (isUltraDense) 3.dp else if (isDense) 4.dp else 6.dp,
+                                vertical = if (isUltraDense) 1.dp else if (isDense) 2.dp else 3.dp
+                            )
                     ) {
                         Text(
                             text = item.rating,
                             color = Color.White,
-                            fontSize = if (isDense) 8.sp else 10.sp,
+                            fontSize = if (isUltraDense) 7.sp else if (isDense) 8.sp else 10.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -1517,24 +1548,29 @@ private fun TvMovieCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(if (isDense) 5.dp else 8.dp)
+                    .padding(
+                        horizontal = if (isUltraDense) 3.dp else if (isDense) 5.dp else 8.dp,
+                        vertical = if (isUltraDense) 2.dp else if (isDense) 3.dp else 6.dp
+                    )
             ) {
                 Text(
                     text = item.title,
                     color = CinemaTextWhite,
-                    fontSize = if (isUltraDense) 9.sp else if (isDense) 10.sp else 12.sp,
+                    fontSize = if (isUltraDense) 8.5.sp else if (isDense) 10.sp else 12.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = item.subtitle,
-                    color = CinemaTextGray,
-                    fontSize = if (isUltraDense) 7.sp else if (isDense) 8.sp else 10.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (!isUltraDense || (cardHeight != Dp.Unspecified && cardHeight.value >= 85f)) {
+                    Spacer(modifier = Modifier.height(1.dp))
+                    Text(
+                        text = item.subtitle,
+                        color = CinemaTextGray,
+                        fontSize = if (isUltraDense) 6.5.sp else if (isDense) 8.sp else 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }
