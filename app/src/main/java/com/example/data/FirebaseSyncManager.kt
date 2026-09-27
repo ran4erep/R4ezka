@@ -859,20 +859,47 @@ object FirebaseSyncManager {
                 }
             }
 
-            if (remoteHistory.isNotEmpty()) {
-                repository.insertHistoryList(remoteHistory)
-            }
-
-            // Проверяем локальную историю и дозаливаем новые элементы в облако в один PATCH-запрос
             val localHistory = repository.getAllHistoryList()
-            val remoteHistIds = remoteHistory.map { it.id }.toSet()
+            val localHistMap = localHistory.associateBy { it.id }
+            val remoteHistMap = remoteHistory.associateBy { it.id }
+
+            val histToUpdateLocally = mutableListOf<WatchHistoryEntity>()
             val histUpdateJson = JSONObject()
-            for (localHist in localHistory) {
-                if (localHist.id !in remoteHistIds) {
-                    val safeId = safeFirebaseKey(localHist.id)
-                    histUpdateJson.put(safeId, historyToJson(localHist))
+
+            // 1. Проверяем удаленные записи: если в локальной базе нет или удаленная новее
+            for (remoteItem in remoteHistory) {
+                val localItem = localHistMap[remoteItem.id]
+                if (localItem == null) {
+                    histToUpdateLocally.add(remoteItem)
+                } else {
+                    if (remoteItem.timestamp > localItem.timestamp) {
+                        histToUpdateLocally.add(remoteItem)
+                    } else if (localItem.timestamp > remoteItem.timestamp) {
+                        val safeId = safeFirebaseKey(localItem.id)
+                        histUpdateJson.put(safeId, historyToJson(localItem))
+                    } else if (localItem.isFullyWatched != remoteItem.isFullyWatched) {
+                        if (localItem.isFullyWatched) {
+                            val safeId = safeFirebaseKey(localItem.id)
+                            histUpdateJson.put(safeId, historyToJson(localItem))
+                        } else {
+                            histToUpdateLocally.add(remoteItem)
+                        }
+                    }
                 }
             }
+
+            // 2. Дозаливаем в облако локальные записи, которых еще нет в облаке
+            for (localItem in localHistory) {
+                if (!remoteHistMap.containsKey(localItem.id)) {
+                    val safeId = safeFirebaseKey(localItem.id)
+                    histUpdateJson.put(safeId, historyToJson(localItem))
+                }
+            }
+
+            if (histToUpdateLocally.isNotEmpty()) {
+                repository.insertHistoryList(histToUpdateLocally)
+            }
+
             if (histUpdateJson.length() > 0) {
                 try {
                     val patchRequest = Request.Builder()

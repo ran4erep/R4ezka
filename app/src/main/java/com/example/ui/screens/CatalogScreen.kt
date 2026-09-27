@@ -425,57 +425,63 @@ fun CatalogScreen(
                         }
 
                         val configuration = LocalConfiguration.current
-                        val columnsCount = remember(parsedCardGrid, configuration.orientation, configuration.screenWidthDp) {
-                            if (parsedCardGrid != null) {
-                                parsedCardGrid.columns
-                            } else {
-                                if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                                    (configuration.screenWidthDp / 150).coerceIn(3, 8)
-                                } else {
-                                    2
-                                }
-                            }
-                        }
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(columnsCount),
-                            state = gridState,
-                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
-                            horizontalArrangement = Arrangement.spacedBy(if (columnsCount >= 6) 8.dp else 14.dp),
-                            verticalArrangement = Arrangement.spacedBy(if (columnsCount >= 6) 10.dp else 16.dp),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .dpadScrollable(gridState)
-                                .testTag("catalog_items_grid")
-                        ) {
-                            items(
-                                items = state.items,
-                                key = { it.id }
-                            ) { item ->
-                                RezkaItemCard(
-                                    item = item,
-                                    columnsCount = columnsCount,
-                                    onClick = {
-                                        viewModel.commitSearchQuery(searchInput)
-                                        keyboardController?.hide()
-                                        focusManager.clearFocus()
-                                        onNavigateToDetail(item)
-                                    }
+                        val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+                        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                            val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight, isLandscape) {
+                                com.example.ui.tv.CardGridEngine.calculate(
+                                    cardGridMode = cardGridMode,
+                                    availableWidth = maxWidth - 32.dp,
+                                    availableHeight = maxHeight - 12.dp,
+                                    isLandscapeOrTv = isLandscape
                                 )
                             }
 
-                            if (isLoadingMore) {
-                                item(span = { GridItemSpan(maxLineSpan) }) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 16.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        CircularProgressIndicator(
-                                            color = CinemaPrimary,
-                                            modifier = Modifier.size(32.dp),
-                                            strokeWidth = 3.dp
-                                        )
+                            val columnsCount = resolvedGrid.columns
+                            val cardHeight = resolvedGrid.cardHeight
+
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(columnsCount),
+                                state = gridState,
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
+                                horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
+                                verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .dpadScrollable(gridState)
+                                    .testTag("catalog_items_grid")
+                            ) {
+                                items(
+                                    items = state.items,
+                                    key = { it.id }
+                                ) { item ->
+                                    RezkaItemCard(
+                                        item = item,
+                                        columnsCount = columnsCount,
+                                        cardHeight = cardHeight,
+                                        onClick = {
+                                            viewModel.commitSearchQuery(searchInput)
+                                            keyboardController?.hide()
+                                            focusManager.clearFocus()
+                                            onNavigateToDetail(item)
+                                        }
+                                    )
+                                }
+
+                                if (isLoadingMore) {
+                                    item(span = { GridItemSpan(maxLineSpan) }) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 16.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            CircularProgressIndicator(
+                                                color = CinemaPrimary,
+                                                modifier = Modifier.size(32.dp),
+                                                strokeWidth = 3.dp
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -493,6 +499,7 @@ fun RezkaItemCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     columnsCount: Int = 2,
+    cardHeight: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp.Unspecified,
     showMovieRating: Boolean = true
 ) {
     val bottomFadeBrush = remember {
@@ -502,21 +509,29 @@ fun RezkaItemCard(
         )
     }
 
-    val isDense = columnsCount >= 5
+    val isDense = columnsCount >= 5 || (cardHeight != androidx.compose.ui.unit.Dp.Unspecified && cardHeight.value < 140f)
+    val isUltraDense = columnsCount >= 8 || (cardHeight != androidx.compose.ui.unit.Dp.Unspecified && cardHeight.value < 100f)
 
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .tvFocusableItem(onClick = onClick, scaleFactor = 1.05f, shape = RoundedCornerShape(if (isDense) 8.dp else 12.dp))
+            .then(if (cardHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.height(cardHeight) else Modifier)
+            .tvFocusableItem(onClick = onClick, scaleFactor = 1.05f, shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp))
             .testTag("movie_card_${item.id}"),
         colors = CardDefaults.cardColors(containerColor = CinemaDark),
-        shape = RoundedCornerShape(if (isDense) 8.dp else 12.dp)
+        shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp)
     ) {
-        Column {
+        Column(modifier = if (cardHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.fillMaxSize() else Modifier.fillMaxWidth()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(0.68f) // 2:3 Cinematic Poster ratio
+                    .then(
+                        if (cardHeight != androidx.compose.ui.unit.Dp.Unspecified) {
+                            Modifier.weight(1f)
+                        } else {
+                            Modifier.aspectRatio(0.68f) // 2:3 Cinematic Poster ratio
+                        }
+                    )
             ) {
                 AsyncImage(
                     model = item.imageUrl,
@@ -538,14 +553,17 @@ fun RezkaItemCard(
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(if (isDense) 4.dp else 8.dp)
-                            .background(CinemaPrimary, RoundedCornerShape(if (isDense) 4.dp else 6.dp))
-                            .padding(horizontal = if (isDense) 5.dp else 8.dp, vertical = if (isDense) 2.dp else 4.dp)
+                            .padding(if (isUltraDense) 2.dp else if (isDense) 4.dp else 8.dp)
+                            .background(CinemaPrimary, RoundedCornerShape(if (isUltraDense) 3.dp else if (isDense) 4.dp else 6.dp))
+                            .padding(
+                                horizontal = if (isUltraDense) 3.dp else if (isDense) 5.dp else 8.dp,
+                                vertical = if (isUltraDense) 1.dp else if (isDense) 2.dp else 4.dp
+                            )
                     ) {
                         Text(
                             text = item.rating,
                             color = CinemaTextWhite,
-                            fontSize = if (isDense) 9.sp else 11.sp,
+                            fontSize = if (isUltraDense) 7.sp else if (isDense) 9.sp else 11.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -556,24 +574,29 @@ fun RezkaItemCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(if (isDense) 6.dp else 10.dp)
+                    .padding(
+                        horizontal = if (isUltraDense) 3.dp else if (isDense) 5.dp else 10.dp,
+                        vertical = if (isUltraDense) 2.dp else if (isDense) 4.dp else 8.dp
+                    )
             ) {
                 Text(
                     text = item.title,
                     color = CinemaTextWhite,
-                    fontSize = if (columnsCount >= 7) 10.sp else if (isDense) 11.sp else 13.sp,
+                    fontSize = if (isUltraDense) 8.5.sp else if (columnsCount >= 7) 10.sp else if (isDense) 11.sp else 13.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = item.subtitle,
-                    color = CinemaTextGray,
-                    fontSize = if (columnsCount >= 7) 8.sp else if (isDense) 9.sp else 10.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (!isUltraDense || (cardHeight != androidx.compose.ui.unit.Dp.Unspecified && cardHeight.value >= 85f)) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = item.subtitle,
+                        color = CinemaTextGray,
+                        fontSize = if (isUltraDense) 6.5.sp else if (columnsCount >= 7) 8.sp else if (isDense) 9.sp else 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }

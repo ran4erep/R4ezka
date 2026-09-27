@@ -43,7 +43,9 @@ data class SeriesScanResult(
     val latestEpisodeName: String,
     val isSuccess: Boolean,
     val isAntiBot: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val totalEpisodes: Int = 0,
+    val totalSeasons: Int = 0
 )
 
 object SeriesUpdateEngine {
@@ -94,6 +96,7 @@ object SeriesUpdateEngine {
         var maxSeason = 0
         var maxEpisode = 0
         var episodeName = ""
+        val allEpisodesSet = HashSet<Long>()
 
         // 1. Поиск элементов <li class="b-simple_episode__item" data-season_id="..." data-episode_id="...">
         var matchesFound = false
@@ -102,6 +105,9 @@ object SeriesUpdateEngine {
             val episode = match.groupValues[2].toIntOrNull() ?: continue
             val rawText = match.groupValues[3]
             matchesFound = true
+            if (season > 0 && episode > 0) {
+                allEpisodesSet.add((season.toLong() shl 32) or (episode.toLong() and 0xFFFFFFFFL))
+            }
 
             if (season > maxSeason || (season == maxSeason && episode > maxEpisode)) {
                 maxSeason = season
@@ -118,6 +124,9 @@ object SeriesUpdateEngine {
                 val season = match.groupValues[2].toIntOrNull() ?: continue
                 val rawText = match.groupValues[3]
                 matchesFound = true
+                if (season > 0 && episode > 0) {
+                    allEpisodesSet.add((season.toLong() shl 32) or (episode.toLong() and 0xFFFFFFFFL))
+                }
 
                 if (season > maxSeason || (season == maxSeason && episode > maxEpisode)) {
                     maxSeason = season
@@ -134,6 +143,9 @@ object SeriesUpdateEngine {
                 val season = match.groupValues[1].toIntOrNull() ?: continue
                 val episode = match.groupValues[2].toIntOrNull() ?: continue
                 matchesFound = true
+                if (season > 0 && episode > 0) {
+                    allEpisodesSet.add((season.toLong() shl 32) or (episode.toLong() and 0xFFFFFFFFL))
+                }
 
                 if (season > maxSeason || (season == maxSeason && episode > maxEpisode)) {
                     maxSeason = season
@@ -145,6 +157,9 @@ object SeriesUpdateEngine {
                     val episode = match.groupValues[1].toIntOrNull() ?: continue
                     val season = match.groupValues[2].toIntOrNull() ?: continue
                     matchesFound = true
+                    if (season > 0 && episode > 0) {
+                        allEpisodesSet.add((season.toLong() shl 32) or (episode.toLong() and 0xFFFFFFFFL))
+                    }
 
                     if (season > maxSeason || (season == maxSeason && episode > maxEpisode)) {
                         maxSeason = season
@@ -163,6 +178,9 @@ object SeriesUpdateEngine {
             if (statusMatch != null) {
                 val season = statusMatch.groupValues[1].toIntOrNull() ?: 1
                 val episode = statusMatch.groupValues[2].toIntOrNull() ?: 1
+                if (season > 0 && episode > 0) {
+                    allEpisodesSet.add((season.toLong() shl 32) or (episode.toLong() and 0xFFFFFFFFL))
+                }
                 if (season > maxSeason || (season == maxSeason && episode > maxEpisode)) {
                     maxSeason = season
                     maxEpisode = episode
@@ -180,6 +198,9 @@ object SeriesUpdateEngine {
                 for (el in epEls) {
                     val s = el.attr("data-season_id").toIntOrNull() ?: 1
                     val e = el.attr("data-episode_id").toIntOrNull() ?: continue
+                    if (s > 0 && e > 0) {
+                        allEpisodesSet.add((s.toLong() shl 32) or (e.toLong() and 0xFFFFFFFFL))
+                    }
                     if (s > maxSeason || (s == maxSeason && e > maxEpisode)) {
                         maxSeason = s
                         maxEpisode = e
@@ -191,12 +212,19 @@ object SeriesUpdateEngine {
             } catch (_: Exception) {}
         }
 
+        val totalEpisodes = if (allEpisodesSet.isNotEmpty()) allEpisodesSet.size else if (maxEpisode > 0) maxEpisode else 0
+        val totalSeasons = if (allEpisodesSet.isNotEmpty()) {
+            allEpisodesSet.map { (it ushr 32).toInt() }.distinct().size.coerceAtLeast(maxSeason)
+        } else if (maxSeason > 0) maxSeason else 1
+
         return if (matchesFound && (maxSeason > 0 || maxEpisode > 0)) {
             SeriesScanResult(
                 latestSeason = if (maxSeason > 0) maxSeason else 1,
                 latestEpisode = if (maxEpisode > 0) maxEpisode else 1,
                 latestEpisodeName = episodeName.ifEmpty { "Серия $maxEpisode" },
-                isSuccess = true
+                isSuccess = true,
+                totalEpisodes = totalEpisodes,
+                totalSeasons = totalSeasons
             )
         } else {
             SeriesScanResult(0, 0, "", false, errorMessage = "Серии не найдены в разметке")

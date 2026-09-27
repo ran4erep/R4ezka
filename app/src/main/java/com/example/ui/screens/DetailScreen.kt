@@ -390,7 +390,7 @@ fun DetailScreen(
                 // Immediately update history so active episode is saved as the latest entry
                 if (isSeries) {
                     val priorEpCount = if (curSeason != null) {
-                        effectiveSeasons.takeWhile { it.id != curSeason.id }.sumOf { it.episodes.size }
+                        effectiveSeasons.filter { it.id < curSeason.id }.sumOf { it.episodes.size }
                     } else 0
                     val epNum = curEpisode?.id?.let { id -> Regex("""\d+""").findAll(id).mapNotNull { it.value.toIntOrNull() }.maxOrNull() }
                         ?: Regex("""\d+""").findAll(displayEpNumber).mapNotNull { it.value.toIntOrNull() }.maxOrNull()
@@ -2535,7 +2535,7 @@ fun DetailScreen(
                         val curEpisodeIndex = curEpisodes.indexOfFirst { it.id == (curEpisode?.id ?: selectedEpisodeId) }
 
                         val priorEpCount = if (isSeries && curSeason != null) {
-                            effectiveSeasons.takeWhile { it.id != curSeason.id }.sumOf { it.episodes.size }
+                            effectiveSeasons.filter { it.id < curSeason.id }.sumOf { it.episodes.size }
                         } else 0
 
                         val displayEpNumber = curEpisode?.id ?: selectedEpisodeId?.ifEmpty { "1" } ?: "1"
@@ -2550,6 +2550,11 @@ fun DetailScreen(
 
                         val totalSeasonsCount = if (isSeries) effectiveSeasons.size else 1
 
+                        val isEpisodeFinishedToEnd = duration > 0L && (pos >= duration || (duration - pos) <= 20_000L || (pos.toDouble() / duration.toDouble()) >= 0.98)
+                        val isFinishedLastEpisode = isSeries && calculatedEpisodeIndex >= totalEpCount && isEpisodeFinishedToEnd
+                        val isFinishedMovie = !isSeries && isEpisodeFinishedToEnd
+                        val isFullyDone = isFinishedLastEpisode || isFinishedMovie
+
                         viewModel.saveWatchProgress(
                             itemId = item.id,
                             title = item.title,
@@ -2560,11 +2565,12 @@ fun DetailScreen(
                             translatorName = selectedTranslator?.name ?: "Дубляж",
                             season = if (isSeries) (curSeason?.id ?: selectedSeasonId ?: 1) else 0,
                             episode = if (isSeries) displayEpNumber else "",
-                            progressMs = pos,
+                            progressMs = if (isEpisodeFinishedToEnd && duration > 0L) duration else pos,
                             durationMs = duration,
                             totalEpisodes = totalEpCount,
                             episodeIndex = calculatedEpisodeIndex,
-                            totalSeasons = totalSeasonsCount
+                            totalSeasons = totalSeasonsCount,
+                            isFullyWatched = isFullyDone
                         )
                     }
                 },
