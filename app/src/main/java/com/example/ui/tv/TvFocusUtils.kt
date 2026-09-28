@@ -1,5 +1,7 @@
 package com.example.ui.tv
 
+import android.content.Context
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -36,19 +38,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -64,33 +73,34 @@ import com.example.ui.theme.CinemaMuted
 import com.example.ui.theme.CinemaPrimary
 import com.example.ui.theme.CinemaTextGray
 import com.example.ui.theme.CinemaTextWhite
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 val LocalTvShowCursor = staticCompositionLocalOf { true }
 
 /**
- * Мерцающая/пульсирующая светящаяся рамочка вокруг выбранного элемента (ТВ-курсор).
+ * Высокопроизводительный мерцающий неоновый ТВ-курсор вокруг выбранного элемента.
  *
- * Оптимизация производительности:
- * 1. Анимация мерцания (InfiniteTransition) активируется СТРОГО на сфокусированном элементе.
- *    Когда фокуса нет — рендерится 0 анимаций, нагрузка на процессор = 0%.
- * 2. Двойной неоновый контур: внешняя пульсирующая рамка + внутренний яркий белый акцент
- *    гарантируют идеальную видимость курсора на любых фильмах, постерах и темных фонах.
+ * Архитектурные оптимизации:
+ * 1. Курсор УТОПЛЕН ВГЛУБЬ (inset) внутрь карточек и кнопок на безопасное расстояние,
+ *    чтобы он гарантированно НЕ вылезал за границы компонентов и не перекрывал соседние элементы.
+ * 2. Клипирование и аппаратная отрисовка через drawWithContent (0% лишних LayoutNode, нулевая нагрузка на CPU).
+ * 3. Анимация мерцания активируется СТРОГО на текущем сфокусированном элементе.
  */
 @Composable
 fun Modifier.tvPulsingFocusBorder(
     isFocused: Boolean,
     focusedBorderColor: Color = CinemaPrimary,
     shape: Shape = RoundedCornerShape(12.dp),
-    baseBorderWidth: Dp = 2.5.dp
+    baseBorderWidth: Dp = 2.dp,
+    inset: Dp = 1.dp
 ): Modifier {
     if (!isFocused || !LocalTvShowCursor.current) return this
 
     val infiniteTransition = rememberInfiniteTransition(label = "tv_cursor_pulse")
 
-    // Плавное синусоидальное мерцание яркости (альфы) рамочки
     val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.45f,
+        initialValue = 0.5f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 650, easing = FastOutSlowInEasing),
@@ -99,10 +109,9 @@ fun Modifier.tvPulsingFocusBorder(
         label = "cursor_pulse_alpha"
     )
 
-    // Динамическая пульсация толщины светового контура
     val pulseWidthExtra by infiniteTransition.animateFloat(
         initialValue = 0f,
-        targetValue = 1.0f,
+        targetValue = 0.8f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 650, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
@@ -113,18 +122,45 @@ fun Modifier.tvPulsingFocusBorder(
     val currentWidth = baseBorderWidth + pulseWidthExtra.dp
 
     return this
-        // Внешний мерцающий неоновый контур
-        .border(
-            width = currentWidth,
-            color = focusedBorderColor.copy(alpha = pulseAlpha),
-            shape = shape
-        )
-        // Внутренний контрастный белый световой блик для идеального выделения
-        .border(
-            width = 1.dp,
-            color = Color.White.copy(alpha = pulseAlpha * 0.85f),
-            shape = shape
-        )
+        .clip(shape)
+        .drawWithContent {
+            drawContent()
+            val strokePx = currentWidth.toPx()
+            // Утапливаем внутрь на strokePx / 2 + inset, чтобы внешнее ребро обводки было строго внутри элемента
+            val insetPx = strokePx / 2f + inset.toPx()
+            val innerSize = Size(
+                width = (size.width - insetPx * 2f).coerceAtLeast(0f),
+                height = (size.height - insetPx * 2f).coerceAtLeast(0f)
+            )
+            if (innerSize.width > 0f && innerSize.height > 0f) {
+                val outline = shape.createOutline(innerSize, layoutDirection, this)
+                // Внешний неоновый мерцающий контур
+                translate(left = insetPx, top = insetPx) {
+                    drawOutline(
+                        outline = outline,
+                        color = focusedBorderColor.copy(alpha = pulseAlpha),
+                        style = Stroke(width = strokePx)
+                    )
+                }
+
+                // Внутренний тонкий белый акцентный блик для четкости выделения
+                val highlightInsetPx = insetPx + strokePx * 0.35f
+                val highlightSize = Size(
+                    width = (size.width - highlightInsetPx * 2f).coerceAtLeast(0f),
+                    height = (size.height - highlightInsetPx * 2f).coerceAtLeast(0f)
+                )
+                if (highlightSize.width > 0f && highlightSize.height > 0f) {
+                    val highlightOutline = shape.createOutline(highlightSize, layoutDirection, this)
+                    translate(left = highlightInsetPx, top = highlightInsetPx) {
+                        drawOutline(
+                            outline = highlightOutline,
+                            color = Color.White.copy(alpha = pulseAlpha * 0.85f),
+                            style = Stroke(width = 1.dp.toPx())
+                        )
+                    }
+                }
+            }
+        }
 }
 
 /**
@@ -134,13 +170,15 @@ fun Modifier.tvFocusCursor(
     isFocused: Boolean,
     focusedBorderColor: Color = CinemaPrimary,
     shape: Shape = RoundedCornerShape(12.dp),
-    focusedBorderWidth: Dp = 2.5.dp
+    focusedBorderWidth: Dp = 2.dp,
+    inset: Dp = 1.dp
 ): Modifier = composed {
     this.tvPulsingFocusBorder(
         isFocused = isFocused,
         focusedBorderColor = focusedBorderColor,
         shape = shape,
-        baseBorderWidth = focusedBorderWidth
+        baseBorderWidth = focusedBorderWidth,
+        inset = inset
     )
 }
 
@@ -159,11 +197,12 @@ fun Modifier.tvFocusableItem(
     onFocusChanged: ((Boolean) -> Unit)? = null,
     scaleFactor: Float = 1.06f,
     focusedBorderColor: Color = CinemaPrimary,
-    focusedBorderWidth: Dp = 2.5.dp,
+    focusedBorderWidth: Dp = 2.dp,
     shape: Shape = RoundedCornerShape(12.dp),
     focusRequester: FocusRequester? = null,
     lazyListState: LazyListState? = null,
-    targetViewportY: Float = 220f
+    targetViewportY: Float = 220f,
+    inset: Dp = 1.dp
 ): Modifier = composed {
     var isFocused by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }
@@ -252,7 +291,8 @@ fun Modifier.tvFocusableItem(
             isFocused = isFocused,
             focusedBorderColor = focusedBorderColor,
             shape = shape,
-            baseBorderWidth = focusedBorderWidth
+            baseBorderWidth = focusedBorderWidth,
+            inset = inset
         )
 }
 
@@ -418,15 +458,29 @@ fun TvRemoteInputField(
     enabled: Boolean = true
 ) {
     var isEditing by remember { mutableStateOf(false) }
+    var hasBeenFocused by remember { mutableStateOf(false) }
+    var lastActivationTime by remember { mutableLongStateOf(0L) }
+
+    val localRequester = focusRequester ?: remember { FocusRequester() }
     val internalFieldRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    val context = LocalContext.current
+    val view = LocalView.current
 
-    // При входе в режим редактирования передаем фокус текстовому движку и открываем экранную клавиатуру
+    // При входе в режим редактирования плавно и надежно активируем поле ввода и открываем IME клавиатуру
     LaunchedEffect(isEditing) {
         if (isEditing) {
-            internalFieldRequester.requestFocusSafe()
-            keyboardController?.show()
+            for (attempt in 0..4) {
+                delay(if (attempt == 0) 30L else 50L)
+                try {
+                    internalFieldRequester.requestFocus()
+                    keyboardController?.show()
+                    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                    imm?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+                    break
+                } catch (_: Throwable) {}
+            }
         }
     }
 
@@ -434,7 +488,7 @@ fun TvRemoteInputField(
     BackHandler(enabled = isEditing) {
         isEditing = false
         keyboardController?.hide()
-        focusRequester?.requestFocusSafe()
+        localRequester.requestFocusSafe()
     }
 
     Box(
@@ -449,19 +503,22 @@ fun TvRemoteInputField(
                     Modifier.tvFocusableItem(
                         onClick = {
                             if (enabled) {
+                                hasBeenFocused = false
+                                lastActivationTime = System.currentTimeMillis()
                                 isEditing = true
                             }
                         },
                         scaleFactor = 1.02f,
                         shape = shape,
-                        focusRequester = focusRequester
+                        focusRequester = localRequester
                     )
                 } else {
                     Modifier.tvPulsingFocusBorder(
                         isFocused = true,
                         focusedBorderColor = CinemaPrimary,
                         shape = shape,
-                        baseBorderWidth = 2.5.dp
+                        baseBorderWidth = 2.dp,
+                        inset = 1.dp
                     )
                 }
             )
@@ -484,8 +541,8 @@ fun TvRemoteInputField(
                 contentAlignment = Alignment.CenterStart
             ) {
                 if (!isEditing) {
-                    // В режиме навигации с пульта отображается только превью текста или placeholder
-                    // Клавиатура гарантированно НЕ выскакивает при наведении стрелок D-Pad!
+                    // В режиме навигации с пульта отображается только превью текста или placeholder.
+                    // Клавиатура гарантированно НЕ выскакивает при простом наведении стрелок D-Pad!
                     val displayText = when {
                         value.isNotEmpty() && visualTransformation != VisualTransformation.None -> "•".repeat(value.length)
                         value.isNotEmpty() -> value
@@ -519,43 +576,53 @@ fun TvRemoteInputField(
                                 isEditing = false
                                 keyboardController?.hide()
                                 focusManager.clearFocus()
-                                focusRequester?.requestFocusSafe()
+                                localRequester.requestFocusSafe()
                             },
                             onSearch = {
                                 onCommit?.invoke()
                                 isEditing = false
                                 keyboardController?.hide()
                                 focusManager.clearFocus()
-                                focusRequester?.requestFocusSafe()
+                                localRequester.requestFocusSafe()
                             },
                             onGo = {
                                 onCommit?.invoke()
                                 isEditing = false
                                 keyboardController?.hide()
                                 focusManager.clearFocus()
-                                focusRequester?.requestFocusSafe()
+                                localRequester.requestFocusSafe()
                             }
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
                             .focusRequester(internalFieldRequester)
                             .onFocusChanged { focusState ->
-                                if (!focusState.isFocused && isEditing) {
+                                if (focusState.isFocused) {
+                                    hasBeenFocused = true
+                                } else if (hasBeenFocused && isEditing) {
+                                    // Сбрасываем только если поле действительно получало фокус и потеряло его
                                     isEditing = false
+                                    keyboardController?.hide()
                                 }
                             }
                             .onKeyEvent { keyEvent ->
                                 if (keyEvent.type == KeyEventType.KeyDown) {
+                                    val elapsed = System.currentTimeMillis() - lastActivationTime
                                     when (keyEvent.nativeKeyEvent.keyCode) {
                                         android.view.KeyEvent.KEYCODE_ENTER,
                                         android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
                                         android.view.KeyEvent.KEYCODE_DPAD_CENTER -> {
-                                            onCommit?.invoke()
-                                            isEditing = false
-                                            keyboardController?.hide()
-                                            focusManager.clearFocus()
-                                            focusRequester?.requestFocusSafe()
-                                            true
+                                            // Игнорируем "хвост" нажатия от открывающего клика пульта
+                                            if (elapsed > 250L) {
+                                                onCommit?.invoke()
+                                                isEditing = false
+                                                keyboardController?.hide()
+                                                focusManager.clearFocus()
+                                                localRequester.requestFocusSafe()
+                                                true
+                                            } else {
+                                                true
+                                            }
                                         }
                                         else -> false
                                     }

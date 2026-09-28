@@ -3057,61 +3057,51 @@ fun RezkaPlayer(
                             ) {
                                 if (showZoomControls) {
                                     // "-" Zoom Out button
-                                    IconButton(
+                                    Button(
                                         onClick = {
                                             selectedBottomIndex = bottomControls.indexOf(BottomControl.ZOOM_OUT)
                                             performZoomOut()
                                         },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isZoomOutRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
+                                        ),
+                                        border = if (isZoomOutRemoteFocused) BorderStroke(2.dp, CinemaPrimary) else null,
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                         modifier = Modifier
-                                            .size(32.dp)
-                                            .scale(if (isZoomOutRemoteFocused) 1.2f else 1.0f)
-                                            .background(
-                                                if (isZoomOutRemoteFocused) CinemaPrimary.copy(alpha = 0.55f) else Color.Black.copy(alpha = 0.5f),
-                                                CircleShape
-                                            )
-                                            .then(
-                                                if (isZoomOutRemoteFocused) {
-                                                    Modifier
-                                                        .border(2.5.dp, CinemaPrimary, CircleShape)
-                                                        .border(1.dp, Color.White.copy(alpha = 0.85f), CircleShape)
-                                                } else Modifier
-                                            )
+                                            .scale(if (isZoomOutRemoteFocused) 1.08f else 1.0f)
+                                            .height(32.dp)
+                                            .defaultMinSize(minWidth = 32.dp, minHeight = 32.dp)
                                             .testTag("player_zoom_out_button")
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Remove,
                                             contentDescription = "Уменьшить масштаб",
-                                            tint = if (isZoomOutRemoteFocused) Color.White else CinemaTextWhite,
+                                            tint = CinemaTextWhite,
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
 
                                     // "+" Zoom In button
-                                    IconButton(
+                                    Button(
                                         onClick = {
                                             selectedBottomIndex = bottomControls.indexOf(BottomControl.ZOOM_IN)
                                             performZoomIn()
                                         },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isZoomInRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
+                                        ),
+                                        border = if (isZoomInRemoteFocused) BorderStroke(2.dp, CinemaPrimary) else null,
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                         modifier = Modifier
-                                            .size(32.dp)
-                                            .scale(if (isZoomInRemoteFocused) 1.2f else 1.0f)
-                                            .background(
-                                                if (isZoomInRemoteFocused) CinemaPrimary.copy(alpha = 0.55f) else Color.Black.copy(alpha = 0.5f),
-                                                CircleShape
-                                            )
-                                            .then(
-                                                if (isZoomInRemoteFocused) {
-                                                    Modifier
-                                                        .border(2.5.dp, CinemaPrimary, CircleShape)
-                                                        .border(1.dp, Color.White.copy(alpha = 0.85f), CircleShape)
-                                                } else Modifier
-                                            )
+                                            .scale(if (isZoomInRemoteFocused) 1.08f else 1.0f)
+                                            .height(32.dp)
+                                            .defaultMinSize(minWidth = 32.dp, minHeight = 32.dp)
                                             .testTag("player_zoom_in_button")
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Add,
                                             contentDescription = "Увеличить масштаб",
-                                            tint = if (isZoomInRemoteFocused) Color.White else CinemaTextWhite,
+                                            tint = CinemaTextWhite,
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }

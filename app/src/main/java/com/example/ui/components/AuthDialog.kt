@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -44,6 +45,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.offset
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import android.view.WindowManager
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
 import com.example.ui.tv.TvRemoteInputField
@@ -121,9 +124,23 @@ fun AuthDialog(
             }
         },
         properties = DialogProperties(
-            usePlatformDefaultWidth = false
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
         )
     ) {
+        val currentView = LocalView.current
+        DisposableEffect(currentView) {
+            var parent = currentView.parent
+            while (parent != null) {
+                if (parent is DialogWindowProvider) {
+                    parent.window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+                    break
+                }
+                parent = parent.parent
+            }
+            onDispose {}
+        }
+
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
@@ -265,6 +282,10 @@ fun AuthDialog(
                         Text("Выйти из аккаунта", fontSize = 14.sp)
                     }
                 } else {
+                    val loginFocusRequester = remember { FocusRequester() }
+                    val passwordFocusRequester = remember { FocusRequester() }
+                    val confirmPasswordFocusRequester = remember { FocusRequester() }
+
                     // Переключатель: Вход / Регистрация
                     Row(
                         modifier = Modifier
@@ -361,6 +382,7 @@ fun AuthDialog(
                         },
                         placeholderText = "Логин",
                         isTvMode = isTvMode,
+                        focusRequester = loginFocusRequester,
                         testTag = "auth_login_input"
                     )
 
@@ -392,6 +414,7 @@ fun AuthDialog(
                             }
                         },
                         isTvMode = isTvMode,
+                        focusRequester = passwordFocusRequester,
                         testTag = "auth_password_input"
                     )
 
@@ -414,15 +437,16 @@ fun AuthDialog(
                                         .size(32.dp)
                                         .onFocusChanged { confVisFocused = it.isFocused }
                                         .tvPulsingFocusBorder(isFocused = confVisFocused, shape = CircleShape)
-                                ) {
-                                    Icon(
-                                        imageVector = if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                        contentDescription = if (confirmPasswordVisible) "Скрыть пароль" else "Показать пароль",
-                                        tint = CinemaTextGray
-                                    )
-                                }
+                                    ) {
+                                        Icon(
+                                            imageVector = if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                            contentDescription = if (confirmPasswordVisible) "Скрыть пароль" else "Показать пароль",
+                                            tint = CinemaTextGray
+                                        )
+                                    }
                             },
                             isTvMode = isTvMode,
+                            focusRequester = confirmPasswordFocusRequester,
                             testTag = "auth_confirm_password_input"
                         )
                     }
@@ -551,6 +575,7 @@ private fun TvAuthTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
     trailingIcon: @Composable (() -> Unit)? = null,
     isTvMode: Boolean = false,
+    focusRequester: FocusRequester? = null,
     testTag: String = ""
 ) {
     if (!isTvMode) {
@@ -574,6 +599,9 @@ private fun TvAuthTextField(
             ),
             modifier = modifier
                 .fillMaxWidth()
+                .then(
+                    if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier
+                )
                 .testTag(testTag)
         )
     } else {
@@ -586,6 +614,7 @@ private fun TvAuthTextField(
             trailingIcon = trailingIcon,
             shape = RoundedCornerShape(10.dp),
             containerColor = CinemaCard,
+            focusRequester = focusRequester,
             testTag = testTag,
             modifier = modifier.fillMaxWidth()
         )
