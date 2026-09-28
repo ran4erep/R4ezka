@@ -81,26 +81,25 @@ val LocalTvShowCursor = staticCompositionLocalOf { true }
 /**
  * Высокопроизводительный мерцающий неоновый ТВ-курсор вокруг выбранного элемента.
  *
- * Архитектурные оптимизации:
- * 1. Курсор УТОПЛЕН ВГЛУБЬ (inset) внутрь карточек и кнопок на безопасное расстояние,
- *    чтобы он гарантированно НЕ вылезал за границы компонентов и не перекрывал соседние элементы.
- * 2. Клипирование и аппаратная отрисовка через drawWithContent (0% лишних LayoutNode, нулевая нагрузка на CPU).
- * 3. Анимация мерцания активируется СТРОГО на текущем сфокусированном элементе.
+ * Архитектурные свойства:
+ * 1. Обводка ложится СТРОГО от внешнего края элемента ВГЛУБЬ (inner border),
+ *    не выходя наружу ни на пиксель благодаря клипированию и контурному штриху.
+ * 2. Никаких лишних внутренних белых полос: цвет строго соответствует focusedBorderColor.
+ * 3. Аппаратная отрисовка через drawWithContent (0% лишних LayoutNode, нулевая нагрузка на CPU).
  */
 @Composable
 fun Modifier.tvPulsingFocusBorder(
     isFocused: Boolean,
     focusedBorderColor: Color = CinemaPrimary,
     shape: Shape = RoundedCornerShape(12.dp),
-    baseBorderWidth: Dp = 2.dp,
-    inset: Dp = 1.dp
+    baseBorderWidth: Dp = 2.dp
 ): Modifier {
     if (!isFocused || !LocalTvShowCursor.current) return this
 
     val infiniteTransition = rememberInfiniteTransition(label = "tv_cursor_pulse")
 
     val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.5f,
+        initialValue = 0.55f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 650, easing = FastOutSlowInEasing),
@@ -111,7 +110,7 @@ fun Modifier.tvPulsingFocusBorder(
 
     val pulseWidthExtra by infiniteTransition.animateFloat(
         initialValue = 0f,
-        targetValue = 0.8f,
+        targetValue = 0.6f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 650, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
@@ -126,40 +125,15 @@ fun Modifier.tvPulsingFocusBorder(
         .drawWithContent {
             drawContent()
             val strokePx = currentWidth.toPx()
-            // Утапливаем внутрь на strokePx / 2 + inset, чтобы внешнее ребро обводки было строго внутри элемента
-            val insetPx = strokePx / 2f + inset.toPx()
-            val innerSize = Size(
-                width = (size.width - insetPx * 2f).coerceAtLeast(0f),
-                height = (size.height - insetPx * 2f).coerceAtLeast(0f)
+            val outline = shape.createOutline(size, layoutDirection, this)
+            // Обводка удвоенной ширины по внешнему контуру:
+            // внешняя часть срезается clip(shape), а внутренняя толщиной strokePx
+            // ложится строго от внешнего края вглубь элемента.
+            drawOutline(
+                outline = outline,
+                color = focusedBorderColor.copy(alpha = pulseAlpha),
+                style = Stroke(width = strokePx * 2f)
             )
-            if (innerSize.width > 0f && innerSize.height > 0f) {
-                val outline = shape.createOutline(innerSize, layoutDirection, this)
-                // Внешний неоновый мерцающий контур
-                translate(left = insetPx, top = insetPx) {
-                    drawOutline(
-                        outline = outline,
-                        color = focusedBorderColor.copy(alpha = pulseAlpha),
-                        style = Stroke(width = strokePx)
-                    )
-                }
-
-                // Внутренний тонкий белый акцентный блик для четкости выделения
-                val highlightInsetPx = insetPx + strokePx * 0.35f
-                val highlightSize = Size(
-                    width = (size.width - highlightInsetPx * 2f).coerceAtLeast(0f),
-                    height = (size.height - highlightInsetPx * 2f).coerceAtLeast(0f)
-                )
-                if (highlightSize.width > 0f && highlightSize.height > 0f) {
-                    val highlightOutline = shape.createOutline(highlightSize, layoutDirection, this)
-                    translate(left = highlightInsetPx, top = highlightInsetPx) {
-                        drawOutline(
-                            outline = highlightOutline,
-                            color = Color.White.copy(alpha = pulseAlpha * 0.85f),
-                            style = Stroke(width = 1.dp.toPx())
-                        )
-                    }
-                }
-            }
         }
 }
 
@@ -170,15 +144,13 @@ fun Modifier.tvFocusCursor(
     isFocused: Boolean,
     focusedBorderColor: Color = CinemaPrimary,
     shape: Shape = RoundedCornerShape(12.dp),
-    focusedBorderWidth: Dp = 2.dp,
-    inset: Dp = 1.dp
+    focusedBorderWidth: Dp = 2.dp
 ): Modifier = composed {
     this.tvPulsingFocusBorder(
         isFocused = isFocused,
         focusedBorderColor = focusedBorderColor,
         shape = shape,
-        baseBorderWidth = focusedBorderWidth,
-        inset = inset
+        baseBorderWidth = focusedBorderWidth
     )
 }
 
@@ -201,8 +173,7 @@ fun Modifier.tvFocusableItem(
     shape: Shape = RoundedCornerShape(12.dp),
     focusRequester: FocusRequester? = null,
     lazyListState: LazyListState? = null,
-    targetViewportY: Float = 220f,
-    inset: Dp = 1.dp
+    targetViewportY: Float = 220f
 ): Modifier = composed {
     var isFocused by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }
@@ -291,8 +262,7 @@ fun Modifier.tvFocusableItem(
             isFocused = isFocused,
             focusedBorderColor = focusedBorderColor,
             shape = shape,
-            baseBorderWidth = focusedBorderWidth,
-            inset = inset
+            baseBorderWidth = focusedBorderWidth
         )
 }
 
@@ -517,8 +487,7 @@ fun TvRemoteInputField(
                         isFocused = true,
                         focusedBorderColor = CinemaPrimary,
                         shape = shape,
-                        baseBorderWidth = 2.dp,
-                        inset = 1.dp
+                        baseBorderWidth = 2.dp
                     )
                 }
             )
