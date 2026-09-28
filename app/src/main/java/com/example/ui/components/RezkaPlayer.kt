@@ -3065,12 +3065,12 @@ fun RezkaPlayer(
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = if (isZoomOutRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
                                         ),
+                                        shape = RoundedCornerShape(8.dp),
                                         border = if (isZoomOutRemoteFocused) BorderStroke(2.dp, CinemaPrimary) else null,
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                        contentPadding = PaddingValues(0.dp),
                                         modifier = Modifier
                                             .scale(if (isZoomOutRemoteFocused) 1.08f else 1.0f)
-                                            .height(32.dp)
-                                            .defaultMinSize(minWidth = 32.dp, minHeight = 32.dp)
+                                            .size(width = 34.dp, height = 32.dp)
                                             .testTag("player_zoom_out_button")
                                     ) {
                                         Icon(
@@ -3090,12 +3090,12 @@ fun RezkaPlayer(
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = if (isZoomInRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
                                         ),
+                                        shape = RoundedCornerShape(8.dp),
                                         border = if (isZoomInRemoteFocused) BorderStroke(2.dp, CinemaPrimary) else null,
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                        contentPadding = PaddingValues(0.dp),
                                         modifier = Modifier
                                             .scale(if (isZoomInRemoteFocused) 1.08f else 1.0f)
-                                            .height(32.dp)
-                                            .defaultMinSize(minWidth = 32.dp, minHeight = 32.dp)
+                                            .size(width = 34.dp, height = 32.dp)
                                             .testTag("player_zoom_in_button")
                                     ) {
                                         Icon(
@@ -3116,6 +3116,7 @@ fun RezkaPlayer(
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = if (isResizeRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
                                     ),
+                                    shape = RoundedCornerShape(8.dp),
                                     border = if (isResizeRemoteFocused) BorderStroke(2.dp, CinemaPrimary) else null,
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                     modifier = Modifier
