@@ -97,7 +97,7 @@ fun Modifier.tvPulsingFocusBorder(
     focusedBorderColor: Color = CinemaPrimary,
     shape: Shape = RoundedCornerShape(12.dp),
     baseBorderWidth: Dp = 2.dp,
-    inset: Dp = 1.dp
+    inset: Dp = 0.dp
 ): Modifier {
     if (!isFocused || !LocalTvShowCursor.current) return this
 
@@ -164,7 +164,7 @@ fun Modifier.tvFocusCursor(
     focusedBorderColor: Color = CinemaPrimary,
     shape: Shape = RoundedCornerShape(12.dp),
     focusedBorderWidth: Dp = 2.dp,
-    inset: Dp = 1.dp
+    inset: Dp = 0.dp
 ): Modifier = composed {
     this.tvPulsingFocusBorder(
         isFocused = isFocused,
@@ -195,7 +195,7 @@ fun Modifier.tvFocusableItem(
     focusRequester: FocusRequester? = null,
     lazyListState: LazyListState? = null,
     targetViewportY: Float = 220f,
-    inset: Dp = 1.dp
+    inset: Dp = 0.dp
 ): Modifier = composed {
     var isFocused by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }

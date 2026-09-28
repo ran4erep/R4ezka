@@ -52,6 +52,7 @@ import com.example.ui.util.rememberSavedLazyGridState
 import com.example.data.*
 import com.example.ui.CatalogState
 import com.example.ui.RezkaViewModel
+import com.example.ui.screens.CollectionCard
 import com.example.ui.screens.FavoritesScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.SettingsScreen
@@ -78,6 +79,7 @@ enum class TvNavDestination(val title: String, val icon: ImageVector) {
 fun TvMainScreen(
     viewModel: RezkaViewModel,
     onNavigateToDetail: (RezkaItem) -> Unit,
+    onNavigateToThematic: (String, String) -> Unit = { _, _ -> },
     isTopScreen: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -97,10 +99,15 @@ fun TvMainScreen(
     }
 
     val catalogState by viewModel.catalogState.collectAsState()
+    val collectionsState by viewModel.collectionsState.collectAsState()
     val currentType by viewModel.currentType.collectAsState()
     val currentSection by viewModel.currentSection.collectAsState()
     val currentGenre by viewModel.currentGenre.collectAsState()
     val genresList by viewModel.genresList.collectAsState()
+    val currentYear by viewModel.currentYear.collectAsState()
+    val yearsList by viewModel.yearsList.collectAsState()
+    val currentCountry by viewModel.currentCountry.collectAsState()
+    val countriesList by viewModel.countriesList.collectAsState()
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val isEndReached by viewModel.isEndReached.collectAsState()
     val cardGridMode by viewModel.cardGridMode.collectAsState()
@@ -202,13 +209,19 @@ fun TvMainScreen(
                     TvCatalogContent(
                         viewModel = viewModel,
                         catalogState = catalogState,
+                        collectionsState = collectionsState,
                         currentType = currentType,
                         currentSection = currentSection,
                         currentGenre = currentGenre,
                         genresList = genresList,
+                        currentYear = currentYear,
+                        yearsList = yearsList,
+                        currentCountry = currentCountry,
+                        countriesList = countriesList,
                         isLoadingMore = isLoadingMore,
                         isEndReached = isEndReached,
                         onNavigateToDetail = onNavigateToDetail,
+                        onNavigateToThematic = onNavigateToThematic,
                         sidebarFocusRequester = sidebarCatalogFocusRequester,
                         entryFocusRequester = rightContentFocusRequester,
                         isTopScreen = isTopScreen
@@ -389,13 +402,19 @@ private fun TvAccountButton(
 private fun TvCatalogContent(
     viewModel: RezkaViewModel,
     catalogState: CatalogState,
+    collectionsState: CollectionsState,
     currentType: RezkaType,
     currentSection: SectionType,
     currentGenre: String,
     genresList: List<GenreItem>,
+    currentYear: String,
+    yearsList: List<YearItem>,
+    currentCountry: String,
+    countriesList: List<CountryItem>,
     isLoadingMore: Boolean,
     isEndReached: Boolean,
     onNavigateToDetail: (RezkaItem) -> Unit,
+    onNavigateToThematic: (String, String) -> Unit,
     sidebarFocusRequester: FocusRequester,
     entryFocusRequester: FocusRequester,
     isTopScreen: Boolean = true
@@ -403,8 +422,8 @@ private fun TvCatalogContent(
     val gridState = rememberSavedLazyGridState("catalog", viewModel)
     var lastFocusedIndex by rememberSaveable { mutableStateOf(viewModel.getTvCatalogFocusedIndex() ?: 0) }
 
-    val currentCatalogKey = remember(currentType, currentSection, currentGenre, viewModel.searchQuery) {
-        "${currentType.name}_${currentSection.name}_${currentGenre}_${viewModel.searchQuery.trim()}"
+    val currentCatalogKey = remember(currentType, currentSection, currentGenre, currentYear, currentCountry, viewModel.searchQuery) {
+        "${currentType.name}_${currentSection.name}_${currentGenre}_${currentYear}_${currentCountry}_${viewModel.searchQuery.trim()}"
     }
     var lastRenderedCatalogKey by rememberSaveable { mutableStateOf(currentCatalogKey) }
 
@@ -412,6 +431,8 @@ private fun TvCatalogContent(
     val categoryDropdownFocusRequester = remember { FocusRequester() }
     val sectionDropdownFocusRequester = remember { FocusRequester() }
     val genreDropdownFocusRequester = remember { FocusRequester() }
+    val yearDropdownFocusRequester = remember { FocusRequester() }
+    val countryDropdownFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(currentCatalogKey) {
         if (currentCatalogKey != lastRenderedCatalogKey) {
@@ -440,21 +461,6 @@ private fun TvCatalogContent(
         return itemFocusRequesters.getOrPut(index) { FocusRequester() }
     }
 
-    val columnCount by remember(parsedCardGrid) {
-        derivedStateOf {
-            if (parsedCardGrid != null) {
-                parsedCardGrid.columns
-            } else {
-                val visibleItems = gridState.layoutInfo.visibleItemsInfo
-                if (visibleItems.isEmpty()) 4
-                else {
-                    val maxCol = visibleItems.maxOfOrNull { it.column } ?: 0
-                    maxCol + 1
-                }
-            }
-        }
-    }
-
     val focusGrid: () -> Unit = {
         coroutineScope.launch {
             val visibleIndices = gridState.layoutInfo.visibleItemsInfo.map { it.index }
@@ -475,19 +481,33 @@ private fun TvCatalogContent(
         }
     }
 
-    // Интеллектуальное восстановление фокуса на ТВ:
-    // Если пользователь вернулся со страницы фильма назад — курсор встает РОВНО на карточку того фильма!
-    // Если сохраненного фильма нет (холодный старт каталога) — курсор встает на строку поиска.
+    // Фильтрация элементов по стране
+    val displayedItems = remember(catalogState, currentCountry) {
+        if (catalogState is CatalogState.Success) {
+            if (currentCountry.isEmpty()) {
+                catalogState.items
+            } else {
+                catalogState.items.filter { it.matchesCountry(currentCountry) }
+            }
+        } else emptyList()
+    }
+
+    LaunchedEffect(displayedItems.size, currentCountry, isEndReached, isLoadingMore) {
+        if (currentCountry.isNotEmpty() && displayedItems.size < 20 && !isEndReached && !isLoadingMore && viewModel.searchQuery.isEmpty()) {
+            viewModel.loadNextPage()
+        }
+    }
+
     var hasRestoredFocus by remember { mutableStateOf(false) }
 
-    LaunchedEffect(catalogState, isTopScreen) {
+    LaunchedEffect(catalogState, collectionsState, isTopScreen) {
         if (!isTopScreen) {
             hasRestoredFocus = false
             return@LaunchedEffect
         }
         if (hasRestoredFocus) return@LaunchedEffect
-        if (catalogState is CatalogState.Success) {
-            val items = catalogState.items
+        if (currentType != RezkaType.COLLECTIONS && catalogState is CatalogState.Success) {
+            val items = displayedItems
             if (items.isNotEmpty()) {
                 val savedItemId = viewModel.getTvCatalogFocusedItemId()
                 val savedIndex = viewModel.getTvCatalogFocusedIndex()
@@ -508,7 +528,6 @@ private fun TvCatalogContent(
                         gridState.scrollToItem(targetIndex)
                     } catch (_: Throwable) {}
 
-                    // Плавный опрос готовности Compose узла для гарантированного фокуса
                     var focused = false
                     for (attempt in 0..12) {
                         kotlinx.coroutines.delay(if (attempt == 0) 40L else 60L)
@@ -526,6 +545,16 @@ private fun TvCatalogContent(
                     }
                     return@LaunchedEffect
                 }
+            }
+        } else if (currentType == RezkaType.COLLECTIONS && collectionsState is CollectionsState.Success) {
+            val items = collectionsState.items
+            if (items.isNotEmpty()) {
+                hasRestoredFocus = true
+                try {
+                    gridState.scrollToItem(0)
+                    getFocusRequesterForIndex(0).requestFocusSafe()
+                } catch (_: Exception) {}
+                return@LaunchedEffect
             }
         }
 
@@ -547,7 +576,7 @@ private fun TvCatalogContent(
     }
 
     LaunchedEffect(shouldLoadMore, isLoadingMore, isEndReached) {
-        if (shouldLoadMore && !isLoadingMore && !isEndReached && viewModel.searchQuery.isEmpty()) {
+        if (shouldLoadMore && !isLoadingMore && !isEndReached && viewModel.searchQuery.isEmpty() && currentType != RezkaType.COLLECTIONS) {
             viewModel.loadNextPage()
         }
     }
@@ -581,12 +610,18 @@ private fun TvCatalogContent(
                 currentSection = currentSection,
                 currentGenre = currentGenre,
                 genresList = genresList,
+                currentYear = currentYear,
+                yearsList = yearsList,
+                currentCountry = currentCountry,
+                countriesList = countriesList,
                 searchQuery = searchInput,
                 searchHistory = searchHistory,
                 searchBarFocusRequester = searchBarFocusRequester,
                 categoryFocusRequester = categoryDropdownFocusRequester,
                 sectionFocusRequester = sectionDropdownFocusRequester,
                 genreFocusRequester = genreDropdownFocusRequester,
+                yearFocusRequester = yearDropdownFocusRequester,
+                countryFocusRequester = countryDropdownFocusRequester,
                 onFocusGrid = focusGrid,
                 sidebarFocusRequester = sidebarFocusRequester,
                 onSearchQueryChanged = {
@@ -607,6 +642,13 @@ private fun TvCatalogContent(
                 onGenreSelected = { genreSlug ->
                     searchInput = ""
                     viewModel.loadCatalog(genre = genreSlug, forceRefresh = true)
+                },
+                onYearSelected = { yearItem ->
+                    searchInput = ""
+                    viewModel.loadCatalog(year = yearItem.year, forceRefresh = true)
+                },
+                onCountrySelected = { countryItem ->
+                    viewModel.setCountry(countryItem.query)
                 }
             )
 
@@ -619,112 +661,171 @@ private fun TvCatalogContent(
                 }
             }
 
-            // ---- 3. TV MOVIES GRID ----
+            // ---- 3. TV MOVIES / COLLECTIONS GRID ----
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
             ) {
-                when (catalogState) {
-                    is CatalogState.Loading -> {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
+                if (currentType == RezkaType.COLLECTIONS) {
+                    when (val cState = collectionsState) {
+                        is CollectionsState.Loading -> {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
+                            }
                         }
-                    }
-                    is CatalogState.Error -> {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.Center,
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(catalogState.message, color = CinemaTextWhite, fontSize = 16.sp)
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Button(
-                                onClick = { viewModel.loadCatalog(forceRefresh = true) },
-                                colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
+                        is CollectionsState.Error -> {
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Text("Повторить")
+                                Text(cState.message, color = CinemaTextWhite, fontSize = 16.sp)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Button(
+                                    onClick = { viewModel.loadCollections(forceRefresh = true) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
+                                ) {
+                                    Text("Повторить")
+                                }
+                            }
+                        }
+                        is CollectionsState.Success -> {
+                            if (cState.items.isEmpty()) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("Подборок не найдено", color = CinemaTextGray, fontSize = 16.sp)
+                                }
+                            } else {
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(3),
+                                    state = gridState,
+                                    contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .testTag("tv_collections_grid")
+                                ) {
+                                    itemsIndexed(
+                                        items = cState.items,
+                                        key = { _, item -> item.id }
+                                    ) { index, collectionItem ->
+                                        CollectionCard(
+                                            item = collectionItem,
+                                            onClick = {
+                                                viewModel.commitSearchQuery(searchInput)
+                                                onNavigateToThematic(collectionItem.title, collectionItem.url)
+                                            },
+                                            focusRequester = getFocusRequesterForIndex(index)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
-                    is CatalogState.Success -> {
-                        val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight) {
-                            CardGridEngine.calculate(
-                                cardGridMode = cardGridMode,
-                                availableWidth = maxWidth,
-                                availableHeight = maxHeight,
-                                isLandscapeOrTv = true
-                            )
+                } else {
+                    when (catalogState) {
+                        is CatalogState.Loading -> {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
+                            }
                         }
-
-                        val tvGridCols = resolvedGrid.columns
-                        val tvCardHeight = resolvedGrid.cardHeight
-
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(tvGridCols),
-                            state = gridState,
-                            contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
-                            verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .testTag("tv_catalog_grid")
-                        ) {
-                            itemsIndexed(
-                                items = catalogState.items,
-                                key = { _, item -> item.id }
-                            ) { index, item ->
-                                val navigateToItem: (Int) -> Unit = { targetIndex ->
-                                    val total = catalogState.items.size
-                                    if (total > 0) {
-                                        val clampedIndex = targetIndex.coerceIn(0, total - 1)
-                                        coroutineScope.launch {
-                                            try {
-                                                val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
-                                                if (!isVisible) {
-                                                    gridState.scrollToItem(clampedIndex)
-                                                }
-                                            } catch (_: Exception) {}
-                                            getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
-                                        }
-                                    }
+                        is CatalogState.Error -> {
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(catalogState.message, color = CinemaTextWhite, fontSize = 16.sp)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Button(
+                                    onClick = { viewModel.loadCatalog(forceRefresh = true) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
+                                ) {
+                                    Text("Повторить")
                                 }
-
-                                TvMovieCard(
-                                    item = item,
-                                    index = index,
-                                    totalItems = catalogState.items.size,
-                                    columnCount = tvGridCols,
-                                    cardHeight = tvCardHeight,
-                                    onClick = {
-                                        viewModel.commitSearchQuery(searchInput)
-                                        viewModel.setTvCatalogFocusedItem(item.id, index)
-                                        lastFocusedIndex = index
-                                        onNavigateToDetail(item)
-                                    },
-                                    onFocused = {
-                                        lastFocusedIndex = index
-                                        viewModel.setTvCatalogFocusedItem(item.id, index)
-                                        if (searchInput.isNotBlank()) {
-                                            viewModel.commitSearchQuery(searchInput)
-                                        }
-                                    },
-                                    focusRequester = getFocusRequesterForIndex(index),
-                                    onNavigateIndex = navigateToItem,
-                                    onUp = { categoryDropdownFocusRequester.requestFocusSafe() },
-                                    onLeft = { sidebarFocusRequester.requestFocusSafe() }
+                            }
+                        }
+                        is CatalogState.Success -> {
+                            val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight) {
+                                CardGridEngine.calculate(
+                                    cardGridMode = cardGridMode,
+                                    availableWidth = maxWidth,
+                                    availableHeight = maxHeight,
+                                    isLandscapeOrTv = true
                                 )
                             }
 
-                            if (isLoadingMore && catalogState.items.size >= 8) {
-                                item(span = { GridItemSpan(maxLineSpan) }) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 16.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(32.dp))
+                            val tvGridCols = resolvedGrid.columns
+                            val tvCardHeight = resolvedGrid.cardHeight
+                            val items = displayedItems
+
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(tvGridCols),
+                                state = gridState,
+                                contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
+                                verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .testTag("tv_catalog_grid")
+                            ) {
+                                itemsIndexed(
+                                    items = items,
+                                    key = { _, item -> item.id }
+                                ) { index, item ->
+                                    val navigateToItem: (Int) -> Unit = { targetIndex ->
+                                        val total = items.size
+                                        if (total > 0) {
+                                            val clampedIndex = targetIndex.coerceIn(0, total - 1)
+                                            coroutineScope.launch {
+                                                try {
+                                                    val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
+                                                    if (!isVisible) {
+                                                        gridState.scrollToItem(clampedIndex)
+                                                    }
+                                                } catch (_: Exception) {}
+                                                getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
+                                            }
+                                        }
+                                    }
+
+                                    TvMovieCard(
+                                        item = item,
+                                        index = index,
+                                        totalItems = items.size,
+                                        columnCount = tvGridCols,
+                                        cardHeight = tvCardHeight,
+                                        onClick = {
+                                            viewModel.commitSearchQuery(searchInput)
+                                            viewModel.setTvCatalogFocusedItem(item.id, index)
+                                            lastFocusedIndex = index
+                                            onNavigateToDetail(item)
+                                        },
+                                        onFocused = {
+                                            lastFocusedIndex = index
+                                            viewModel.setTvCatalogFocusedItem(item.id, index)
+                                            if (searchInput.isNotBlank()) {
+                                                viewModel.commitSearchQuery(searchInput)
+                                            }
+                                        },
+                                        focusRequester = getFocusRequesterForIndex(index),
+                                        onNavigateIndex = navigateToItem,
+                                        onUp = { categoryDropdownFocusRequester.requestFocusSafe() },
+                                        onLeft = { sidebarFocusRequester.requestFocusSafe() }
+                                    )
+                                }
+
+                                if (isLoadingMore && items.size >= 8) {
+                                    item(span = { GridItemSpan(maxLineSpan) }) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 16.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(32.dp))
+                                        }
                                     }
                                 }
                             }
@@ -846,7 +947,7 @@ private fun TvHeroPreview(
 
 /**
  * Панель фильтров каталога для ТВ:
- * 3 выпадающих списка (Категория, Раздел, Жанр) + компактное окно поиска.
+ * 5 выпадающих списков (Категория, Раздел, Жанр, Год, Страна) в одну полосу без заголовков + компактный поиск.
  */
 @Composable
 private fun TvCatalogFiltersBar(
@@ -854,6 +955,10 @@ private fun TvCatalogFiltersBar(
     currentSection: SectionType,
     currentGenre: String,
     genresList: List<GenreItem>,
+    currentYear: String,
+    yearsList: List<YearItem>,
+    currentCountry: String,
+    countriesList: List<CountryItem>,
     searchQuery: String,
     searchHistory: List<String> = emptyList(),
     onSearchQueryChanged: (String) -> Unit,
@@ -861,10 +966,14 @@ private fun TvCatalogFiltersBar(
     onTypeSelected: (RezkaType) -> Unit,
     onSectionSelected: (SectionType) -> Unit,
     onGenreSelected: (String) -> Unit,
+    onYearSelected: (YearItem) -> Unit,
+    onCountrySelected: (CountryItem) -> Unit,
     searchBarFocusRequester: FocusRequester,
     categoryFocusRequester: FocusRequester,
     sectionFocusRequester: FocusRequester,
     genreFocusRequester: FocusRequester,
+    yearFocusRequester: FocusRequester,
+    countryFocusRequester: FocusRequester,
     onFocusGrid: () -> Unit,
     sidebarFocusRequester: FocusRequester
 ) {
@@ -909,7 +1018,7 @@ private fun TvCatalogFiltersBar(
             modifier = Modifier.fillMaxWidth()
         )
 
-        // Подсказки недавних запросов из истории поиска для ТВ (автоматическое скрытие через 2 секунды после увода фокуса)
+        // Подсказки недавних запросов из истории поиска для ТВ
         if (isHistoryVisible && searchHistory.isNotEmpty()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -968,10 +1077,10 @@ private fun TvCatalogFiltersBar(
             }
         }
 
-        // 2. Выпадающие списки (снизу) - Категория, Раздел, Жанр
+        // 2. Все 5 выпадающих списков в одну полосу без заголовков
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Dropdown 1: Категория
@@ -987,7 +1096,7 @@ private fun TvCatalogFiltersBar(
             val currentCategoryPair = categories.find { it.first == currentType } ?: categories[0]
 
             TvRezkaDropdown(
-                label = "Категория",
+                label = "",
                 options = categories,
                 selectedOption = currentCategoryPair,
                 onOptionSelected = { pair -> onTypeSelected(pair.first) },
@@ -1011,7 +1120,7 @@ private fun TvCatalogFiltersBar(
             }
 
             TvRezkaDropdown(
-                label = "Раздел",
+                label = "",
                 options = sections,
                 selectedOption = currentSection,
                 onOptionSelected = onSectionSelected,
@@ -1030,15 +1139,53 @@ private fun TvCatalogFiltersBar(
                 ?: GenreItem("Все жанры", "")
 
             TvRezkaDropdown(
-                label = "Жанр",
+                label = "",
                 options = genresList,
                 selectedOption = currentGenreItem,
                 onOptionSelected = { genreItem -> onGenreSelected(genreItem.slug) },
                 getLabel = { it.name },
-                modifier = Modifier.weight(1.1f),
+                modifier = Modifier.weight(1f),
                 focusRequester = genreFocusRequester,
                 onUp = { searchBarFocusRequester.requestFocusSafe() },
                 onLeft = { sectionFocusRequester.requestFocusSafe() },
+                onRight = { yearFocusRequester.requestFocusSafe() },
+                onDown = onFocusGrid
+            )
+
+            // Dropdown 4: Год
+            val currentYearItem = yearsList.find { it.year == currentYear }
+                ?: yearsList.firstOrNull()
+                ?: YearItem("Все года", "")
+
+            TvRezkaDropdown(
+                label = "",
+                options = yearsList,
+                selectedOption = currentYearItem,
+                onOptionSelected = { yearItem -> onYearSelected(yearItem) },
+                getLabel = { it.name },
+                modifier = Modifier.weight(1f),
+                focusRequester = yearFocusRequester,
+                onUp = { searchBarFocusRequester.requestFocusSafe() },
+                onLeft = { genreFocusRequester.requestFocusSafe() },
+                onRight = { countryFocusRequester.requestFocusSafe() },
+                onDown = onFocusGrid
+            )
+
+            // Dropdown 5: Страна
+            val currentCountryItem = countriesList.find { it.query == currentCountry }
+                ?: countriesList.firstOrNull()
+                ?: CountryItem("Все страны", "")
+
+            TvRezkaDropdown(
+                label = "",
+                options = countriesList,
+                selectedOption = currentCountryItem,
+                onOptionSelected = { countryItem -> onCountrySelected(countryItem) },
+                getLabel = { it.name },
+                modifier = Modifier.weight(1f),
+                focusRequester = countryFocusRequester,
+                onUp = { searchBarFocusRequester.requestFocusSafe() },
+                onLeft = { yearFocusRequester.requestFocusSafe() },
                 onDown = onFocusGrid
             )
         }
@@ -1051,7 +1198,7 @@ private fun TvCatalogFiltersBar(
  */
 @Composable
 fun <T> TvRezkaDropdown(
-    label: String,
+    label: String = "",
     options: List<T>,
     selectedOption: T,
     onOptionSelected: (T) -> Unit,
@@ -1128,13 +1275,15 @@ fun <T> TvRezkaDropdown(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(
-                        text = "$label:",
-                        color = CinemaTextGray,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1
-                    )
+                    if (label.isNotBlank()) {
+                        Text(
+                            text = "$label:",
+                            color = CinemaTextGray,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1
+                        )
+                    }
                     val selTrans = selectedOption as? Translator
                     if (selTrans != null && selTrans.flagUrl.isNotEmpty()) {
                         AsyncImage(
