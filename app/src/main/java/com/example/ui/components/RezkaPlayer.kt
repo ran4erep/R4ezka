@@ -102,6 +102,8 @@ import com.example.data.StreamUrl
 import com.example.data.SubtitleTrack
 import com.example.data.Translator
 import com.example.ui.tv.LocalTvShowCursor
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
@@ -1034,7 +1036,7 @@ fun RezkaPlayer(
         if (itemId.isNotBlank()) {
             RezkaService.setItemZoomScale(itemId, customZoomScale)
         }
-        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        HapticEngine.get().perform(HapticType.GENTLE_TICK)
     }
 
     val performZoomIn: () -> Unit = {
@@ -1046,7 +1048,7 @@ fun RezkaPlayer(
         if (itemId.isNotBlank()) {
             RezkaService.setItemZoomScale(itemId, customZoomScale)
         }
-        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        HapticEngine.get().perform(HapticType.GENTLE_TICK)
     }
 
     val cycleResizeMode: () -> Unit = {
@@ -1060,7 +1062,7 @@ fun RezkaPlayer(
             RezkaService.setItemResizeMode(itemId, currentResizeMode.name)
             FirebaseSyncManager.onItemResizeModeUpdated(itemId, currentResizeMode.name)
         }
-        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        HapticEngine.get().perform(HapticType.SELECTION)
     }
 
     // Reset remote focus tier back to MAIN whenever controls are dismissed
@@ -1334,6 +1336,7 @@ fun RezkaPlayer(
                         // Center: Play / Pause Button
                         IconButton(
                             onClick = {
+                                HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                 if (shouldShowPause) {
                                     exoPlayer.pause()
                                     isPlayWhenReady = false
@@ -1916,7 +1919,7 @@ fun RezkaPlayer(
                                             isScreenLocked = true
                                             showControls = false
                                             showLockOverlay = true
-                                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                         }
                                     }
                                     true
@@ -2138,6 +2141,7 @@ fun RezkaPlayer(
                                             singleTapJob?.cancel()
                                             accumulatedSec += 10
                                             accumulatedSeekSeconds = accumulatedSec
+                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
 
                                             val seekDelta = 10_000L
                                             val currentPos = exoPlayer.currentPosition
@@ -2170,6 +2174,7 @@ fun RezkaPlayer(
                                             accumulatedSec = 10
                                             activeSeekSide = tappedSide
                                             accumulatedSeekSeconds = 10
+                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
 
                                             val seekDelta = 10_000L
                                             val currentPos = exoPlayer.currentPosition
@@ -2205,6 +2210,7 @@ fun RezkaPlayer(
                                                 if (currentSide == SeekSide.NONE) {
                                                     showControls = !showControls
                                                     controlsInteractionKey++
+                                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                                     if (!isTvCursorConfigured) {
                                                         isRemoteActive = false
                                                     }
@@ -2379,7 +2385,7 @@ fun RezkaPlayer(
                                                             unlockHoldProgress = 0f
                                                             showLockOverlay = false
                                                             showControls = true
-                                                            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                                            HapticEngine.get().perform(HapticType.CONFIRM)
                                                             break
                                                         }
                                                         delay(16) // ~60fps smooth progress ring
@@ -2560,7 +2566,7 @@ fun RezkaPlayer(
                                         isScreenLocked = true
                                         showControls = false
                                         showLockOverlay = true
-                                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                        HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                     },
                                     modifier = Modifier
                                         .scale(if (isLockRemoteFocused) 1.15f else 1.0f)
@@ -2664,13 +2670,14 @@ fun RezkaPlayer(
                                                     Modifier.border(5.5.dp, CinemaPrimary.copy(alpha = 0.6f), CircleShape)
                                                 } else Modifier
                                             )
-                                            .clickable(
+                                             .clickable(
                                                 interactionSource = remember { MutableInteractionSource() },
                                                 indication = null
                                             ) {
                                                 controlsInteractionKey++
                                                 currentFocusArea = PlayerFocusArea.MAIN
                                                 selectedCenterIndex = if (isSeries) 1 else 0
+                                                HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                                 if (shouldShowPause) {
                                                     exoPlayer.pause()
                                                     isPlayWhenReady = false
@@ -2814,10 +2821,13 @@ fun RezkaPlayer(
                         // Seek Slider
                         Slider(
                             value = currentPosition.toFloat(),
-                            onValueChange = {
+                            onValueChange = { newPos ->
                                 showControls = true
                                 controlsInteractionKey++
-                                currentPosition = it.toLong()
+                                if (kotlin.math.abs(newPos.toLong() - currentPosition) > 2000L) {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                }
+                                currentPosition = newPos.toLong()
                                 exoPlayer.seekTo(currentPosition)
                             },
                             valueRange = 0f..(totalDuration.toFloat().coerceAtLeast(1f)),
@@ -2890,6 +2900,7 @@ fun RezkaPlayer(
                                         controlsInteractionKey++
                                         selectedBottomIndex = bottomControls.indexOf(BottomControl.QUALITY)
                                         showQualityDialog = true
+                                        HapticEngine.get().perform(HapticType.SELECTION)
                                     },
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = if (isQualityRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
@@ -2922,6 +2933,7 @@ fun RezkaPlayer(
                                         controlsInteractionKey++
                                         selectedBottomIndex = bottomControls.indexOf(BottomControl.SPEED)
                                         showSpeedDialog = true
+                                        HapticEngine.get().perform(HapticType.SELECTION)
                                     },
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = if (isSpeedRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
@@ -2954,6 +2966,7 @@ fun RezkaPlayer(
                                             controlsInteractionKey++
                                             selectedBottomIndex = bottomControls.indexOf(BottomControl.TRANSLATOR)
                                             showTranslatorDialog = true
+                                            HapticEngine.get().perform(HapticType.SELECTION)
                                         },
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = if (isTranslatorRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
@@ -3015,6 +3028,7 @@ fun RezkaPlayer(
                                         controlsInteractionKey++
                                         selectedBottomIndex = bottomControls.indexOf(BottomControl.SUBTITLES)
                                         showSubtitlesDialog = true
+                                        HapticEngine.get().perform(HapticType.SELECTION)
                                     },
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = when {
@@ -3280,6 +3294,7 @@ fun RezkaPlayer(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
+                                    HapticEngine.get().perform(HapticType.SELECTION)
                                     selectedStreamIndex = index
                                     preferredQualityName = stream.quality
                                     playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
@@ -3352,6 +3367,7 @@ fun RezkaPlayer(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
+                                    HapticEngine.get().perform(HapticType.SELECTION)
                                     playbackSpeed = speed
                                     exoPlayer.setPlaybackSpeed(speed)
                                     showSpeedDialog = false
@@ -3628,6 +3644,7 @@ fun RezkaPlayer(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
+                                    HapticEngine.get().perform(HapticType.SELECTION)
                                     showTranslatorDialog = false
                                     val currentPos = exoPlayer.currentPosition
                                     onSelectTranslator?.invoke(trans, currentPos)
