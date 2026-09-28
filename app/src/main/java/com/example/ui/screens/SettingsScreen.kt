@@ -525,6 +525,8 @@ fun SettingsScreen(
                             }
                         }
 
+                        val customMirrorFocusRequester = remember { FocusRequester() }
+
                         TvRemoteInputField(
                             value = customMirrorInput,
                             onValueChange = { customMirrorInput = it },
@@ -533,6 +535,7 @@ fun SettingsScreen(
                             singleLine = true,
                             shape = RoundedCornerShape(10.dp),
                             containerColor = CinemaCard,
+                            focusRequester = customMirrorFocusRequester,
                             testTag = "custom_mirror_input",
                             modifier = Modifier.fillMaxWidth()
                         )
