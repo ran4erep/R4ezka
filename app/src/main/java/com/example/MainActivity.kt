@@ -62,6 +62,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import com.example.data.SeriesUpdateScheduler
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 import kotlinx.coroutines.launch
 
 enum class NavTab {
@@ -74,8 +76,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try {
-            SeriesUpdateScheduler.schedulePeriodicCheck(applicationContext)
-            viewModel.triggerManualSeriesCheck(applicationContext)
+            SeriesUpdateScheduler.schedulePeriodicCheck(this)
+            viewModel.triggerManualSeriesCheck(this)
         } catch (_: Exception) {}
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -205,8 +207,6 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
         }
     }
 
-
-
     CompositionLocalProvider(LocalTvShowCursor provides showTvCursor) {
         Box(
             modifier = Modifier
@@ -325,7 +325,10 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                             // 1. Feed / Catalog tab
                             NavigationBarItem(
                                 selected = currentTab == NavTab.FEED,
-                                onClick = { currentTab = NavTab.FEED },
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                    currentTab = NavTab.FEED
+                                },
                                 icon = { Icon(Icons.Default.Movie, contentDescription = "Каталог") },
                                 label = { Text("Каталог", fontSize = 11.sp) },
                                 colors = NavigationBarItemDefaults.colors(
@@ -341,7 +344,10 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                             // 2. Favorites tab
                             NavigationBarItem(
                                 selected = currentTab == NavTab.FAVORITES,
-                                onClick = { currentTab = NavTab.FAVORITES },
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                    currentTab = NavTab.FAVORITES
+                                },
                                 icon = { Icon(Icons.Default.Bookmark, contentDescription = "Избранное") },
                                 label = { Text("Избранное", fontSize = 11.sp) },
                                 colors = NavigationBarItemDefaults.colors(
@@ -357,7 +363,10 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                             // 3. History tab
                             NavigationBarItem(
                                 selected = currentTab == NavTab.HISTORY,
-                                onClick = { currentTab = NavTab.HISTORY },
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                    currentTab = NavTab.HISTORY
+                                },
                                 icon = { Icon(Icons.Default.History, contentDescription = "История") },
                                 label = { Text("История", fontSize = 11.sp) },
                                 colors = NavigationBarItemDefaults.colors(

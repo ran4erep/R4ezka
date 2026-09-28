@@ -57,6 +57,10 @@ import com.example.ui.tv.TvModePreference
 
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.Orientation
+import com.example.ui.haptics.bounceOverscroll
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 import androidx.compose.ui.focus.focusProperties
 import kotlinx.coroutines.delay
 
@@ -158,6 +162,7 @@ fun AuthDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
+                        .bounceOverscroll(Orientation.Vertical)
                         .padding(20.dp)
                 ) {
                 // Header

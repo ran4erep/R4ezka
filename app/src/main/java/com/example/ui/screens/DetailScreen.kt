@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import com.example.data.CountryFlags
 import com.example.ui.util.rememberSavedLazyListState
+import com.example.ui.haptics.bounceOverscroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -742,6 +743,7 @@ fun DetailScreen(
                         state = lazyListState,
                         modifier = Modifier
                             .fillMaxSize()
+                            .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                             .dpadScrollable(lazyListState),
                         contentPadding = PaddingValues(bottom = 96.dp)
                     ) {

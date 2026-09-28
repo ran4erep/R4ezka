@@ -18,7 +18,7 @@ android {
     minSdk = 24
     targetSdk = 36
     versionCode = 4
-    versionName = "1.1.1"
+    versionName = "1.2.0"
   }
 
   signingConfigs {
@@ -82,11 +82,6 @@ android {
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
-  }
-  testOptions {
-    unitTests {
-      isIncludeAndroidResources = true
-    }
   }
 }
 
@@ -154,10 +149,6 @@ dependencies {
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
-  testImplementation(libs.junit)
-  testImplementation(libs.robolectric)
-  testImplementation(libs.androidx.junit)
-  testImplementation(libs.androidx.core)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)

@@ -42,6 +42,9 @@ import com.example.ui.theme.*
 import com.example.ui.tv.dpadScrollable
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusableItem
+import com.example.ui.haptics.bounceOverscroll
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 import com.example.ui.util.rememberSavedLazyGridState
 import com.example.ui.RezkaViewModel
 
@@ -253,6 +256,7 @@ fun PersonProfileScreen(
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                         modifier = Modifier
                             .fillMaxSize()
+                            .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                             .then(if (isTvMode) Modifier.dpadScrollable(gridState) else Modifier)
                     ) {
                         // Header Span covering biography + photo
@@ -767,7 +771,9 @@ private fun TvPersonProfileContent(
                 Spacer(modifier = Modifier.height(10.dp))
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Horizontal)
                 ) {
                     item {
                         val isSelected = selectedSectionIndex == -1
@@ -853,6 +859,7 @@ private fun TvPersonProfileContent(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier
                         .fillMaxSize()
+                        .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                         .dpadScrollable(tvGridState)
                         .testTag("person_tv_grid")
                 ) {

@@ -34,6 +34,8 @@ object ExternalPlayerManager {
     @Volatile
     private var cachedPlayers: List<ExternalPlayerApp>? = null
 
+    fun getCachedPlayers(): List<ExternalPlayerApp>? = cachedPlayers
+
     /**
      * Динамическое получение списка всех установленных в Android приложений,
      * способных воспроизводить видеопотоки или видеофайлы.

@@ -23,6 +23,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.focus.FocusRequester
 import com.example.ui.tv.requestFocusSafe
+import com.example.ui.haptics.bounceOverscroll
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalConfiguration
 import android.content.res.Configuration
@@ -164,6 +167,7 @@ fun FavoritesScreen(
                         verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
                         modifier = Modifier
                             .fillMaxSize()
+                            .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                             .dpadScrollable(gridState)
                             .testTag("favorites_grid")
                     ) {
@@ -217,8 +221,12 @@ fun FavoritesScreen(
                                 
                                 Spacer(modifier = Modifier.height(spacerHeight))
                                 
+                                val haptic = HapticEngine.get()
                                 Surface(
-                                    onClick = { viewModel.removeFavorite(fav.id) },
+                                    onClick = {
+                                        haptic.perform(HapticType.WARNING)
+                                        viewModel.removeFavorite(fav.id)
+                                    },
                                     color = CinemaDark,
                                     shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
                                     border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.8f)),
@@ -226,7 +234,10 @@ fun FavoritesScreen(
                                         .fillMaxWidth()
                                         .height(buttonHeight)
                                         .tvFocusableItem(
-                                            onClick = { viewModel.removeFavorite(fav.id) },
+                                            onClick = {
+                                                haptic.perform(HapticType.WARNING)
+                                                viewModel.removeFavorite(fav.id)
+                                            },
                                             scaleFactor = 1.0f,
                                             focusedBorderColor = CinemaPrimary,
                                             shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp)

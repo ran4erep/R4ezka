@@ -196,13 +196,9 @@ fun RezkaPlayer(
             window?.attributes?.layoutInDisplayCutoutMode
         } else null
 
-        val isExternalActivity = activity is com.example.ui.ExternalPlayerActivity
-
         if (isFloating) {
             // Floating mini-player mode: allow normal orientation and show system bars (status bar + nav bar)
-            if (activity != null && !activity.isFinishing && !activity.isDestroyed) {
-                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            }
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             if (window != null) {
                 val insetsController = WindowCompat.getInsetsController(window, window.decorView)
                 insetsController.show(WindowInsetsCompat.Type.systemBars())
@@ -214,8 +210,8 @@ fun RezkaPlayer(
             }
         } else {
             // Fullscreen player: lock to sensor landscape & hide all system bars (status bar + nav bar) for 100% immersive video
-            if (!isTvMode && activity != null && !activity.isFinishing && !activity.isDestroyed) {
-                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            if (!isTvMode) {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             }
             if (window != null) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -233,11 +229,9 @@ fun RezkaPlayer(
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         onDispose {
-            if (activity != null && !activity.isFinishing && !activity.isDestroyed && !isExternalActivity) {
-                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            }
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            if (window != null && activity != null && !activity.isDestroyed) {
+            if (window != null) {
                 val insetsController = WindowCompat.getInsetsController(window, window.decorView)
                 insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
                 insetsController.show(WindowInsetsCompat.Type.systemBars())
