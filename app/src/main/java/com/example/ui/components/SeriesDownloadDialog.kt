@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -25,6 +26,8 @@ import com.example.data.RezkaType
 import com.example.data.Season
 import com.example.data.Translator
 import com.example.ui.theme.*
+import com.example.ui.tv.requestFocusSafe
+import com.example.ui.tv.tvFocusableItem
 
 @Composable
 fun MediaDownloadDialog(
@@ -70,6 +73,11 @@ fun MediaDownloadDialog(
     var episodeDropdownExpanded by remember { mutableStateOf(false) }
     var qualityDropdownExpanded by remember { mutableStateOf(false) }
 
+    val initialDialogRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        initialDialogRequester.requestFocusSafe()
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = CinemaDark,
@@ -104,9 +112,13 @@ fun MediaDownloadDialog(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(CinemaCard)
-                                        .clickable { seasonDropdownExpanded = true }
+                                        .background(CinemaCard, RoundedCornerShape(8.dp))
+                                        .tvFocusableItem(
+                                            onClick = { seasonDropdownExpanded = true },
+                                            shape = RoundedCornerShape(8.dp),
+                                            scaleFactor = 1.0f,
+                                            focusRequester = initialDialogRequester
+                                        )
                                         .padding(horizontal = 12.dp, vertical = 10.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
@@ -149,7 +161,16 @@ fun MediaDownloadDialog(
                                                 selectedSeasonId = s.id
                                                 selectedEpisodeId = s.episodes.firstOrNull()?.id ?: "1"
                                                 seasonDropdownExpanded = false
-                                            }
+                                            },
+                                            modifier = Modifier.tvFocusableItem(
+                                                onClick = {
+                                                    selectedSeasonId = s.id
+                                                    selectedEpisodeId = s.episodes.firstOrNull()?.id ?: "1"
+                                                    seasonDropdownExpanded = false
+                                                },
+                                                shape = RoundedCornerShape(6.dp),
+                                                scaleFactor = 1.0f
+                                            )
                                         )
                                     }
                                 }
@@ -171,9 +192,12 @@ fun MediaDownloadDialog(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(CinemaCard)
-                                        .clickable { episodeDropdownExpanded = true }
+                                        .background(CinemaCard, RoundedCornerShape(8.dp))
+                                        .tvFocusableItem(
+                                            onClick = { episodeDropdownExpanded = true },
+                                            shape = RoundedCornerShape(8.dp),
+                                            scaleFactor = 1.0f
+                                        )
                                         .padding(horizontal = 12.dp, vertical = 10.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
@@ -215,7 +239,15 @@ fun MediaDownloadDialog(
                                             onClick = {
                                                 selectedEpisodeId = ep.id
                                                 episodeDropdownExpanded = false
-                                            }
+                                            },
+                                            modifier = Modifier.tvFocusableItem(
+                                                onClick = {
+                                                    selectedEpisodeId = ep.id
+                                                    episodeDropdownExpanded = false
+                                                },
+                                                shape = RoundedCornerShape(6.dp),
+                                                scaleFactor = 1.0f
+                                            )
                                         )
                                     }
                                 }
@@ -238,9 +270,13 @@ fun MediaDownloadDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(CinemaCard)
-                                    .clickable { translatorDropdownExpanded = true }
+                                    .background(CinemaCard, RoundedCornerShape(8.dp))
+                                    .tvFocusableItem(
+                                        onClick = { translatorDropdownExpanded = true },
+                                        shape = RoundedCornerShape(8.dp),
+                                        scaleFactor = 1.0f,
+                                        focusRequester = if (!isSeries || availableSeasons.isEmpty()) initialDialogRequester else null
+                                    )
                                     .padding(horizontal = 12.dp, vertical = 10.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
@@ -340,7 +376,15 @@ fun MediaDownloadDialog(
                                         onClick = {
                                             selectedTranslator = trans
                                             translatorDropdownExpanded = false
-                                        }
+                                        },
+                                        modifier = Modifier.tvFocusableItem(
+                                            onClick = {
+                                                selectedTranslator = trans
+                                                translatorDropdownExpanded = false
+                                            },
+                                            shape = RoundedCornerShape(6.dp),
+                                            scaleFactor = 1.0f
+                                        )
                                     )
                                 }
                             }
@@ -361,9 +405,12 @@ fun MediaDownloadDialog(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(CinemaCard)
-                                .clickable { qualityDropdownExpanded = true }
+                                .background(CinemaCard, RoundedCornerShape(8.dp))
+                                .tvFocusableItem(
+                                    onClick = { qualityDropdownExpanded = true },
+                                    shape = RoundedCornerShape(8.dp),
+                                    scaleFactor = 1.0f
+                                )
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
@@ -402,7 +449,15 @@ fun MediaDownloadDialog(
                                     onClick = {
                                         selectedQuality = q
                                         qualityDropdownExpanded = false
-                                    }
+                                    },
+                                    modifier = Modifier.tvFocusableItem(
+                                        onClick = {
+                                            selectedQuality = q
+                                            qualityDropdownExpanded = false
+                                        },
+                                        shape = RoundedCornerShape(6.dp),
+                                        scaleFactor = 1.0f
+                                    )
                                 )
                             }
                         }
@@ -422,7 +477,20 @@ fun MediaDownloadDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
                 shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.testTag("download_confirm_button")
+                modifier = Modifier
+                    .tvFocusableItem(
+                        onClick = {
+                            onDownload(
+                                selectedTranslator,
+                                if (isSeries) selectedSeasonId else 0,
+                                if (isSeries) selectedEpisodeId else "",
+                                selectedQuality
+                            )
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        scaleFactor = 1.0f
+                    )
+                    .testTag("download_confirm_button")
             ) {
                 Icon(
                     imageVector = Icons.Default.Download,
@@ -440,7 +508,13 @@ fun MediaDownloadDialog(
         dismissButton = {
             TextButton(
                 onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(contentColor = CinemaTextGray)
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.textButtonColors(contentColor = CinemaTextGray),
+                modifier = Modifier.tvFocusableItem(
+                    onClick = onDismiss,
+                    shape = RoundedCornerShape(8.dp),
+                    scaleFactor = 1.0f
+                )
             ) {
                 Text(text = "Отмена", fontSize = 14.sp)
             }

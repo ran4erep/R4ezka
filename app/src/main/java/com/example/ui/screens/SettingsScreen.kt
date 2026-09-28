@@ -149,7 +149,7 @@ fun SettingsScreen(
                         .tvFocusableItem(
                             onClick = onBack,
                             shape = CircleShape,
-                            scaleFactor = 1.08f
+                            scaleFactor = 1.0f
                         ),
                     contentAlignment = Alignment.Center
                 ) {
@@ -199,7 +199,7 @@ fun SettingsScreen(
                         .tvFocusableItem(
                             onClick = { isMirrorsExpanded = !isMirrorsExpanded },
                             shape = RoundedCornerShape(16.dp),
-                            scaleFactor = 1.01f
+                            scaleFactor = 1.0f
                         )
                         .padding(16.dp)
                         .testTag("settings_accordion_mirrors")
@@ -307,7 +307,7 @@ fun SettingsScreen(
                                     .tvFocusableItem(
                                         onClick = { if (!isPinging) triggerPing() },
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.04f
+                                        scaleFactor = 1.0f
                                     )
                                     .testTag("ping_mirror_button")
                             ) {
@@ -343,7 +343,7 @@ fun SettingsScreen(
                                     modifier = Modifier.tvFocusableItem(
                                         onClick = triggerReset,
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.04f
+                                        scaleFactor = 1.0f
                                     )
                                 ) {
                                     Text("Сброс", fontSize = 12.sp, color = CinemaTextGray)
@@ -364,7 +364,7 @@ fun SettingsScreen(
                                 .tvFocusableItem(
                                     onClick = triggerAudit,
                                     shape = RoundedCornerShape(10.dp),
-                                    scaleFactor = 1.02f
+                                    scaleFactor = 1.0f
                                 )
                                 .testTag("run_mirror_audit_button")
                         ) {
@@ -419,7 +419,7 @@ fun SettingsScreen(
                                     .tvFocusableItem(
                                         onClick = { mirrorDropdownExpanded = true },
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.02f
+                                        scaleFactor = 1.0f
                                     )
                                     .padding(horizontal = 14.dp, vertical = 12.dp)
                                     .testTag("mirror_dropdown_trigger"),
@@ -551,7 +551,7 @@ fun SettingsScreen(
                                 .tvFocusableItem(
                                     onClick = applyCustomMirror,
                                     shape = RoundedCornerShape(10.dp),
-                                    scaleFactor = 1.02f
+                                    scaleFactor = 1.0f
                                 )
                                 .testTag("apply_mirror_button")
                         ) {
@@ -585,7 +585,7 @@ fun SettingsScreen(
                         .tvFocusableItem(
                             onClick = { isPlaybackExpanded = !isPlaybackExpanded },
                             shape = RoundedCornerShape(16.dp),
-                            scaleFactor = 1.01f
+                            scaleFactor = 1.0f
                         )
                         .padding(16.dp)
                         .testTag("settings_accordion_playback")
@@ -679,7 +679,7 @@ fun SettingsScreen(
                                             playerDropdownExpanded = true
                                         },
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.02f
+                                        scaleFactor = 1.0f
                                     )
                                     .padding(horizontal = 14.dp, vertical = 12.dp)
                                     .testTag("player_dropdown_trigger"),
@@ -912,7 +912,7 @@ fun SettingsScreen(
                                     .tvFocusableItem(
                                         onClick = { qualityDropdownExpanded = true },
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.02f
+                                        scaleFactor = 1.0f
                                     )
                                     .padding(horizontal = 14.dp, vertical = 12.dp)
                                     .testTag("quality_dropdown_trigger"),
@@ -999,7 +999,7 @@ fun SettingsScreen(
                                 .tvFocusableItem(
                                     onClick = { viewModel.setAutoNextEpisode(!autoNextEpisode) },
                                     shape = RoundedCornerShape(10.dp),
-                                    scaleFactor = 1.02f
+                                    scaleFactor = 1.0f
                                 )
                                 .padding(horizontal = 14.dp, vertical = 12.dp)
                                 .testTag("auto_next_episode_row"),
@@ -1075,7 +1075,7 @@ fun SettingsScreen(
                                         .tvFocusableItem(
                                             onClick = triggerResize,
                                             shape = RoundedCornerShape(8.dp),
-                                            scaleFactor = 1.05f
+                                            scaleFactor = 1.0f
                                         )
                                 ) {
                                     Text(
@@ -1112,7 +1112,7 @@ fun SettingsScreen(
                         .tvFocusableItem(
                             onClick = { isTvExpanded = !isTvExpanded },
                             shape = RoundedCornerShape(16.dp),
-                            scaleFactor = 1.01f
+                            scaleFactor = 1.0f
                         )
                         .padding(16.dp)
                         .testTag("settings_accordion_interface")
@@ -1189,7 +1189,7 @@ fun SettingsScreen(
                                     .tvFocusableItem(
                                         onClick = { tvModeDropdownExpanded = true },
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.02f
+                                        scaleFactor = 1.0f
                                     )
                                     .padding(horizontal = 14.dp, vertical = 12.dp)
                                     .testTag("tv_mode_dropdown_trigger"),
@@ -1291,7 +1291,7 @@ fun SettingsScreen(
                                     .tvFocusableItem(
                                         onClick = { gridDropdownExpanded = true },
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.02f
+                                        scaleFactor = 1.0f
                                     )
                                     .padding(horizontal = 14.dp, vertical = 12.dp)
                                     .testTag("card_grid_dropdown_trigger"),
@@ -1413,7 +1413,7 @@ fun SettingsScreen(
                         .tvFocusableItem(
                             onClick = { isSubscriptionsExpanded = !isSubscriptionsExpanded },
                             shape = RoundedCornerShape(16.dp),
-                            scaleFactor = 1.01f
+                            scaleFactor = 1.0f
                         )
                         .padding(horizontal = 16.dp, vertical = 14.dp)
                         .testTag("settings_accordion_subscriptions"),
@@ -1503,7 +1503,7 @@ fun SettingsScreen(
                                 .tvFocusableItem(
                                     onClick = triggerCheckUpdates,
                                     shape = RoundedCornerShape(10.dp),
-                                    scaleFactor = 1.02f
+                                    scaleFactor = 1.0f
                                 )
                                 .testTag("check_series_updates_button")
                         ) {
@@ -1645,7 +1645,7 @@ fun SettingsScreen(
                                                         .tvFocusableItem(
                                                             onClick = { viewModel.removeSubscription(sub.id) },
                                                             shape = CircleShape,
-                                                            scaleFactor = 1.1f
+                                                            scaleFactor = 1.0f
                                                         ),
                                                     contentAlignment = Alignment.Center
                                                 ) {
@@ -1731,7 +1731,7 @@ fun SettingsScreen(
                                 }
                             },
                             shape = RoundedCornerShape(14.dp),
-                            scaleFactor = 1.02f
+                            scaleFactor = 1.0f
                         )
                         .testTag("support_project_card")
                 ) {
@@ -1880,7 +1880,7 @@ private fun CustomGridDialog(
                                 .tvFocusableItem(
                                     onClick = { if (tempCols > 1) tempCols-- },
                                     shape = RoundedCornerShape(8.dp),
-                                    scaleFactor = 1.1f,
+                                    scaleFactor = 1.0f,
                                     focusRequester = decColsRequester
                                 ),
                             contentAlignment = Alignment.Center
@@ -1910,7 +1910,7 @@ private fun CustomGridDialog(
                                 .tvFocusableItem(
                                     onClick = { if (tempCols < 10) tempCols++ },
                                     shape = RoundedCornerShape(8.dp),
-                                    scaleFactor = 1.1f,
+                                    scaleFactor = 1.0f,
                                     focusRequester = incColsRequester
                                 ),
                             contentAlignment = Alignment.Center
@@ -1949,7 +1949,7 @@ private fun CustomGridDialog(
                                 .tvFocusableItem(
                                     onClick = { if (tempRows > 1) tempRows-- },
                                     shape = RoundedCornerShape(8.dp),
-                                    scaleFactor = 1.1f,
+                                    scaleFactor = 1.0f,
                                     focusRequester = decRowsRequester
                                 ),
                             contentAlignment = Alignment.Center
@@ -1979,7 +1979,7 @@ private fun CustomGridDialog(
                                 .tvFocusableItem(
                                     onClick = { if (tempRows < 5) tempRows++ },
                                     shape = RoundedCornerShape(8.dp),
-                                    scaleFactor = 1.1f,
+                                    scaleFactor = 1.0f,
                                     focusRequester = incRowsRequester
                                 ),
                             contentAlignment = Alignment.Center
@@ -2003,7 +2003,7 @@ private fun CustomGridDialog(
                 modifier = Modifier.tvFocusableItem(
                     onClick = { onConfirm(tempCols, tempRows) },
                     shape = RoundedCornerShape(8.dp),
-                    scaleFactor = 1.05f
+                    scaleFactor = 1.0f
                 )
             ) {
                 Text(
@@ -2021,7 +2021,7 @@ private fun CustomGridDialog(
                 modifier = Modifier.tvFocusableItem(
                     onClick = onDismiss,
                     shape = RoundedCornerShape(8.dp),
-                    scaleFactor = 1.05f
+                    scaleFactor = 1.0f
                 )
             ) {
                 Text(

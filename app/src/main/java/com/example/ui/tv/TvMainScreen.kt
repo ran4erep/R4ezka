@@ -256,8 +256,7 @@ private fun TvSidebarButton(
         modifier = Modifier
             .fillMaxWidth()
             .height(46.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(bgColor)
+            .background(bgColor, RoundedCornerShape(10.dp))
             .onKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_RIGHT) {
                     if (onRight != null) {
@@ -268,7 +267,7 @@ private fun TvSidebarButton(
             }
             .tvFocusableItem(
                 onClick = onClick,
-                scaleFactor = 1.04f,
+                scaleFactor = 1.0f,
                 focusedBorderWidth = 2.dp,
                 shape = RoundedCornerShape(10.dp),
                 focusRequester = focusRequester
@@ -313,11 +312,13 @@ private fun TvAccountButton(
         modifier = Modifier
             .fillMaxWidth()
             .height(48.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (isLoggedIn) CinemaCard.copy(alpha = 0.5f) else Color.Transparent)
+            .background(
+                if (isLoggedIn) CinemaCard.copy(alpha = 0.5f) else Color.Transparent,
+                RoundedCornerShape(10.dp)
+            )
             .tvFocusableItem(
                 onClick = onClick,
-                scaleFactor = 1.04f,
+                scaleFactor = 1.0f,
                 focusedBorderWidth = 2.dp,
                 shape = RoundedCornerShape(10.dp)
             )
@@ -662,7 +663,7 @@ private fun TvCatalogContent(
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(tvGridCols),
                             state = gridState,
-                            contentPadding = PaddingValues(top = 2.dp, bottom = 12.dp),
+                            contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp),
                             horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
                             verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
                             modifier = Modifier
@@ -1260,7 +1261,7 @@ fun <T> TvRezkaDropdown(
                                     triggerRequester.requestFocusSafe()
                                 }
                             },
-                            scaleFactor = 1.02f,
+                            scaleFactor = 1.0f,
                             shape = RoundedCornerShape(6.dp)
                         ),
                     colors = MenuDefaults.itemColors(
@@ -1558,8 +1559,8 @@ private fun TvMovieCard(
             .tvFocusableItem(
                 onClick = onClick,
                 onFocused = onFocused,
-                scaleFactor = if (isUltraDense) 1.04f else if (isDense) 1.05f else 1.08f,
-                focusedBorderWidth = if (isUltraDense) 1.5.dp else if (isDense) 2.dp else 3.dp,
+                scaleFactor = 1.0f,
+                focusedBorderWidth = if (isUltraDense) 1.5.dp else if (isDense) 2.dp else 2.dp,
                 shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp),
                 focusRequester = focusRequester
             )
@@ -1660,11 +1661,10 @@ private fun TvUpdateSidebarItem(
         modifier = Modifier
             .fillMaxWidth()
             .height(46.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(bgColor)
+            .background(bgColor, RoundedCornerShape(10.dp))
             .tvFocusableItem(
                 onClick = onClick,
-                scaleFactor = 1.04f,
+                scaleFactor = 1.0f,
                 focusedBorderWidth = 2.dp,
                 shape = RoundedCornerShape(10.dp)
             )

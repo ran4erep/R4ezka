@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -42,6 +43,8 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -82,24 +85,26 @@ val LocalTvShowCursor = staticCompositionLocalOf { true }
  * Высокопроизводительный мерцающий неоновый ТВ-курсор вокруг выбранного элемента.
  *
  * Архитектурные свойства:
- * 1. Обводка ложится СТРОГО от внешнего края элемента ВГЛУБЬ (inner border),
- *    не выходя наружу ни на пиксель благодаря клипированию и контурному штриху.
- * 2. Никаких лишних внутренних белых полос: цвет строго соответствует focusedBorderColor.
- * 3. Аппаратная отрисовка через drawWithContent (0% лишних LayoutNode, нулевая нагрузка на CPU).
+ * 1. Обводка ложится СТРОГО от внешнего края элемента ВГЛУБЬ (inner stroke):
+ *    внешний край обводки совпадает с краем элемента, а вся толщина уходит внутрь.
+ * 2. Ни одного пикселя не выходит наружу, благодаря чему курсор не обрезается краями контейнеров.
+ * 3. Никаких лишних внутренних белых полос: цвет строго соответствует focusedBorderColor.
+ * 4. Аппаратная отрисовка через drawWithContent (0% лишних LayoutNode, нулевая нагрузка на CPU).
  */
 @Composable
 fun Modifier.tvPulsingFocusBorder(
     isFocused: Boolean,
     focusedBorderColor: Color = CinemaPrimary,
     shape: Shape = RoundedCornerShape(12.dp),
-    baseBorderWidth: Dp = 2.dp
+    baseBorderWidth: Dp = 2.dp,
+    inset: Dp = 1.dp
 ): Modifier {
     if (!isFocused || !LocalTvShowCursor.current) return this
 
     val infiniteTransition = rememberInfiniteTransition(label = "tv_cursor_pulse")
 
     val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.55f,
+        initialValue = 0.65f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 650, easing = FastOutSlowInEasing),
@@ -108,33 +113,47 @@ fun Modifier.tvPulsingFocusBorder(
         label = "cursor_pulse_alpha"
     )
 
-    val pulseWidthExtra by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 0.6f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 650, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "cursor_pulse_width"
-    )
+    return this.drawWithContent {
+        drawContent()
+        val strokePx = baseBorderWidth.toPx()
+        val halfStroke = strokePx / 2f
+        val insetPx = inset.toPx()
+        val pad = insetPx + halfStroke
+        val w = (size.width - 2f * pad).coerceAtLeast(0f)
+        val h = (size.height - 2f * pad).coerceAtLeast(0f)
 
-    val currentWidth = baseBorderWidth + pulseWidthExtra.dp
-
-    return this
-        .clip(shape)
-        .drawWithContent {
-            drawContent()
-            val strokePx = currentWidth.toPx()
-            val outline = shape.createOutline(size, layoutDirection, this)
-            // Обводка удвоенной ширины по внешнему контуру:
-            // внешняя часть срезается clip(shape), а внутренняя толщиной strokePx
-            // ложится строго от внешнего края вглубь элемента.
-            drawOutline(
-                outline = outline,
-                color = focusedBorderColor.copy(alpha = pulseAlpha),
-                style = Stroke(width = strokePx * 2f)
-            )
+        if (w > 0f && h > 0f) {
+            val cursorColor = focusedBorderColor.copy(alpha = pulseAlpha)
+            if (shape is RoundedCornerShape) {
+                val cornerSize = shape.topStart.toPx(size, this)
+                val cornerRadius = (cornerSize - pad).coerceAtLeast(0f)
+                drawRoundRect(
+                    color = cursorColor,
+                    topLeft = Offset(pad, pad),
+                    size = Size(w, h),
+                    cornerRadius = CornerRadius(cornerRadius, cornerRadius),
+                    style = Stroke(width = strokePx)
+                )
+            } else if (shape == CircleShape) {
+                val radius = ((size.minDimension - 2f * pad) / 2f).coerceAtLeast(0f)
+                drawCircle(
+                    color = cursorColor,
+                    radius = radius,
+                    center = center,
+                    style = Stroke(width = strokePx)
+                )
+            } else {
+                translate(left = pad, top = pad) {
+                    val outline = shape.createOutline(Size(w, h), layoutDirection, this)
+                    drawOutline(
+                        outline = outline,
+                        color = cursorColor,
+                        style = Stroke(width = strokePx)
+                    )
+                }
+            }
         }
+    }
 }
 
 /**
@@ -144,13 +163,15 @@ fun Modifier.tvFocusCursor(
     isFocused: Boolean,
     focusedBorderColor: Color = CinemaPrimary,
     shape: Shape = RoundedCornerShape(12.dp),
-    focusedBorderWidth: Dp = 2.dp
+    focusedBorderWidth: Dp = 2.dp,
+    inset: Dp = 1.dp
 ): Modifier = composed {
     this.tvPulsingFocusBorder(
         isFocused = isFocused,
         focusedBorderColor = focusedBorderColor,
         shape = shape,
-        baseBorderWidth = focusedBorderWidth
+        baseBorderWidth = focusedBorderWidth,
+        inset = inset
     )
 }
 
@@ -167,13 +188,14 @@ fun Modifier.tvFocusableItem(
     onClick: () -> Unit,
     onFocused: (() -> Unit)? = null,
     onFocusChanged: ((Boolean) -> Unit)? = null,
-    scaleFactor: Float = 1.06f,
+    scaleFactor: Float = 1.0f,
     focusedBorderColor: Color = CinemaPrimary,
     focusedBorderWidth: Dp = 2.dp,
     shape: Shape = RoundedCornerShape(12.dp),
     focusRequester: FocusRequester? = null,
     lazyListState: LazyListState? = null,
-    targetViewportY: Float = 220f
+    targetViewportY: Float = 220f,
+    inset: Dp = 1.dp
 ): Modifier = composed {
     var isFocused by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }
@@ -262,7 +284,8 @@ fun Modifier.tvFocusableItem(
             isFocused = isFocused,
             focusedBorderColor = focusedBorderColor,
             shape = shape,
-            baseBorderWidth = focusedBorderWidth
+            baseBorderWidth = focusedBorderWidth,
+            inset = inset
         )
 }
 
