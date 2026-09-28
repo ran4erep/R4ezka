@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import com.example.data.CountryFlags
 import com.example.ui.util.rememberSavedLazyListState
 import com.example.ui.haptics.bounceOverscroll
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -200,7 +202,7 @@ fun DetailScreen(
 
     // Trigger loading on start
     LaunchedEffect(item.id) {
-        viewModel.loadDetail(item.url)
+        viewModel.loadDetail(item.url, item)
     }
 
     val activity = context as? Activity
@@ -266,7 +268,7 @@ fun DetailScreen(
     var isDownloadExecuting by remember { mutableStateOf(false) }
     var isActorsExpanded by remember { mutableStateOf(false) }
 
-    val startMediaDownload: (Translator, Int, String, String) -> Unit = { trans, seasonId, epId, quality ->
+    val startMediaDownload: (Translator, Int, String, String, Boolean) -> Unit = { trans, seasonId, epId, quality, isOfflineLibrary ->
         showSeriesDownloadDialog = false
         val currentDetail = (detailState as? DetailState.Success)?.detail
         if (currentDetail != null && !isDownloadExecuting) {
@@ -287,15 +289,28 @@ fun DetailScreen(
                         val chosenIdx = RezkaService.findBestQualityIndex(streams, quality)
                         val stream = streams.getOrNull(chosenIdx) ?: streams.first()
                         val downloadUrl = stream.directMp4Url.ifEmpty { stream.url }
-                        val subtitleText = if (isSeries) "Сезон $seasonId, Серия $epId" else ""
-                        DownloadHelper.downloadStream(
-                            context = context,
-                            title = currentDetail.title,
-                            subtitle = subtitleText,
-                            quality = stream.quality,
-                            translatorName = trans.name,
-                            streamUrl = downloadUrl
-                        )
+                        if (isOfflineLibrary) {
+                            DownloadHelper.downloadToOfflineLibrary(
+                                context = context,
+                                detail = currentDetail,
+                                seasonId = if (isSeries) seasonId else 0,
+                                episodeId = if (isSeries) epId else "",
+                                translator = trans,
+                                quality = stream.quality,
+                                streamUrl = downloadUrl,
+                                repository = viewModel.repository
+                            )
+                        } else {
+                            val subtitleText = if (isSeries) "Сезон $seasonId, Серия $epId" else ""
+                            DownloadHelper.downloadStream(
+                                context = context,
+                                title = currentDetail.title,
+                                subtitle = subtitleText,
+                                quality = stream.quality,
+                                translatorName = trans.name,
+                                streamUrl = downloadUrl
+                            )
+                        }
                     } else {
                         Toast.makeText(context, "Не удалось получить ссылку на файл", Toast.LENGTH_SHORT).show()
                     }
@@ -533,7 +548,10 @@ fun DetailScreen(
                     Spacer(modifier = Modifier.height(20.dp))
 
                     Button(
-                        onClick = handleBack,
+                        onClick = {
+                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                            handleBack()
+                        },
                         colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
@@ -1624,7 +1642,10 @@ fun DetailScreen(
                                 // Кнопка Загрузить сериал (отображается только если сериал уже вышел)
                                 if (detail.isReleased) {
                                     Button(
-                                        onClick = onDownloadClick,
+                                        onClick = {
+                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                            onDownloadClick()
+                                        },
                                         colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
                                         shape = RoundedCornerShape(10.dp),
                                         border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
@@ -1741,6 +1762,7 @@ fun DetailScreen(
                                     if (detail.isReleased) {
                                         Button(
                                             onClick = {
+                                                HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                                 val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
                                                 startPlayback(translator, 0, "")
                                             },
@@ -1785,6 +1807,7 @@ fun DetailScreen(
 
                                     Surface(
                                         onClick = {
+                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                             launchTrailer(
                                                 context = context,
                                                 scope = scope,
@@ -1837,7 +1860,10 @@ fun DetailScreen(
                                 // Кнопка Загрузить фильм (под кнопками "Смотреть" и "Трейлер" - только если фильм уже вышел)
                                 if (detail.isReleased) {
                                     Button(
-                                        onClick = onDownloadClick,
+                                        onClick = {
+                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                            onDownloadClick()
+                                        },
                                         colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
                                         shape = RoundedCornerShape(10.dp),
                                         border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
@@ -2088,6 +2114,7 @@ fun DetailScreen(
                                 if (commentsState.hasMore || commentsState.currentPage < totalPages) {
                                     Button(
                                         onClick = {
+                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                             viewModel.appendNextCommentsPage()
                                         },
                                         enabled = !commentsState.isLoading && !commentsState.isLoadingMore,
@@ -2140,6 +2167,7 @@ fun DetailScreen(
                                         // Кнопка "Назад"
                                         IconButton(
                                             onClick = {
+                                                HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                                 viewModel.loadCommentsPage(commentsState.currentPage - 1); scope.launch { lazyListState.animateScrollToItem(commentsSectionIndex) }
                                             },
                                             enabled = commentsState.currentPage > 1 && !commentsState.isLoading && !commentsState.isLoadingMore
@@ -2172,6 +2200,7 @@ fun DetailScreen(
                                                             RoundedCornerShape(8.dp)
                                                         )
                                                         .clickable(enabled = !isSelected && !commentsState.isLoading) {
+                                                            HapticEngine.get().perform(HapticType.SELECTION)
                                                             viewModel.loadCommentsPage(pageNum); scope.launch { lazyListState.animateScrollToItem(commentsSectionIndex) }
                                                         }
                                                         .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -2190,6 +2219,7 @@ fun DetailScreen(
                                         // Кнопка "Вперёд"
                                         IconButton(
                                             onClick = {
+                                                HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                                 viewModel.loadCommentsPage(commentsState.currentPage + 1); scope.launch { lazyListState.animateScrollToItem(commentsSectionIndex) }
                                             },
                                             enabled = (commentsState.hasMore || commentsState.currentPage < totalPages) && !commentsState.isLoading && !commentsState.isLoadingMore
@@ -2223,7 +2253,10 @@ fun DetailScreen(
             ) {
                 // Плавающая кнопка Назад (слева)
                 IconButton(
-                    onClick = handleBack,
+                    onClick = {
+                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                        handleBack()
+                    },
                     modifier = Modifier
                         .align(Alignment.CenterStart)
                         .size(46.dp)
@@ -2248,6 +2281,7 @@ fun DetailScreen(
                     // Плавающая кнопка "Поделиться"
                     IconButton(
                         onClick = {
+                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
                             val shareUrl = RezkaService.buildShareUrl(
                                 itemUrl = item.url,
                                 translatorId = selectedTranslator?.id
@@ -2299,7 +2333,10 @@ fun DetailScreen(
                             if (isSeries) "Подписаться на новые серии" else "Уведомить о выходе фильма"
                         }
                         IconButton(
-                            onClick = onToggleSubscriptionClick,
+                            onClick = {
+                                HapticEngine.get().perform(HapticType.CONFIRM)
+                                onToggleSubscriptionClick()
+                            },
                             modifier = Modifier
                                 .size(46.dp)
                                 .background(Color.Black.copy(alpha = 0.65f), CircleShape)
@@ -2321,7 +2358,10 @@ fun DetailScreen(
 
                     // Плавающая кнопка В избранное (справа)
                     IconButton(
-                        onClick = { viewModel.toggleFavorite(item, isFavorite) },
+                        onClick = {
+                            HapticEngine.get().perform(HapticType.CONFIRM)
+                            viewModel.toggleFavorite(item, isFavorite)
+                        },
                         modifier = Modifier
                             .size(46.dp)
                             .background(Color.Black.copy(alpha = 0.65f), CircleShape)
@@ -2467,6 +2507,7 @@ fun DetailScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = {
+                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
                         pendingStreamsForDialog = null
                         if (activePlayerStreams == null) {
                             isPlayerOpen = false
@@ -2714,6 +2755,7 @@ fun DetailScreen(
         ) {
             FloatingActionButton(
                 onClick = {
+                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
                     scope.launch {
                         if (commentsSectionIndex >= 0) {
                             lazyListState.animateScrollToItem(commentsSectionIndex)

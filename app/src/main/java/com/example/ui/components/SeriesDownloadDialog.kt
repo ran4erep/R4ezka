@@ -7,7 +7,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,6 +31,8 @@ import com.example.data.Translator
 import com.example.ui.theme.*
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusableItem
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 
 @Composable
 fun MediaDownloadDialog(
@@ -38,7 +43,7 @@ fun MediaDownloadDialog(
     effectiveSeasons: List<Season>,
     defaultQuality: String,
     onDismiss: () -> Unit,
-    onDownload: (translator: Translator, seasonId: Int, episodeId: String, quality: String) -> Unit
+    onDownload: (translator: Translator, seasonId: Int, episodeId: String, quality: String, isOfflineLibrary: Boolean) -> Unit
 ) {
     val isSeries = detail.type == RezkaType.SERIES
 
@@ -463,60 +468,133 @@ fun MediaDownloadDialog(
                         }
                     }
                 }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // 5. Кнопки действий прямо внутри контента для идеальной вёрстки
+                Spacer(modifier = Modifier.height(6.dp))
+
+                var downloadSuccessToast by remember { mutableStateOf<String?>(null) }
+                LaunchedEffect(downloadSuccessToast) {
+                    if (downloadSuccessToast != null) {
+                        kotlinx.coroutines.delay(2500)
+                        downloadSuccessToast = null
+                    }
+                }
+
+                if (downloadSuccessToast != null) {
+                    Surface(
+                        color = CinemaPrimary.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(8.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = downloadSuccessToast!!,
+                            color = CinemaPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                val performDownload: (Boolean) -> Unit = { isOfflineLib ->
+                    HapticEngine.get().perform(HapticType.CONFIRM)
                     onDownload(
                         selectedTranslator,
                         if (isSeries) selectedSeasonId else 0,
                         if (isSeries) selectedEpisodeId else "",
-                        selectedQuality
+                        selectedQuality,
+                        isOfflineLib
                     )
+                    downloadSuccessToast = if (isOfflineLib) "✓ Добавлено в оффлайн библиотеку" else "✓ Загрузка начата"
+                }
+
+                // Кнопка 1: "Скачать в оффлайн библиотеку"
+                OutlinedButton(
+                    onClick = { performDownload(true) },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CinemaTextWhite),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .tvFocusableItem(
+                            onClick = { performDownload(true) },
+                            shape = RoundedCornerShape(8.dp),
+                            scaleFactor = 1.0f
+                        )
+                        .testTag("download_offline_library_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CloudOff,
+                        contentDescription = "Скачать в оффлайн библиотеку",
+                        modifier = Modifier.size(18.dp),
+                        tint = CinemaPrimary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Скачать в оффлайн библиотеку",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                // Кнопка 2: "Скачать" (обычный файл)
+                OutlinedButton(
+                    onClick = { performDownload(false) },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CinemaTextWhite),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .tvFocusableItem(
+                            onClick = { performDownload(false) },
+                            shape = RoundedCornerShape(8.dp),
+                            scaleFactor = 1.0f
+                        )
+                        .testTag("download_regular_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = "Обычное скачивание",
+                        modifier = Modifier.size(18.dp),
+                        tint = CinemaPrimary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Скачать",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(
+                onClick = {
+                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                    onDismiss()
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
                 shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.textButtonColors(contentColor = CinemaTextGray),
                 modifier = Modifier
+                    .fillMaxWidth()
                     .tvFocusableItem(
                         onClick = {
-                            onDownload(
-                                selectedTranslator,
-                                if (isSeries) selectedSeasonId else 0,
-                                if (isSeries) selectedEpisodeId else "",
-                                selectedQuality
-                            )
+                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                            onDismiss()
                         },
                         shape = RoundedCornerShape(8.dp),
                         scaleFactor = 1.0f
                     )
-                    .testTag("download_confirm_button")
             ) {
-                Icon(
-                    imageVector = Icons.Default.Download,
-                    contentDescription = "Скачать",
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Скачать",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.textButtonColors(contentColor = CinemaTextGray),
-                modifier = Modifier.tvFocusableItem(
-                    onClick = onDismiss,
-                    shape = RoundedCornerShape(8.dp),
-                    scaleFactor = 1.0f
-                )
-            ) {
-                Text(text = "Отмена", fontSize = 14.sp)
+                Text(text = "Закрыть", fontSize = 14.sp, fontWeight = FontWeight.Medium)
             }
         }
     )
@@ -531,7 +609,7 @@ fun SeriesDownloadDialog(
     effectiveSeasons: List<Season>,
     defaultQuality: String,
     onDismiss: () -> Unit,
-    onDownload: (translator: Translator, seasonId: Int, episodeId: String, quality: String) -> Unit
+    onDownload: (translator: Translator, seasonId: Int, episodeId: String, quality: String, isOfflineLibrary: Boolean) -> Unit
 ) {
     MediaDownloadDialog(
         detail = detail,

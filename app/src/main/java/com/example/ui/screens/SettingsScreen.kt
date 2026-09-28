@@ -51,6 +51,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.R
+import com.example.data.DownloadHelper
+import com.example.data.OfflineMediaEntity
 import com.example.data.RezkaService
 import com.example.data.isMovie
 import com.example.ui.RezkaViewModel
@@ -97,9 +99,13 @@ fun SettingsScreen(
     var isPlaybackExpanded by remember { mutableStateOf(false) }
     var isTvExpanded by remember { mutableStateOf(false) }
     var isSubscriptionsExpanded by remember { mutableStateOf(false) }
+    var isOfflineExpanded by remember { mutableStateOf(false) }
 
     val subscriptions by viewModel.subscriptions.collectAsState()
     val isCheckingSeriesUpdates by viewModel.isCheckingSeriesUpdates.collectAsState()
+    val offlineMedia by viewModel.offlineMedia.collectAsState()
+    val totalOfflineBytes by viewModel.totalOfflineSizeBytes.collectAsState()
+    var showClearOfflineDialog by remember { mutableStateOf(false) }
 
     var tvModeDropdownExpanded by remember { mutableStateOf(false) }
     var playerDropdownExpanded by remember { mutableStateOf(false) }
@@ -121,6 +127,10 @@ fun SettingsScreen(
     val subscriptionsArrowRotation by animateFloatAsState(
         targetValue = if (isSubscriptionsExpanded) 180f else 0f,
         label = "subscriptionsArrowRotation"
+    )
+    val offlineArrowRotation by animateFloatAsState(
+        targetValue = if (isOfflineExpanded) 180f else 0f,
+        label = "offlineArrowRotation"
     )
 
     Column(
@@ -1034,7 +1044,10 @@ fun SettingsScreen(
 
                             Switch(
                                 checked = autoNextEpisode,
-                                onCheckedChange = { viewModel.setAutoNextEpisode(it) },
+                                onCheckedChange = {
+                                    HapticEngine.get().perform(HapticType.TOGGLE)
+                                    viewModel.setAutoNextEpisode(it)
+                                },
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = CinemaTextWhite,
                                     checkedTrackColor = CinemaPrimary,
@@ -1406,10 +1419,10 @@ fun SettingsScreen(
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = CinemaDark),
-            border = BorderStroke(1.dp, CinemaMuted.copy(alpha = 0.25f)),
             modifier = Modifier
                 .fillMaxWidth()
                 .animateContentSize()
+                .testTag("subscriptions_category_card")
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 // Header аккордеона
@@ -1421,7 +1434,7 @@ fun SettingsScreen(
                             shape = RoundedCornerShape(16.dp),
                             scaleFactor = 1.0f
                         )
-                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                        .padding(16.dp)
                         .testTag("settings_accordion_subscriptions"),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -1433,8 +1446,7 @@ fun SettingsScreen(
                         Box(
                             modifier = Modifier
                                 .size(36.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(CinemaMuted.copy(alpha = 0.2f)),
+                                .background(CinemaMuted.copy(alpha = 0.2f), RoundedCornerShape(10.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
@@ -1447,11 +1459,10 @@ fun SettingsScreen(
 
                         Column {
                             Text(
-                                text = "ОТСЛЕЖИВАНИЕ СЕРИЙ",
-                                fontSize = 14.sp,
+                                text = "Отслеживание серий",
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = CinemaTextWhite,
-                                letterSpacing = 1.sp
+                                color = CinemaTextWhite
                             )
                             Text(
                                 text = if (subscriptions.isEmpty()) "Нет активных подписок" else "Активных подписок: ${subscriptions.size}",
@@ -1687,6 +1698,333 @@ fun SettingsScreen(
                     viewModel.setCardGridMode(newMode)
                     Toast.makeText(context, "Сетка: $newMode", Toast.LENGTH_SHORT).show()
                     showCustomGridDialog = false
+                }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ==========================================
+        // КАТЕГОРИЯ: ОФФЛАЙН БИБЛИОТЕКА
+        // ==========================================
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = CinemaDark),
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize()
+                .testTag("offline_category_card")
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // Header аккордеона
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .tvFocusableItem(
+                            onClick = {
+                                HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                isOfflineExpanded = !isOfflineExpanded
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            scaleFactor = 1.0f
+                        )
+                        .padding(16.dp)
+                        .testTag("settings_accordion_offline"),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(CinemaMuted.copy(alpha = 0.2f), RoundedCornerShape(10.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CloudOff,
+                                contentDescription = null,
+                                tint = CinemaTextGray,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Column {
+                            Text(
+                                text = "Оффлайн библиотека",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = CinemaTextWhite
+                            )
+                            val computedTotalBytes = remember(offlineMedia) {
+                                offlineMedia.sumOf { entity ->
+                                    if (entity.fileSizeBytes > 0) entity.fileSizeBytes
+                                    else {
+                                        val f = java.io.File(entity.videoPath)
+                                        if (f.exists()) f.length() else 0L
+                                    }
+                                }
+                            }
+                            Text(
+                                text = if (offlineMedia.isEmpty()) "Оффлайн библиотека пуста"
+                                       else "${offlineMedia.size} ${if (offlineMedia.size == 1) "файл" else "файлов"} • ${DownloadHelper.formatFileSize(computedTotalBytes)}",
+                                fontSize = 11.sp,
+                                color = CinemaTextGray,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = CinemaTextGray,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .rotate(offlineArrowRotation)
+                    )
+                }
+
+                // Тело аккордеона
+                AnimatedVisibility(
+                    visible = isOfflineExpanded,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
+                    ) {
+                        HorizontalDivider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        if (offlineMedia.isEmpty()) {
+                            Text(
+                                text = "Оффлайн библиотека пуста",
+                                color = CinemaTextGray,
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        } else {
+                            val computedTotalBytes = remember(offlineMedia) {
+                                offlineMedia.sumOf { entity ->
+                                    if (entity.fileSizeBytes > 0) entity.fileSizeBytes
+                                    else {
+                                        val f = java.io.File(entity.videoPath)
+                                        if (f.exists()) f.length() else 0L
+                                    }
+                                }
+                            }
+                            // Кнопка очистки всей библиотеки
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Всего занято: ${DownloadHelper.formatFileSize(computedTotalBytes)}",
+                                    fontSize = 12.sp,
+                                    color = CinemaTextWhite,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+
+                                TextButton(
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.WARNING)
+                                        showClearOfflineDialog = true
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFFF5252)),
+                                    modifier = Modifier.tvFocusableItem(
+                                        onClick = {
+                                            HapticEngine.get().perform(HapticType.WARNING)
+                                            showClearOfflineDialog = true
+                                        }
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DeleteSweep,
+                                        contentDescription = "Очистить библиотеку",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Очистить всё", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // Список скачанных файлов
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                offlineMedia.forEach { entity ->
+                                    val isSeries = entity.type == "SERIES"
+                                    val subText = if (isSeries) {
+                                        "Сезон ${entity.season}, Серия ${entity.episode} • ${entity.quality} • ${entity.translatorName}"
+                                    } else {
+                                        listOfNotNull(
+                                            entity.year.ifEmpty { null },
+                                            entity.quality.ifEmpty { null },
+                                            entity.translatorName.ifEmpty { null }
+                                        ).joinToString(" • ")
+                                    }
+                                    val actualFileSize = remember(entity.videoPath, entity.fileSizeBytes) {
+                                        if (entity.fileSizeBytes > 0) entity.fileSizeBytes
+                                        else {
+                                            val f = java.io.File(entity.videoPath)
+                                            if (f.exists()) f.length() else 0L
+                                        }
+                                    }
+
+                                    Card(
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                                        border = BorderStroke(1.dp, CinemaMuted.copy(alpha = 0.25f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            // Превью постера
+                                            val posterModel = remember(entity.localPosterPath, entity.imageUrl) {
+                                                if (entity.localPosterPath.isNotEmpty()) {
+                                                    java.io.File(entity.localPosterPath)
+                                                } else {
+                                                    entity.imageUrl
+                                                }
+                                            }
+                                            AsyncImage(
+                                                model = posterModel,
+                                                contentDescription = entity.title,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier
+                                                    .size(width = 44.dp, height = 62.dp)
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(CinemaCard)
+                                            )
+
+                                            Spacer(modifier = Modifier.width(12.dp))
+
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = entity.title,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = CinemaTextWhite,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    text = subText,
+                                                    fontSize = 11.sp,
+                                                    color = CinemaPrimary,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    text = DownloadHelper.formatFileSize(actualFileSize),
+                                                    fontSize = 11.sp,
+                                                    color = CinemaTextGray
+                                                )
+                                            }
+
+                                            Spacer(modifier = Modifier.width(8.dp))
+
+                                             // Кнопка удаления файла
+                                            IconButton(
+                                                onClick = {
+                                                    HapticEngine.get().perform(HapticType.WARNING)
+                                                    viewModel.deleteOfflineMedia(entity)
+                                                    Toast.makeText(context, "Файл удален", Toast.LENGTH_SHORT).show()
+                                                },
+                                                modifier = Modifier
+                                                    .size(36.dp)
+                                                    .tvFocusableItem(
+                                                        onClick = {
+                                                            HapticEngine.get().perform(HapticType.WARNING)
+                                                            viewModel.deleteOfflineMedia(entity)
+                                                            Toast.makeText(context, "Файл удален", Toast.LENGTH_SHORT).show()
+                                                        },
+                                                        shape = CircleShape
+                                                    )
+                                                    .testTag("offline_delete_${entity.id}")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.DeleteOutline,
+                                                    contentDescription = "Удалить файл",
+                                                    tint = Color(0xFFFF5252),
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Диалог подтверждения очистки всей библиотеки
+        if (showClearOfflineDialog) {
+            AlertDialog(
+                onDismissRequest = { showClearOfflineDialog = false },
+                containerColor = CinemaDark,
+                title = {
+                    Text(
+                        text = "Очистить библиотеку?",
+                        color = CinemaTextWhite,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Все сохраненные фильмы и серии (${offlineMedia.size} шт.) будут удалены из памяти устройства.",
+                        color = CinemaTextGray,
+                        fontSize = 14.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            HapticEngine.get().perform(HapticType.WARNING)
+                            viewModel.clearOfflineLibrary()
+                            showClearOfflineDialog = false
+                            Toast.makeText(context, "Оффлайн библиотека очищена", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252)),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.tvFocusableItem(
+                            onClick = {
+                                HapticEngine.get().perform(HapticType.WARNING)
+                                viewModel.clearOfflineLibrary()
+                                showClearOfflineDialog = false
+                                Toast.makeText(context, "Оффлайн библиотека очищена", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    ) {
+                        Text("Удалить всё", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                            showClearOfflineDialog = false
+                        },
+                        modifier = Modifier.tvFocusableItem(onClick = { showClearOfflineDialog = false })
+                    ) {
+                        Text("Отмена", color = CinemaTextGray)
+                    }
                 }
             )
         }

@@ -179,7 +179,10 @@ fun AuthDialog(
                     )
                     var closeBtnFocused by remember { mutableStateOf(false) }
                     IconButton(
-                        onClick = onDismiss,
+                        onClick = {
+                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                            onDismiss()
+                        },
                         modifier = Modifier
                             .size(32.dp)
                             .onFocusChanged { closeBtnFocused = it.isFocused }
@@ -207,12 +210,18 @@ fun AuthDialog(
                             modifier = Modifier
                                 .onFocusChanged { avatarFocused = it.isFocused }
                                 .tvPulsingFocusBorder(isFocused = avatarFocused, shape = CircleShape)
-                                .clickable { showAvatarPicker = true }
+                                .clickable {
+                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                    showAvatarPicker = true
+                                }
                         ) {
                             UserAvatar(
                                 avatar = currentUserAvatar,
                                 size = 58.dp,
-                                onClick = { showAvatarPicker = true }
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                    showAvatarPicker = true
+                                }
                             )
                             PencilAvatarBadge(
                                 size = 22.dp,
@@ -273,6 +282,7 @@ fun AuthDialog(
                     var logoutBtnFocused by remember { mutableStateOf(false) }
                     Button(
                         onClick = {
+                            HapticEngine.get().perform(HapticType.CONFIRM)
                             viewModel.logout()
                             Toast.makeText(context, "Вы вышли из аккаунта", Toast.LENGTH_SHORT).show()
                             onDismiss()
@@ -307,6 +317,7 @@ fun AuthDialog(
                                 .onFocusChanged { loginTabFocused = it.isFocused }
                                 .tvPulsingFocusBorder(isFocused = loginTabFocused, shape = RoundedCornerShape(8.dp))
                                 .clickable {
+                                    HapticEngine.get().perform(HapticType.TOGGLE)
                                     isRegisterMode = false
                                     authError = null
                                 }
@@ -329,6 +340,7 @@ fun AuthDialog(
                                 .onFocusChanged { regTabFocused = it.isFocused }
                                 .tvPulsingFocusBorder(isFocused = regTabFocused, shape = RoundedCornerShape(8.dp))
                                 .clickable {
+                                    HapticEngine.get().perform(HapticType.TOGGLE)
                                     isRegisterMode = true
                                     authError = null
                                 }
@@ -353,14 +365,20 @@ fun AuthDialog(
                                 .fillMaxWidth()
                                 .onFocusChanged { regAvatarFocused = it.isFocused }
                                 .tvPulsingFocusBorder(isFocused = regAvatarFocused, shape = RoundedCornerShape(12.dp))
-                                .clickable { showAvatarPicker = true }
+                                .clickable {
+                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                    showAvatarPicker = true
+                                }
                                 .padding(6.dp)
                         ) {
                             Box(contentAlignment = Alignment.BottomEnd) {
                                 UserAvatar(
                                     avatar = registerAvatar,
                                     size = 60.dp,
-                                    onClick = { showAvatarPicker = true }
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                        showAvatarPicker = true
+                                    }
                                 )
                                 PencilAvatarBadge(
                                     size = 22.dp,
@@ -405,7 +423,10 @@ fun AuthDialog(
                         trailingIcon = {
                             var passVisFocused by remember { mutableStateOf(false) }
                             IconButton(
-                                onClick = { passwordVisible = !passwordVisible },
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.TOGGLE)
+                                    passwordVisible = !passwordVisible
+                                },
                                 modifier = Modifier
                                     .size(32.dp)
                                     .onFocusChanged { passVisFocused = it.isFocused }
@@ -437,7 +458,10 @@ fun AuthDialog(
                             trailingIcon = {
                                 var confVisFocused by remember { mutableStateOf(false) }
                                 IconButton(
-                                    onClick = { confirmPasswordVisible = !confirmPasswordVisible },
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.TOGGLE)
+                                        confirmPasswordVisible = !confirmPasswordVisible
+                                    },
                                     modifier = Modifier
                                         .size(32.dp)
                                         .onFocusChanged { confVisFocused = it.isFocused }
@@ -472,6 +496,7 @@ fun AuthDialog(
                     var submitBtnFocused by remember { mutableStateOf(false) }
                     Button(
                         onClick = {
+                            HapticEngine.get().perform(HapticType.CONFIRM)
                             val user = loginInput.trim()
                             val pass = passwordInput
                             if (user.isBlank() || pass.isBlank()) {
@@ -544,6 +569,7 @@ fun AuthDialog(
                     var switchBtnFocused by remember { mutableStateOf(false) }
                     TextButton(
                         onClick = {
+                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
                             isRegisterMode = !isRegisterMode
                             authError = null
                         },

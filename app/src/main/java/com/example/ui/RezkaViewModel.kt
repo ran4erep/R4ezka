@@ -63,7 +63,8 @@ data class MovieCommentsState(
 data class ScrollPosition(val index: Int = 0, val offset: Int = 0)
 
 class RezkaViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository = (application as RezkaApplication).repository
+    val repository = (application as RezkaApplication).repository
+    val isOnline: StateFlow<Boolean> = NetworkMonitor.isOnline
 
     // Store for saving scroll positions across screen orientation changes and UI mode switches
     private val scrollPositions = java.util.concurrent.ConcurrentHashMap<String, ScrollPosition>()
@@ -119,6 +120,16 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     val subscriptions: StateFlow<List<SeriesSubscriptionEntity>> = repository.subscriptions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val offlineMedia: StateFlow<List<OfflineMediaEntity>> = repository.offlineMedia
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val totalOfflineSizeBytes: StateFlow<Long> = repository.getTotalOfflineSizeBytes()
+        .map { it ?: 0L }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+
+    val offlineCount: StateFlow<Int> = repository.getOfflineCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     private val _isCheckingSeriesUpdates = MutableStateFlow(false)
     val isCheckingSeriesUpdates: StateFlow<Boolean> = _isCheckingSeriesUpdates.asStateFlow()
@@ -409,7 +420,17 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             searchHistoryPrefs.edit().putString("recent_queries", syncedList.joinToString("\u0000")).apply()
         }
 
-        if (!RezkaService.isFirstLaunchAuditDone()) {
+        viewModelScope.launch {
+            NetworkMonitor.isOnline.collect { online ->
+                if (!online) {
+                    loadOfflineCatalog()
+                }
+            }
+        }
+
+        if (!NetworkMonitor.isOnline.value) {
+            loadOfflineCatalog()
+        } else if (!RezkaService.isFirstLaunchAuditDone()) {
             startMirrorAudit(isFirstLaunch = true)
         } else {
             // Load default catalog (Movies) on startup
@@ -536,6 +557,11 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             _yearsList.value = cachedYears
         }
 
+        if (!NetworkMonitor.isOnline.value) {
+            loadOfflineCatalog()
+            return
+        }
+
         if (forceRefresh || loadedMap.isEmpty()) {
             loadedMap.clear()
             _catalogState.value = CatalogState.Loading
@@ -573,7 +599,164 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                _catalogState.value = CatalogState.Error(e.message ?: "Неизвестная ошибка")
+                NetworkMonitor.handleNetworkException(e)
+                if (!NetworkMonitor.isOnline.value) {
+                    loadOfflineCatalog()
+                } else {
+                    _catalogState.value = CatalogState.Error(e.message ?: "Неизвестная ошибка")
+                }
+            }
+        }
+    }
+
+    /**
+     * Загружает локальный оффлайн каталог из сохраненных файлов с поддержкой фильтров и поиска
+     */
+    fun loadOfflineCatalog(forceRefresh: Boolean = false) {
+        paginationJob?.cancel()
+        catalogJob?.cancel()
+        searchJob?.cancel()
+        _isEndReached.value = true
+        _isLoadingMore.value = false
+
+        if (forceRefresh || _catalogState.value !is CatalogState.Success) {
+            _catalogState.value = CatalogState.Loading
+        }
+
+        catalogJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val allEntities = repository.getAllOfflineMediaList()
+                val query = searchQuery.trim()
+
+                if (allEntities.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        _catalogState.value = CatalogState.Success(emptyList())
+                    }
+                    return@launch
+                }
+
+                // Фильтрация по категории, поиску, жанру, году, стране
+                val filteredByCategory = allEntities.filter { entity ->
+                    // 1. Категория
+                    val matchType = when (_currentType.value) {
+                        RezkaType.MOVIE -> entity.type.equals("MOVIE", ignoreCase = true) || entity.type.contains("Фильм", ignoreCase = true)
+                        RezkaType.SERIES -> entity.type.equals("SERIES", ignoreCase = true) || entity.type.contains("Сериал", ignoreCase = true)
+                        RezkaType.ANIME -> entity.type.equals("ANIME", ignoreCase = true) || entity.type.contains("Аниме", ignoreCase = true)
+                        RezkaType.CARTOON -> entity.type.equals("CARTOON", ignoreCase = true) || entity.type.contains("Мульт", ignoreCase = true)
+                        RezkaType.COLLECTIONS -> true
+                    }
+                    if (!matchType) return@filter false
+
+                    // 2. Поиск
+                    if (query.isNotEmpty()) {
+                        val matchSearch = entity.title.contains(query, ignoreCase = true) ||
+                                entity.description.contains(query, ignoreCase = true) ||
+                                entity.translatorName.contains(query, ignoreCase = true) ||
+                                entity.genres.contains(query, ignoreCase = true)
+                        if (!matchSearch) return@filter false
+                    }
+
+                    // 3. Жанр
+                    if (_currentGenre.value.isNotEmpty()) {
+                        if (!entity.genres.contains(_currentGenre.value, ignoreCase = true)) return@filter false
+                    }
+
+                    // 4. Год
+                    if (_currentYear.value.isNotEmpty()) {
+                        if (entity.year != _currentYear.value) return@filter false
+                    }
+
+                    // 5. Страна
+                    if (_currentCountry.value.isNotEmpty()) {
+                        if (!entity.country.contains(_currentCountry.value, ignoreCase = true)) return@filter false
+                    }
+
+                    true
+                }
+
+                // Фолбэк: если категория отфильтровала все элементы, но оффлайн записи существуют и пользователь не вводил специфичный поиск/фильтр,
+                // отображаем все оффлайн элементы, чтобы оффлайн библиотека не выглядела пустой.
+                val finalEntities = if (filteredByCategory.isEmpty() && query.isEmpty() && _currentGenre.value.isEmpty() && _currentYear.value.isEmpty() && _currentCountry.value.isEmpty()) {
+                    allEntities
+                } else {
+                    filteredByCategory
+                }
+
+                // Группировка по itemId (для сериалов с несколькими сериями)
+                val grouped = finalEntities.groupBy { if (it.itemId.isNotBlank()) it.itemId else it.id }
+                val items = grouped.map { (itemId, list) ->
+                    val first = list.first()
+                    val isSeries = first.type.equals("SERIES", ignoreCase = true) || list.size > 1 || first.season > 0
+                    val count = list.size
+                    val totalSize = list.sumOf { entity ->
+                        if (entity.fileSizeBytes > 0) entity.fileSizeBytes
+                        else {
+                            val f = java.io.File(entity.videoPath)
+                            if (f.exists()) f.length() else 0L
+                        }
+                    }
+                    val sizeFormatted = DownloadHelper.formatFileSize(totalSize)
+                    val sub = if (isSeries) {
+                        "Скачано: $count сер. • $sizeFormatted"
+                    } else {
+                        listOfNotNull(
+                            first.year.ifEmpty { null },
+                            first.quality.ifEmpty { null },
+                            sizeFormatted
+                        ).joinToString(" • ")
+                    }
+
+                    val imageUri = if (first.localPosterPath.isNotEmpty() && java.io.File(first.localPosterPath).exists()) {
+                        "file://${first.localPosterPath}"
+                    } else {
+                        first.imageUrl
+                    }
+
+                    val rezkaType = try {
+                        RezkaType.valueOf(first.type.uppercase())
+                    } catch (_: Exception) {
+                        if (isSeries) RezkaType.SERIES else RezkaType.MOVIE
+                    }
+
+                    RezkaItem(
+                        id = itemId,
+                        title = first.title,
+                        subtitle = sub,
+                        imageUrl = imageUri,
+                        rating = "Оффлайн",
+                        url = "",
+                        type = rezkaType
+                    )
+                }
+
+                // Обновляем фильтры (жанры, года, страны) на основе сохраненных элементов
+                val offlineGenres = allEntities.flatMap { it.genres.split(",") }
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .distinct()
+                    .map { GenreItem(it, it) }
+                _genresList.value = listOf(GenreItem("Все жанры", "")) + offlineGenres
+
+                val offlineYears = allEntities.map { it.year }
+                    .filter { it.isNotEmpty() }
+                    .distinct()
+                    .sortedDescending()
+                    .map { YearItem(it, it) }
+                _yearsList.value = listOf(YearItem("Все года", "")) + offlineYears
+
+                val offlineCountries = allEntities.map { it.country }
+                    .filter { it.isNotEmpty() }
+                    .distinct()
+                    .map { CountryItem(it, it) }
+                _countriesList.value = listOf(CountryItem("Все страны", "")) + offlineCountries
+
+                withContext(Dispatchers.Main) {
+                    _catalogState.value = CatalogState.Success(items)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _catalogState.value = CatalogState.Success(emptyList())
+                }
             }
         }
     }
@@ -730,6 +913,11 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        if (!NetworkMonitor.isOnline.value) {
+            loadOfflineCatalog()
+            return
+        }
+
         if (query.isBlank()) {
             lastCommittedQuery = ""
             loadCatalog(_currentType.value, forceRefresh = true)
@@ -747,7 +935,12 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 _catalogState.value = CatalogState.Success(results)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                _catalogState.value = CatalogState.Error(e.message ?: "Ошибка поиска")
+                NetworkMonitor.handleNetworkException(e)
+                if (!NetworkMonitor.isOnline.value) {
+                    loadOfflineCatalog()
+                } else {
+                    _catalogState.value = CatalogState.Error(e.message ?: "Ошибка поиска")
+                }
             }
         }
     }
@@ -758,12 +951,26 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Loads detailed info of selected item
      */
-    fun loadDetail(url: String) {
+    fun loadDetail(url: String, fallbackItem: RezkaItem? = null) {
         commitSearchQuery()
         _detailState.value = DetailState.Loading
         _commentsState.value = MovieCommentsState(isLoading = true)
         commentsPageCache.clear()
         viewModelScope.launch {
+            val offlineItemId = fallbackItem?.id ?: extractIdFromUrl(url)
+            val offlineEntities = if (offlineItemId.isNotEmpty()) {
+                repository.getOfflineMediaByItemId(offlineItemId)
+            } else emptyList()
+
+            if (!NetworkMonitor.isOnline.value || url.isBlank()) {
+                if (offlineEntities.isNotEmpty()) {
+                    val offlineDetail = buildOfflineDetail(offlineEntities, fallbackItem)
+                    _detailState.value = DetailState.Success(offlineDetail)
+                    _commentsState.value = MovieCommentsState(isLoading = false)
+                    return@launch
+                }
+            }
+
             try {
                 val detail = RezkaService.getDetail(url)
                 _detailState.value = DetailState.Success(detail)
@@ -814,8 +1021,111 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                _detailState.value = DetailState.Error("Что-то пошло не так :(")
-                _commentsState.value = MovieCommentsState(isLoading = false)
+                NetworkMonitor.handleNetworkException(e)
+                if (offlineEntities.isNotEmpty()) {
+                    val offlineDetail = buildOfflineDetail(offlineEntities, fallbackItem)
+                    _detailState.value = DetailState.Success(offlineDetail)
+                    _commentsState.value = MovieCommentsState(isLoading = false)
+                } else {
+                    val errorMsg = if (!NetworkMonitor.isOnline.value) {
+                        "Этот фильм не сохранён в оффлайн библиотеке. Подключитесь к интернету для просмотра онлайн."
+                    } else {
+                        "Что-то пошло не так :("
+                    }
+                    _detailState.value = DetailState.Error(errorMsg)
+                    _commentsState.value = MovieCommentsState(isLoading = false)
+                }
+            }
+        }
+    }
+
+    private fun extractIdFromUrl(url: String): String {
+        if (url.isBlank()) return ""
+        val match = Regex("""/(\d+)-""").find(url)
+        return match?.groupValues?.get(1) ?: url.substringAfterLast("/").substringBefore(".html")
+    }
+
+    private fun buildOfflineDetail(
+        entities: List<OfflineMediaEntity>,
+        fallbackItem: RezkaItem?
+    ): RezkaDetail {
+        val first = entities.first()
+        val isSeries = first.type == "SERIES"
+        val genresList = if (first.genres.isNotBlank()) first.genres.split(", ").map { it.trim() } else emptyList()
+        val translators = entities.map { it.translatorName }
+            .distinct()
+            .filter { it.isNotBlank() }
+            .mapIndexed { idx, name ->
+                val transId = entities.firstOrNull { it.translatorName == name }?.translatorId?.ifEmpty { idx.toString() } ?: idx.toString()
+                Translator(id = transId, name = name, isDefault = idx == 0)
+            }.ifEmpty {
+                listOf(Translator("0", "Оффлайн", isDefault = true))
+            }
+
+        val seasons = if (isSeries) {
+            entities.groupBy { it.season }.map { (sNum, eps) ->
+                Season(
+                    id = sNum,
+                    name = "Сезон $sNum",
+                    episodes = eps.map { epEntity ->
+                        Episode(
+                            id = epEntity.episode,
+                            name = "Серия ${epEntity.episode}",
+                            seasonId = sNum,
+                            translatorId = epEntity.translatorId
+                        )
+                    }
+                )
+            }.sortedBy { it.id }
+        } else emptyList()
+
+        val posterUrl = if (first.localPosterPath.isNotEmpty()) {
+            "file://${first.localPosterPath}"
+        } else {
+            first.imageUrl.ifEmpty { fallbackItem?.imageUrl ?: "" }
+        }
+
+        val rezkaType = try {
+            RezkaType.valueOf(first.type)
+        } catch (_: Exception) {
+            fallbackItem?.type ?: RezkaType.MOVIE
+        }
+
+        return RezkaDetail(
+            id = first.itemId,
+            title = first.title,
+            originalTitle = "",
+            description = first.description.ifEmpty { "Сохранено в оффлайн библиотеке для автономного просмотра." },
+            imageUrl = posterUrl,
+            year = first.year,
+            releaseDate = first.year,
+            country = first.country,
+            countryFlag = "",
+            genres = genresList,
+            rating = "Оффлайн",
+            ratingInfo = RatingInfo(),
+            type = rezkaType,
+            translators = translators,
+            seasons = seasons,
+            numericPostId = first.itemId,
+            isReleased = true
+        )
+    }
+
+    fun deleteOfflineMedia(entity: OfflineMediaEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            DownloadHelper.deleteOfflineMedia(getApplication(), entity, repository)
+            if (!NetworkMonitor.isOnline.value) {
+                loadOfflineCatalog()
+            }
+        }
+    }
+
+    fun clearOfflineLibrary() {
+        viewModelScope.launch(Dispatchers.IO) {
+            DownloadHelper.clearAllOffline(getApplication(), repository)
+            if (!NetworkMonitor.isOnline.value) {
+                loadOfflineCatalog()
             }
         }
     }
@@ -1441,7 +1751,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Fetches stream URLs for playback
+     * Fetches stream URLs for playback (with offline local fallback)
      */
     suspend fun getStreamUrls(
         itemId: String,
@@ -1450,7 +1760,41 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         season: Int = 0,
         episode: String = ""
     ): List<StreamUrl> {
-        return RezkaService.getStreamUrls(itemId, translatorId, isSeries, season, episode)
+        val offlineList = repository.getOfflineMediaByItemId(itemId)
+        val matchingOffline = if (isSeries) {
+            offlineList.find { it.season == season && it.episode == episode && java.io.File(it.videoPath).exists() }
+                ?: offlineList.find { it.season == season && java.io.File(it.videoPath).exists() }
+                ?: offlineList.firstOrNull { java.io.File(it.videoPath).exists() }
+        } else {
+            offlineList.find { java.io.File(it.videoPath).exists() }
+        }
+
+        if (matchingOffline != null && (!NetworkMonitor.isOnline.value || itemId.startsWith("offline_"))) {
+            return listOf(
+                StreamUrl(
+                    quality = matchingOffline.quality.ifEmpty { "1080p" },
+                    url = "file://${matchingOffline.videoPath}",
+                    directMp4Url = "file://${matchingOffline.videoPath}"
+                )
+            )
+        }
+
+        return try {
+            RezkaService.getStreamUrls(itemId, translatorId, isSeries, season, episode)
+        } catch (e: Exception) {
+            if (matchingOffline != null) {
+                listOf(
+                    StreamUrl(
+                        quality = matchingOffline.quality.ifEmpty { "1080p" },
+                        url = "file://${matchingOffline.videoPath}",
+                        directMp4Url = "file://${matchingOffline.videoPath}"
+                    )
+                )
+            } else {
+                NetworkMonitor.handleNetworkException(e)
+                throw e
+            }
+        }
     }
 
     suspend fun getEpisodesForTranslator(
@@ -1458,7 +1802,50 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         translatorId: String,
         translatorUrl: String = ""
     ): List<Season> {
-        return RezkaService.getEpisodesForTranslator(numericId, translatorId, translatorUrl)
+        if (!NetworkMonitor.isOnline.value) {
+            val offlineList = repository.getOfflineMediaByItemId(numericId)
+            if (offlineList.isNotEmpty()) {
+                return offlineList.groupBy { it.season }.map { (sNum, eps) ->
+                    Season(
+                        id = sNum,
+                        name = "Сезон $sNum",
+                        episodes = eps.map { epEntity ->
+                            Episode(
+                                id = epEntity.episode,
+                                name = "Серия ${epEntity.episode}",
+                                seasonId = sNum,
+                                translatorId = epEntity.translatorId
+                            )
+                        }
+                    )
+                }.sortedBy { it.id }
+            }
+        }
+        return try {
+            RezkaService.getEpisodesForTranslator(numericId, translatorId, translatorUrl)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            NetworkMonitor.handleNetworkException(e)
+            val offlineList = repository.getOfflineMediaByItemId(numericId)
+            if (offlineList.isNotEmpty()) {
+                offlineList.groupBy { it.season }.map { (sNum, eps) ->
+                    Season(
+                        id = sNum,
+                        name = "Сезон $sNum",
+                        episodes = eps.map { epEntity ->
+                            Episode(
+                                id = epEntity.episode,
+                                name = "Серия ${epEntity.episode}",
+                                seasonId = sNum,
+                                translatorId = epEntity.translatorId
+                            )
+                        }
+                    )
+                }.sortedBy { it.id }
+            } else {
+                throw e
+            }
+        }
     }
 
     suspend fun getSavedProgress(itemId: String): WatchHistoryEntity? {

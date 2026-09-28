@@ -27,6 +27,7 @@ class RezkaApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         instance = this
         com.example.ui.haptics.HapticEngine.init(this)
+        com.example.data.NetworkMonitor.init(this)
         RezkaService.init(this)
         FirebaseSyncManager.init(this, repository)
         com.example.data.SeriesUpdateEngine.createNotificationChannel(this)
