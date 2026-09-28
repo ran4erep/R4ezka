@@ -400,19 +400,26 @@ private fun TvCatalogContent(
     isTopScreen: Boolean = true
 ) {
     val gridState = rememberSavedLazyGridState("catalog", viewModel)
-    var lastFocusedIndex by remember { mutableStateOf(0) }
+    var lastFocusedIndex by rememberSaveable { mutableStateOf(viewModel.getTvCatalogFocusedIndex() ?: 0) }
 
     val currentCatalogKey = remember(currentType, currentSection, currentGenre, viewModel.searchQuery) {
         "${currentType.name}_${currentSection.name}_${currentGenre}_${viewModel.searchQuery.trim()}"
     }
     var lastRenderedCatalogKey by rememberSaveable { mutableStateOf(currentCatalogKey) }
 
+    val searchBarFocusRequester = entryFocusRequester
+    val categoryDropdownFocusRequester = remember { FocusRequester() }
+    val sectionDropdownFocusRequester = remember { FocusRequester() }
+    val genreDropdownFocusRequester = remember { FocusRequester() }
+
     LaunchedEffect(currentCatalogKey) {
         if (currentCatalogKey != lastRenderedCatalogKey) {
             lastRenderedCatalogKey = currentCatalogKey
             gridState.scrollToItem(0, 0)
             lastFocusedIndex = 0
+            viewModel.clearTvCatalogFocusedItem()
             viewModel.resetScrollPosition("catalog")
+            searchBarFocusRequester.requestFocusSafe()
         }
     }
 
@@ -420,13 +427,9 @@ private fun TvCatalogContent(
         viewModel.catalogScrollResetEvent.collect {
             gridState.scrollToItem(0, 0)
             lastFocusedIndex = 0
+            viewModel.clearTvCatalogFocusedItem()
         }
     }
-
-    val searchBarFocusRequester = entryFocusRequester
-    val categoryDropdownFocusRequester = remember { FocusRequester() }
-    val sectionDropdownFocusRequester = remember { FocusRequester() }
-    val genreDropdownFocusRequester = remember { FocusRequester() }
 
     val coroutineScope = rememberCoroutineScope()
     val cardGridMode by viewModel.cardGridMode.collectAsState()
@@ -471,11 +474,66 @@ private fun TvCatalogContent(
         }
     }
 
-    // По умолчанию на телевизоре курсор должен стоять на строке поиска
-    LaunchedEffect(Unit) {
-        try {
-            searchBarFocusRequester.requestFocusSafe()
-        } catch (_: Exception) {}
+    // Интеллектуальное восстановление фокуса на ТВ:
+    // Если пользователь вернулся со страницы фильма назад — курсор встает РОВНО на карточку того фильма!
+    // Если сохраненного фильма нет (холодный старт каталога) — курсор встает на строку поиска.
+    var hasRestoredFocus by remember { mutableStateOf(false) }
+
+    LaunchedEffect(catalogState, isTopScreen) {
+        if (!isTopScreen) {
+            hasRestoredFocus = false
+            return@LaunchedEffect
+        }
+        if (hasRestoredFocus) return@LaunchedEffect
+        if (catalogState is CatalogState.Success) {
+            val items = catalogState.items
+            if (items.isNotEmpty()) {
+                val savedItemId = viewModel.getTvCatalogFocusedItemId()
+                val savedIndex = viewModel.getTvCatalogFocusedIndex()
+
+                val targetIndex = when {
+                    savedItemId != null -> {
+                        val idx = items.indexOfFirst { it.id == savedItemId }
+                        if (idx >= 0) idx else savedIndex?.coerceIn(0, items.lastIndex)
+                    }
+                    savedIndex != null -> savedIndex.coerceIn(0, items.lastIndex)
+                    else -> null
+                }
+
+                if (targetIndex != null) {
+                    hasRestoredFocus = true
+                    lastFocusedIndex = targetIndex
+                    try {
+                        gridState.scrollToItem(targetIndex)
+                    } catch (_: Throwable) {}
+
+                    // Плавный опрос готовности Compose узла для гарантированного фокуса
+                    var focused = false
+                    for (attempt in 0..12) {
+                        kotlinx.coroutines.delay(if (attempt == 0) 40L else 60L)
+                        try {
+                            val requester = getFocusRequesterForIndex(targetIndex)
+                            requester.requestFocus()
+                            focused = true
+                            break
+                        } catch (_: Throwable) {}
+                    }
+                    if (!focused) {
+                        try {
+                            searchBarFocusRequester.requestFocusSafe()
+                        } catch (_: Exception) {}
+                    }
+                    return@LaunchedEffect
+                }
+            }
+        }
+
+        if (!hasRestoredFocus) {
+            hasRestoredFocus = true
+            try {
+                searchBarFocusRequester.requestFocusSafe()
+            } catch (_: Exception) {}
+        }
     }
 
     // Пагинация для ТВ-сетки
@@ -639,10 +697,13 @@ private fun TvCatalogContent(
                                     cardHeight = tvCardHeight,
                                     onClick = {
                                         viewModel.commitSearchQuery(searchInput)
+                                        viewModel.setTvCatalogFocusedItem(item.id, index)
+                                        lastFocusedIndex = index
                                         onNavigateToDetail(item)
                                     },
                                     onFocused = {
                                         lastFocusedIndex = index
+                                        viewModel.setTvCatalogFocusedItem(item.id, index)
                                         if (searchInput.isNotBlank()) {
                                             viewModel.commitSearchQuery(searchInput)
                                         }

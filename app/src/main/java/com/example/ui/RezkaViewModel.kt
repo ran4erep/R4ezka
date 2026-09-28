@@ -62,8 +62,6 @@ data class MovieCommentsState(
 
 data class ScrollPosition(val index: Int = 0, val offset: Int = 0)
 
-data class ExternalVideoMedia(val uri: Uri, val title: String)
-
 class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as RezkaApplication).repository
 
@@ -84,10 +82,30 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         scrollPositions.remove(key)
     }
 
+    // Сохранение последнего выбранного / сфокусированного фильма в ТВ-каталоге для возврата фокуса
+    @Volatile
+    private var tvCatalogFocusedItemId: String? = null
+    @Volatile
+    private var tvCatalogFocusedIndex: Int? = null
+
+    fun setTvCatalogFocusedItem(itemId: String?, index: Int?) {
+        tvCatalogFocusedItemId = itemId
+        tvCatalogFocusedIndex = index
+    }
+
+    fun getTvCatalogFocusedItemId(): String? = tvCatalogFocusedItemId
+    fun getTvCatalogFocusedIndex(): Int? = tvCatalogFocusedIndex
+
+    fun clearTvCatalogFocusedItem() {
+        tvCatalogFocusedItemId = null
+        tvCatalogFocusedIndex = null
+    }
+
     private val _catalogScrollResetEvent = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 1)
     val catalogScrollResetEvent: SharedFlow<Unit> = _catalogScrollResetEvent.asSharedFlow()
 
     fun requestCatalogScrollToTop() {
+        clearTvCatalogFocusedItem()
         resetScrollPosition("catalog")
         _catalogScrollResetEvent.tryEmit(Unit)
     }
@@ -337,14 +355,6 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val _pendingDeepLink = MutableStateFlow<ParsedRezkaLink?>(null)
     val pendingDeepLink: StateFlow<ParsedRezkaLink?> = _pendingDeepLink.asStateFlow()
 
-    // External video file or stream playback state (любое видео с телефона)
-    private val _externalVideoToPlay = MutableStateFlow<ExternalVideoMedia?>(null)
-    val externalVideoToPlay: StateFlow<ExternalVideoMedia?> = _externalVideoToPlay.asStateFlow()
-
-    fun clearExternalVideoToPlay() {
-        _externalVideoToPlay.value = null
-    }
-
     private val _isPlayerActive = MutableStateFlow(false)
     val isPlayerActive: StateFlow<Boolean> = _isPlayerActive.asStateFlow()
 
@@ -357,42 +367,6 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         val parsed = RezkaService.parseIntent(intent)
         if (parsed != null) {
             _pendingDeepLink.value = parsed
-            return
-        }
-
-        // Обработка внешних видеофайлов и видеопотоков (воспроизведение любого видео на телефоне)
-        val action = intent.action
-        val dataUri = intent.data
-        val mimeType = intent.type
-
-        val isViewAction = action == Intent.ACTION_VIEW
-        val isVideoMime = mimeType?.startsWith("video/", ignoreCase = true) == true
-        val isVideoScheme = dataUri?.scheme in listOf("content", "file", "http", "https")
-        val isVideoExtension = dataUri?.path?.let { path ->
-            val ext = path.substringAfterLast('.', "").lowercase()
-            ext in listOf("mp4", "mkv", "webm", "m3u8", "avi", "mov", "flv", "3gp", "ts", "m4v")
-        } ?: false
-
-        if (isViewAction && dataUri != null && (isVideoMime || isVideoExtension || dataUri.scheme in listOf("content", "file"))) {
-            val app = getApplication<Application>()
-            var title = "Видео"
-            if (dataUri.scheme == "content") {
-                try {
-                    app.contentResolver.query(dataUri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                        if (cursor.moveToFirst()) {
-                            val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                            if (nameIdx >= 0) {
-                                val name = cursor.getString(nameIdx)
-                                if (!name.isNullOrBlank()) title = name
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
-            if (title == "Видео" && !dataUri.lastPathSegment.isNullOrBlank()) {
-                title = dataUri.lastPathSegment!!.substringAfterLast('/')
-            }
-            _externalVideoToPlay.value = ExternalVideoMedia(dataUri, title)
         }
     }
 

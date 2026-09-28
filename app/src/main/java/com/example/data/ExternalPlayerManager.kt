@@ -163,26 +163,42 @@ object ExternalPlayerManager {
             if (playerKey.startsWith("package:")) {
                 val targetPackage = playerKey.removePrefix("package:").trim()
                 intent.setPackage(targetPackage)
+
+                val resolveInfo = try {
+                    context.packageManager.resolveActivity(intent, 0)
+                } catch (e: Exception) {
+                    null
+                }
+
+                if (resolveInfo == null) {
+                    Log.w(TAG, "Целевой плеер $targetPackage не может открыть поток")
+                    Toast.makeText(context, "Плеер не смог воспроизвести поток", Toast.LENGTH_SHORT).show()
+                    return false
+                }
+
                 try {
                     context.startActivity(intent)
                     return true
                 } catch (e: Exception) {
-                    Log.w(TAG, "Не удалось открыть в плеере $targetPackage, откат к диалогу выбора", e)
-                    intent.setPackage(null)
-                    val chooser = Intent.createChooser(intent, "Воспроизвести в плеере")
-                    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(chooser)
-                    return true
+                    Log.w(TAG, "Не удалось открыть в целевом плеере $targetPackage", e)
+                    Toast.makeText(context, "Плеер не смог воспроизвести поток", Toast.LENGTH_SHORT).show()
+                    return false
                 }
             } else {
                 val chooser = Intent.createChooser(intent, "Воспроизвести в плеере")
                 chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(chooser)
-                return true
+                try {
+                    context.startActivity(chooser)
+                    return true
+                } catch (e: Exception) {
+                    Log.e(TAG, "Ошибка открытия диалога выбора плеера", e)
+                    Toast.makeText(context, "Плеер не смог воспроизвести поток", Toast.LENGTH_SHORT).show()
+                    return false
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка при запуске внешнего плеера", e)
-            Toast.makeText(context, "Не найден подходящий видеоплеер", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Плеер не смог воспроизвести поток", Toast.LENGTH_SHORT).show()
             false
         }
     }

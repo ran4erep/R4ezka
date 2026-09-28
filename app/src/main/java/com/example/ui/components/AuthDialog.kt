@@ -46,6 +46,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
+import com.example.ui.tv.TvRemoteInputField
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvPulsingFocusBorder
 import com.example.ui.tv.TvDetector
@@ -576,95 +577,18 @@ private fun TvAuthTextField(
                 .testTag(testTag)
         )
     } else {
-        var isBoxFocused by remember { mutableStateOf(false) }
-        var isFieldFocused by remember { mutableStateOf(false) }
-        var isEditing by remember { mutableStateOf(false) }
-
-        val focusRequester = remember { FocusRequester() }
-        val keyboardController = LocalSoftwareKeyboardController.current
-
-        LaunchedEffect(isEditing) {
-            if (isEditing) {
-                focusRequester.requestFocusSafe()
-                delay(50)
-                keyboardController?.show()
-            }
-        }
-
-        val isHighlighted = isBoxFocused || isFieldFocused
-
-        Box(
-            modifier = modifier
-                .fillMaxWidth()
-                .onFocusChanged { focusState ->
-                    isBoxFocused = focusState.isFocused
-                }
-                .tvPulsingFocusBorder(
-                    isFocused = isHighlighted,
-                    focusedBorderColor = CinemaPrimary,
-                    shape = RoundedCornerShape(10.dp),
-                    baseBorderWidth = 2.5.dp
-                )
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    isEditing = true
-                }
-                .onKeyEvent { keyEvent ->
-                    if (keyEvent.type == KeyEventType.KeyUp &&
-                        (keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
-                         keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
-                         keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)
-                    ) {
-                        if (!isEditing) {
-                            isEditing = true
-                            true
-                        } else false
-                    } else false
-                }
-        ) {
-            TextField(
-                value = value,
-                onValueChange = onValueChange,
-                placeholder = { Text(placeholderText, color = CinemaMuted) },
-                singleLine = true,
-                visualTransformation = visualTransformation,
-                trailingIcon = trailingIcon,
-                shape = RoundedCornerShape(10.dp),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = CinemaCard,
-                    unfocusedContainerColor = CinemaCard,
-                    focusedTextColor = CinemaTextWhite,
-                    unfocusedTextColor = CinemaTextWhite,
-                    focusedIndicatorColor = if (isEditing) CinemaPrimary else Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    cursorColor = CinemaPrimary
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusProperties { canFocus = isEditing }
-                    .focusRequester(focusRequester)
-                    .onFocusChanged { focusState ->
-                        isFieldFocused = focusState.isFocused
-                        if (!focusState.isFocused && isEditing) {
-                            isEditing = false
-                        }
-                    }
-                    .onPreviewKeyEvent { keyEvent ->
-                        if (keyEvent.type == KeyEventType.KeyUp &&
-                            keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK
-                        ) {
-                            if (isEditing) {
-                                isEditing = false
-                                keyboardController?.hide()
-                                true
-                            } else false
-                        } else false
-                    }
-                    .testTag(testTag)
-            )
-        }
+        TvRemoteInputField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = placeholderText,
+            singleLine = true,
+            visualTransformation = visualTransformation,
+            trailingIcon = trailingIcon,
+            shape = RoundedCornerShape(10.dp),
+            containerColor = CinemaCard,
+            testTag = testTag,
+            modifier = modifier.fillMaxWidth()
+        )
     }
 }
 
