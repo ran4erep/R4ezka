@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.RezkaItem
 import com.example.data.RezkaService
+import com.example.data.SectionType
 import com.example.ui.theme.*
 import com.example.ui.tv.dpadScrollable
 import com.example.ui.tv.requestFocusSafe
@@ -55,19 +56,69 @@ fun ThematicListScreen(
     var isEndReached by remember(url) { mutableStateOf(false) }
     val loadedItems = remember(url) { mutableStateListOf<RezkaItem>() }
 
-    // First load
-    LaunchedEffect(url) {
+    val isCollection = remember(url) { url.contains("/collections/") }
+    val sections = remember {
+        listOf(
+            SectionType.POPULAR,
+            SectionType.LATEST,
+            SectionType.AWAITING,
+            SectionType.WATCHING
+        )
+    }
+    var selectedSection by remember(url) {
+        val initial = if (url.contains("filter=last")) SectionType.LATEST
+        else if (url.contains("filter=soon")) SectionType.AWAITING
+        else if (url.contains("filter=watching")) SectionType.WATCHING
+        else SectionType.POPULAR
+        mutableStateOf(initial)
+    }
+
+    val effectiveUrl = remember(url, selectedSection, isCollection) {
+        if (!isCollection) {
+            url
+        } else {
+            val filterParam = when (selectedSection) {
+                SectionType.POPULAR -> "popular"
+                SectionType.LATEST -> "last"
+                SectionType.AWAITING -> "soon"
+                SectionType.WATCHING -> "watching"
+            }
+            val baseWithoutParams = url.substringBefore("?")
+            val existingParams = if (url.contains("?")) {
+                url.substringAfter("?").split("&")
+                    .filterNot { it.startsWith("filter=") || it.isBlank() }
+                    .joinToString("&")
+            } else ""
+
+            val normalizedBase = if (baseWithoutParams.endsWith("/")) baseWithoutParams else "$baseWithoutParams/"
+            if (existingParams.isNotEmpty()) {
+                "$normalizedBase?filter=$filterParam&$existingParams"
+            } else {
+                "$normalizedBase?filter=$filterParam"
+            }
+        }
+    }
+
+    // Load items when effectiveUrl changes
+    LaunchedEffect(effectiveUrl) {
         state = ThematicState.Loading
         currentPage = 1
         isEndReached = false
         isLoadingMore = false
         loadedItems.clear()
         try {
-            val items = RezkaService.getCustomCatalog(url, 1)
+            val items = RezkaService.getCustomCatalog(effectiveUrl, 1)
+            loadedItems.clear()
             loadedItems.addAll(items)
+            isEndReached = items.size < 32
             state = ThematicState.Success(loadedItems)
         } catch (e: Exception) {
-            state = ThematicState.Error(e.message ?: "Ошибка загрузки")
+            if (e.message?.contains("404") == true || e.message?.contains("не найден", ignoreCase = true) == true) {
+                loadedItems.clear()
+                state = ThematicState.Success(emptyList())
+            } else {
+                state = ThematicState.Error(e.message ?: "Ошибка загрузки")
+            }
         }
     }
 
@@ -78,16 +129,17 @@ fun ThematicListScreen(
         coroutineScope.launch {
             try {
                 val nextPage = currentPage + 1
-                val items = RezkaService.getCustomCatalog(url, nextPage)
+                val items = RezkaService.getCustomCatalog(effectiveUrl, nextPage)
                 val newUniqueItems = items.filterNot { newItem -> loadedItems.any { it.id == newItem.id } }
-                if (newUniqueItems.isEmpty()) {
+                if (newUniqueItems.isEmpty() || items.size < 32) {
                     isEndReached = true
-                } else {
+                }
+                if (newUniqueItems.isNotEmpty()) {
                     loadedItems.addAll(newUniqueItems)
                     currentPage = nextPage
                 }
             } catch (_: Exception) {
-                // Keep existing items intact
+                isEndReached = true
             } finally {
                 isLoadingMore = false
             }
@@ -168,6 +220,29 @@ fun ThematicListScreen(
             )
         )
 
+        // ---- SECTION FILTER (for collections) ----
+        if (isCollection) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RezkaDropdown(
+                    label = "Раздел",
+                    options = sections,
+                    selectedOption = selectedSection,
+                    onOptionSelected = { newSection ->
+                        if (selectedSection != newSection) {
+                            selectedSection = newSection
+                        }
+                    },
+                    getLabel = { it.getDisplayName() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
         // ---- CONTENT ----
         Box(
             modifier = Modifier
@@ -181,6 +256,10 @@ fun ThematicListScreen(
                     }
                 }
                 is ThematicState.Error -> {
+                    val isNothingFound = currentState.message.contains("404") ||
+                            currentState.message.contains("не найден", ignoreCase = true) ||
+                            currentState.message.contains("Ничего не можем найти", ignoreCase = true)
+
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -189,36 +268,39 @@ fun ThematicListScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Icon(
-                            imageVector = Icons.Default.CloudOff,
+                            imageVector = if (isNothingFound) Icons.Default.SearchOff else Icons.Default.CloudOff,
                             contentDescription = null,
-                            tint = CinemaPrimary,
+                            tint = if (isNothingFound) CinemaMuted else CinemaPrimary,
                             modifier = Modifier.size(64.dp)
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = currentState.message,
-                            color = CinemaTextWhite,
+                            text = if (isNothingFound) "Ничего не можем найти по данному запросу" else currentState.message,
+                            color = if (isNothingFound) CinemaTextGray else CinemaTextWhite,
                             textAlign = TextAlign.Center,
-                            fontSize = 16.sp
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(
-                            onClick = {
-                                coroutineScope.launch {
-                                    state = ThematicState.Loading
-                                    try {
-                                        val items = RezkaService.getCustomCatalog(url, 1)
-                                        loadedItems.clear()
-                                        loadedItems.addAll(items)
-                                        state = ThematicState.Success(loadedItems)
-                                    } catch (e: Exception) {
-                                        state = ThematicState.Error(e.message ?: "Ошибка загрузки")
+                        if (!isNothingFound) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Button(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        state = ThematicState.Loading
+                                        try {
+                                            val items = RezkaService.getCustomCatalog(effectiveUrl, 1)
+                                            loadedItems.clear()
+                                            loadedItems.addAll(items)
+                                            state = ThematicState.Success(loadedItems)
+                                        } catch (e: Exception) {
+                                            state = ThematicState.Error(e.message ?: "Ошибка загрузки")
+                                        }
                                     }
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
-                        ) {
-                            Text("Повторить")
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
+                            ) {
+                                Text("Повторить")
+                            }
                         }
                     }
                 }
@@ -239,7 +321,7 @@ fun ThematicListScreen(
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "Ничего не найдено",
+                                text = "Ничего не можем найти по данному запросу",
                                 color = CinemaTextGray,
                                 fontSize = 15.sp,
                                 textAlign = TextAlign.Center,
@@ -247,12 +329,12 @@ fun ThematicListScreen(
                             )
                         }
                     } else {
-                        val gridState = rememberSavedLazyGridState("thematic_${url}", viewModel)
+                        val gridState = rememberSavedLazyGridState("thematic_${effectiveUrl}", viewModel)
                         val shouldLoadMore by remember {
                             derivedStateOf {
                                 val totalItems = gridState.layoutInfo.totalItemsCount
                                 val lastVisibleIndex = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                                totalItems > 0 && lastVisibleIndex >= totalItems - 4
+                                totalItems >= 12 && lastVisibleIndex >= totalItems - 4 && gridState.canScrollForward
                             }
                         }
 
@@ -282,7 +364,7 @@ fun ThematicListScreen(
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(columnsCount),
                                 state = gridState,
-                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = if (isLandscape) 16.dp else 40.dp),
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
                                 horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
                                 verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
                                 modifier = Modifier
@@ -302,7 +384,7 @@ fun ThematicListScreen(
                                     )
                                 }
 
-                                if (isLoadingMore) {
+                                if (isLoadingMore && loadedItems.size >= 8) {
                                     item(span = { GridItemSpan(maxLineSpan) }) {
                                         Box(
                                             modifier = Modifier

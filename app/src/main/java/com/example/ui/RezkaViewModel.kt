@@ -3,10 +3,13 @@ package com.example.ui
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.RezkaApplication
 import com.example.data.*
+import java.text.Collator
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -58,6 +61,8 @@ data class MovieCommentsState(
 )
 
 data class ScrollPosition(val index: Int = 0, val offset: Int = 0)
+
+data class ExternalVideoMedia(val uri: Uri, val title: String)
 
 class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as RezkaApplication).repository
@@ -215,6 +220,112 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val _genresList = MutableStateFlow<List<GenreItem>>(listOf(GenreItem("Без жанра", "")))
     val genresList: StateFlow<List<GenreItem>> = _genresList.asStateFlow()
 
+    private val _currentYear = MutableStateFlow("")
+    val currentYear: StateFlow<String> = _currentYear.asStateFlow()
+
+    private val _yearsList = MutableStateFlow<List<YearItem>>(listOf(YearItem("Все года", "")))
+    val yearsList: StateFlow<List<YearItem>> = _yearsList.asStateFlow()
+
+    private val _currentCountry = MutableStateFlow("")
+    val currentCountry: StateFlow<String> = _currentCountry.asStateFlow()
+
+    private val _countriesList = MutableStateFlow<List<CountryItem>>(CountryFilterList.defaultCountries)
+    val countriesList: StateFlow<List<CountryItem>> = _countriesList.asStateFlow()
+
+    private var countryPrefetchJob: Job? = null
+
+    fun setCountry(countryQuery: String) {
+        if (_currentCountry.value != countryQuery) {
+            _currentCountry.value = countryQuery
+            requestCatalogScrollToTop()
+            if (countryQuery.isNotEmpty()) {
+                prefetchForCountryFilter(countryQuery)
+            }
+        }
+    }
+
+    fun prefetchForCountryFilter(countryQuery: String = _currentCountry.value) {
+        if (countryQuery.isBlank() || _isEndReached.value) return
+        countryPrefetchJob?.cancel()
+        countryPrefetchJob = viewModelScope.launch {
+            var matching = loadedMap.values.count { it.matchesCountry(countryQuery) }
+            if (matching >= 24) return@launch
+            _isLoadingMore.value = true
+            try {
+                var consecutiveEmptyPages = 0
+                while (matching < 24 && !_isEndReached.value && consecutiveEmptyPages < 8) {
+                    val nextPage = currentCatalogPage + 1
+                    val items = RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, _currentYear.value, nextPage)
+                    val newUniqueItems = items.filterNot { loadedMap.containsKey(it.id) }
+                    if (newUniqueItems.isEmpty() || items.size < 32) {
+                        _isEndReached.value = true
+                    }
+                    if (newUniqueItems.isNotEmpty()) {
+                        val addedMatching = newUniqueItems.count { it.matchesCountry(countryQuery) }
+                        if (addedMatching > 0) {
+                            consecutiveEmptyPages = 0
+                        } else {
+                            consecutiveEmptyPages++
+                        }
+                        val dynamicCountries = mutableSetOf<String>()
+                        for (item in newUniqueItems) {
+                            dynamicCountries.addAll(CountryFlags.extractCountries(item.subtitle))
+                        }
+                        if (dynamicCountries.isNotEmpty()) {
+                            updateDynamicCountries(dynamicCountries)
+                        }
+
+                        newUniqueItems.forEach { loadedMap[it.id] = it }
+                        currentCatalogPage = nextPage
+                        matching += addedMatching
+                        _catalogState.value = CatalogState.Success(loadedMap.values.toList())
+                    } else {
+                        break
+                    }
+                    delay(50)
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            } finally {
+                _isLoadingMore.value = false
+            }
+        }
+    }
+
+    fun updateDynamicCountries(parsedCountries: Set<String>) {
+        if (parsedCountries.isEmpty()) return
+        val currentList = _countriesList.value
+        val existingQueries = currentList.map { it.query.lowercase() }.toSet()
+        val newItems = ArrayList<CountryItem>()
+        for (country in parsedCountries) {
+            val q = country.trim()
+            if (q.isNotEmpty() && !existingQueries.contains(q.lowercase())) {
+                val flag = CountryFlags.getFlag(q, fallbackToDefault = true)
+                newItems.add(CountryItem("$flag $q", q))
+            }
+        }
+        if (newItems.isNotEmpty()) {
+            val ruLocale = Locale.forLanguageTag("ru")
+            val collator = Collator.getInstance(ruLocale).apply {
+                strength = Collator.PRIMARY
+            }
+            val rest = (currentList.drop(1) + newItems)
+                .distinctBy { it.query.lowercase() }
+                .sortedWith { a, b ->
+                    collator.compare(
+                        CountryFlags.stripFlags(a.name).trim(),
+                        CountryFlags.stripFlags(b.name).trim()
+                    )
+                }
+            _countriesList.value = listOf(currentList.first()) + rest
+        }
+    }
+
+    private val _collectionsState = MutableStateFlow<CollectionsState>(CollectionsState.Loading)
+    val collectionsState: StateFlow<CollectionsState> = _collectionsState.asStateFlow()
+
+    private var allCollections = listOf<CollectionItem>()
+
     // Search History persistence (последние 5 запросов поиска)
     private val searchHistoryPrefs by lazy {
         getApplication<Application>().getSharedPreferences("rezka_search_history_prefs", Context.MODE_PRIVATE)
@@ -225,6 +336,14 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     // Deep Link & Share URL navigation state
     private val _pendingDeepLink = MutableStateFlow<ParsedRezkaLink?>(null)
     val pendingDeepLink: StateFlow<ParsedRezkaLink?> = _pendingDeepLink.asStateFlow()
+
+    // External video file or stream playback state (любое видео с телефона)
+    private val _externalVideoToPlay = MutableStateFlow<ExternalVideoMedia?>(null)
+    val externalVideoToPlay: StateFlow<ExternalVideoMedia?> = _externalVideoToPlay.asStateFlow()
+
+    fun clearExternalVideoToPlay() {
+        _externalVideoToPlay.value = null
+    }
 
     private val _isPlayerActive = MutableStateFlow(false)
     val isPlayerActive: StateFlow<Boolean> = _isPlayerActive.asStateFlow()
@@ -238,6 +357,42 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         val parsed = RezkaService.parseIntent(intent)
         if (parsed != null) {
             _pendingDeepLink.value = parsed
+            return
+        }
+
+        // Обработка внешних видеофайлов и видеопотоков (воспроизведение любого видео на телефоне)
+        val action = intent.action
+        val dataUri = intent.data
+        val mimeType = intent.type
+
+        val isViewAction = action == Intent.ACTION_VIEW
+        val isVideoMime = mimeType?.startsWith("video/", ignoreCase = true) == true
+        val isVideoScheme = dataUri?.scheme in listOf("content", "file", "http", "https")
+        val isVideoExtension = dataUri?.path?.let { path ->
+            val ext = path.substringAfterLast('.', "").lowercase()
+            ext in listOf("mp4", "mkv", "webm", "m3u8", "avi", "mov", "flv", "3gp", "ts", "m4v")
+        } ?: false
+
+        if (isViewAction && dataUri != null && (isVideoMime || isVideoExtension || dataUri.scheme in listOf("content", "file"))) {
+            val app = getApplication<Application>()
+            var title = "Видео"
+            if (dataUri.scheme == "content") {
+                try {
+                    app.contentResolver.query(dataUri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            if (nameIdx >= 0) {
+                                val name = cursor.getString(nameIdx)
+                                if (!name.isNullOrBlank()) title = name
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+            if (title == "Видео" && !dataUri.lastPathSegment.isNullOrBlank()) {
+                title = dataUri.lastPathSegment!!.substringAfterLast('/')
+            }
+            _externalVideoToPlay.value = ExternalVideoMedia(dataUri, title)
         }
     }
 
@@ -265,6 +420,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     init {
         RezkaService.clearCache()
         loadSearchHistory()
+        loadInstalledPlayers()
         // Привязываем провайдер и коллбэк синхронизации истории поиска с Firebase
         FirebaseSyncManager.searchHistoryProvider = {
             _searchHistory.value
@@ -336,22 +492,47 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Loads catalog items for the specified type, section, genre and resets pagination
+     * Сброс всех фильтров каталога к значениям по умолчанию
+     */
+    fun resetCatalogFilters() {
+        _currentCountry.value = ""
+        loadCatalog(
+            type = _currentType.value,
+            section = SectionType.LATEST,
+            genre = "",
+            year = "",
+            forceRefresh = true
+        )
+    }
+
+    /**
+     * Loads catalog items for the specified type, section, genre, year and resets pagination
      */
     fun loadCatalog(
         type: RezkaType = _currentType.value,
         section: SectionType = _currentSection.value,
         genre: String = _currentGenre.value,
+        year: String = _currentYear.value,
         forceRefresh: Boolean = false
     ) {
         paginationJob?.cancel()
         catalogJob?.cancel()
         searchJob?.cancel()
 
-        // If category changed, reset active genre to "Без жанра"
-        val actualGenre = if (type != _currentType.value) "" else genre
+        if (type == RezkaType.COLLECTIONS) {
+            _currentType.value = RezkaType.COLLECTIONS
+            searchQuery = ""
+            currentCatalogPage = 1
+            loadCollections(forceRefresh = forceRefresh)
+            return
+        }
 
-        val isFilterChanged = type != _currentType.value || section != _currentSection.value || actualGenre != _currentGenre.value
+        // If category changed, reset active genre and year to default
+        val actualGenre = if (type != _currentType.value) "" else genre
+        val actualYear = if (type != _currentType.value) "" else year
+        val actualCountry = if (type != _currentType.value) "" else _currentCountry.value
+
+        val isFilterChanged = type != _currentType.value || section != _currentSection.value || actualGenre != _currentGenre.value || actualYear != _currentYear.value
         if (forceRefresh || isFilterChanged) {
             requestCatalogScrollToTop()
         }
@@ -359,15 +540,21 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         _currentType.value = type
         _currentSection.value = section
         _currentGenre.value = actualGenre
+        _currentYear.value = actualYear
+        _currentCountry.value = actualCountry
         searchQuery = ""
         currentCatalogPage = 1
         _isEndReached.value = false
         _isLoadingMore.value = false
 
-        // Update genres list immediately from service cache if available for this category
+        // Update genres and years list immediately from service cache if available for this category
         val cachedGenres = RezkaService.getGenresForCategory(type)
         if (cachedGenres.isNotEmpty()) {
             _genresList.value = cachedGenres
+        }
+        val cachedYears = RezkaService.getYearsForCategory(type)
+        if (cachedYears.isNotEmpty()) {
+            _yearsList.value = cachedYears
         }
 
         if (forceRefresh || loadedMap.isEmpty()) {
@@ -377,15 +564,33 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
         catalogJob = viewModelScope.launch {
             try {
-                val items = RezkaService.getCatalog(type, section, actualGenre, 1)
+                val items = RezkaService.getCatalog(type, section, actualGenre, actualYear, 1)
                 loadedMap.clear()
                 items.forEach { loadedMap[it.id] = it }
+                _isEndReached.value = items.size < 32
                 _catalogState.value = CatalogState.Success(loadedMap.values.toList())
 
-                // Update genres list after parsing page HTML
+                // Update dynamic genres and years list after parsing page HTML
                 val dynamicGenres = RezkaService.getGenresForCategory(type)
                 if (dynamicGenres.isNotEmpty()) {
                     _genresList.value = dynamicGenres
+                }
+                val dynamicYears = RezkaService.getYearsForCategory(type)
+                if (dynamicYears.isNotEmpty()) {
+                    _yearsList.value = dynamicYears
+                }
+
+                // Dynamically extract countries from parsed catalog cards
+                val dynamicCountries = mutableSetOf<String>()
+                for (item in items) {
+                    dynamicCountries.addAll(CountryFlags.extractCountries(item.subtitle))
+                }
+                if (dynamicCountries.isNotEmpty()) {
+                    updateDynamicCountries(dynamicCountries)
+                }
+
+                if (_currentCountry.value.isNotEmpty()) {
+                    prefetchForCountryFilter(_currentCountry.value)
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -395,10 +600,104 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Загрузка подборок без пагинации (все страницы объединяются в единый список)
+     */
+    fun loadCollections(forceRefresh: Boolean = false) {
+        paginationJob?.cancel()
+        catalogJob?.cancel()
+        searchJob?.cancel()
+        _isEndReached.value = true
+        _isLoadingMore.value = false
+
+        if (!forceRefresh && allCollections.isNotEmpty()) {
+            filterCollections(searchQuery)
+            return
+        }
+
+        _collectionsState.value = CollectionsState.Loading
+        catalogJob = viewModelScope.launch {
+            try {
+                // Быстрая мгновенная отдача первой страницы
+                val firstPage = RezkaService.fetchCollectionsPage(1)
+                allCollections = firstPage.items
+                filterCollections(searchQuery)
+
+                // Фоновая параллельная догрузка остальных страниц (без пагинации в UI)
+                if (firstPage.totalPages > 1) {
+                    val fullList = RezkaService.getCollections(fetchAll = true)
+                    allCollections = fullList
+                    filterCollections(searchQuery)
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                _collectionsState.value = CollectionsState.Error(e.message ?: "Ошибка загрузки подборок")
+            }
+        }
+    }
+
+    private fun filterCollections(query: String) {
+        val q = query.trim()
+        val filtered = if (q.isEmpty()) {
+            allCollections
+        } else {
+            allCollections.filter { it.title.contains(q, ignoreCase = true) }
+        }
+        _collectionsState.value = CollectionsState.Success(filtered)
+    }
+
+    /**
      * Loads next page smoothly without UI flickering or CPU bottlenecks
      */
     fun loadNextPage() {
-        if (_isLoadingMore.value || _isEndReached.value || searchQuery.isNotBlank() || _catalogState.value is CatalogState.Loading) {
+        if (_currentType.value == RezkaType.COLLECTIONS || _isLoadingMore.value || _isEndReached.value || searchQuery.isNotBlank() || _catalogState.value is CatalogState.Loading) {
+            return
+        }
+
+        val country = _currentCountry.value
+        if (country.isNotEmpty()) {
+            paginationJob?.cancel()
+            paginationJob = viewModelScope.launch {
+                _isLoadingMore.value = true
+                try {
+                    var found = 0
+                    var pagesScanned = 0
+                    while (found == 0 && !_isEndReached.value && pagesScanned < 6) {
+                        pagesScanned++
+                        val nextPage = currentCatalogPage + 1
+                        val items = RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, _currentYear.value, nextPage)
+                        val newUniqueItems = items.filterNot { loadedMap.containsKey(it.id) }
+                        if (newUniqueItems.isEmpty() || items.size < 32) {
+                            _isEndReached.value = true
+                        }
+                        if (newUniqueItems.isNotEmpty()) {
+                            val addedMatching = newUniqueItems.count { it.matchesCountry(country) }
+                            found += addedMatching
+
+                            val dynamicCountries = mutableSetOf<String>()
+                            for (item in newUniqueItems) {
+                                dynamicCountries.addAll(CountryFlags.extractCountries(item.subtitle))
+                            }
+                            if (dynamicCountries.isNotEmpty()) {
+                                updateDynamicCountries(dynamicCountries)
+                            }
+
+                            newUniqueItems.forEach { loadedMap[it.id] = it }
+                            currentCatalogPage = nextPage
+                            _catalogState.value = CatalogState.Success(loadedMap.values.toList())
+                        } else {
+                            break
+                        }
+                        if (found == 0 && !_isEndReached.value) {
+                            delay(50)
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    _isEndReached.value = true
+                } finally {
+                    _isLoadingMore.value = false
+                }
+            }
             return
         }
 
@@ -408,18 +707,27 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         paginationJob?.cancel()
         paginationJob = viewModelScope.launch {
             try {
-                val items = RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, nextPage)
+                val items = RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, _currentYear.value, nextPage)
                 val newUniqueItems = items.filterNot { loadedMap.containsKey(it.id) }
-                if (newUniqueItems.isEmpty()) {
+                if (newUniqueItems.isEmpty() || items.size < 32) {
                     _isEndReached.value = true
-                } else {
+                }
+                if (newUniqueItems.isNotEmpty()) {
+                    val dynamicCountries = mutableSetOf<String>()
+                    for (item in newUniqueItems) {
+                        dynamicCountries.addAll(CountryFlags.extractCountries(item.subtitle))
+                    }
+                    if (dynamicCountries.isNotEmpty()) {
+                        updateDynamicCountries(dynamicCountries)
+                    }
+
                     newUniqueItems.forEach { loadedMap[it.id] = it }
                     currentCatalogPage = nextPage
                     _catalogState.value = CatalogState.Success(loadedMap.values.toList())
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                // Keep current items intact on pagination error
+                _isEndReached.value = true
             } finally {
                 _isLoadingMore.value = false
             }
@@ -438,6 +746,11 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         paginationJob?.cancel()
         _isLoadingMore.value = false
 
+        if (_currentType.value == RezkaType.COLLECTIONS) {
+            filterCollections(query)
+            return
+        }
+
         if (query.isBlank()) {
             lastCommittedQuery = ""
             loadCatalog(_currentType.value, forceRefresh = true)
@@ -451,6 +764,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 val results = RezkaService.search(query)
                     .distinctBy { it.id }
                     .sortedWith(MovieDateParser.MovieDateComparator)
+                _isEndReached.value = true
                 _catalogState.value = CatalogState.Success(results)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -1256,6 +1570,23 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     val defaultResizeMode: StateFlow<String> = RezkaService.defaultResizeMode
     val tvModePreference: StateFlow<String> = RezkaService.tvModePreference
     val cardGridMode: StateFlow<String> = RezkaService.cardGridMode
+
+    // Player Selection (локальная настройка, без синхронизации с облаком)
+    val selectedPlayer: StateFlow<String> = RezkaService.selectedPlayer
+
+    fun setSelectedPlayer(playerKey: String) {
+        RezkaService.setSelectedPlayer(playerKey)
+    }
+
+    private val _installedPlayers = MutableStateFlow<List<ExternalPlayerApp>>(emptyList())
+    val installedPlayers: StateFlow<List<ExternalPlayerApp>> = _installedPlayers.asStateFlow()
+
+    fun loadInstalledPlayers(forceRefresh: Boolean = false) {
+        viewModelScope.launch {
+            val list = ExternalPlayerManager.getInstalledVideoPlayers(getApplication(), forceRefresh)
+            _installedPlayers.value = list
+        }
+    }
 
     fun setDefaultQuality(quality: String) {
         RezkaService.setDefaultQuality(quality)

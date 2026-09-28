@@ -3,11 +3,29 @@ package com.example.data
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import java.io.Serializable
+import java.text.Collator
+import java.util.Locale
 
 data class LinkItem(val name: String, val url: String) : Serializable
 
 enum class RezkaType {
-    MOVIE, SERIES, ANIME, CARTOON
+    MOVIE, SERIES, ANIME, CARTOON, COLLECTIONS
+}
+
+data class YearItem(val name: String, val year: String) : Serializable
+
+data class CollectionItem(
+    val id: String,
+    val title: String,
+    val url: String,
+    val imageUrl: String,
+    val count: String = ""
+) : Serializable
+
+sealed interface CollectionsState : Serializable {
+    object Loading : CollectionsState
+    data class Success(val items: List<CollectionItem>) : CollectionsState
+    data class Error(val message: String) : CollectionsState
 }
 
 enum class SectionType {
@@ -24,6 +42,119 @@ enum class SectionType {
 }
 
 data class GenreItem(val name: String, val slug: String) : Serializable
+
+data class CountryItem(val name: String, val query: String) : Serializable
+
+object CountryFilterList {
+    val defaultCountries: List<CountryItem> by lazy {
+        val ruLocale = Locale.forLanguageTag("ru")
+        val collator = Collator.getInstance(ruLocale).apply {
+            strength = Collator.PRIMARY
+        }
+        val map = java.util.TreeMap<String, String>(collator)
+
+        // Кинематографические алиасы и приоритетные формы
+        map["США"] = "США"
+        map["Южная Корея"] = "Южная Корея"
+        map["Северная Корея"] = "Северная Корея"
+        map["Великобритания"] = "Великобритания"
+        map["Англия"] = "Англия"
+        map["Шотландия"] = "Шотландия"
+        map["Уэльс"] = "Уэльс"
+        map["Гонконг"] = "Гонконг"
+        map["СССР"] = "СССР"
+        map["Югославия"] = "Югославия"
+        map["Чехословакия"] = "Чехословакия"
+        map["ГДР"] = "ГДР"
+
+        for (c in Locale.getISOCountries()) {
+            val loc = Locale.Builder().setRegion(c).build()
+            var name = loc.getDisplayCountry(ruLocale) ?: continue
+            if (name.isBlank()) continue
+            name = name.replace(" (САР)", "").replace(" САР", "").trim()
+            if (c == "US" || c == "KR" || c == "KP" || c == "HK") continue
+            if (!map.containsKey(name)) {
+                map[name] = name
+            }
+        }
+
+        val list = ArrayList<CountryItem>(map.size + 1)
+        list.add(CountryItem("Все страны", ""))
+        for ((name, query) in map) {
+            val flag = CountryFlags.getFlag(name, fallbackToDefault = true)
+            list.add(CountryItem("$flag $name", query))
+        }
+        list
+    }
+}
+
+fun RezkaItem.matchesCountry(countryQuery: String): Boolean {
+    if (countryQuery.isBlank()) return true
+    val cleanQuery = countryQuery.trim()
+    val sub = subtitle
+    if (sub.isEmpty()) return false
+
+    if (sub.contains(cleanQuery, ignoreCase = true)) return true
+    val strippedSub = CountryFlags.stripFlags(sub)
+    if (strippedSub.contains(cleanQuery, ignoreCase = true)) return true
+
+    // Проверка специальных кинематографических псевдонимов
+    when {
+        cleanQuery.contains("США", ignoreCase = true) -> {
+            if (strippedSub.contains("США", ignoreCase = true) ||
+                strippedSub.contains("USA", ignoreCase = true) ||
+                strippedSub.contains("Соединенные Штаты", ignoreCase = true)
+            ) return true
+        }
+        cleanQuery.contains("Корея", ignoreCase = true) -> {
+            if (cleanQuery.contains("Северная", ignoreCase = true) || cleanQuery.contains("КНДР", ignoreCase = true)) {
+                if (strippedSub.contains("КНДР", ignoreCase = true) || strippedSub.contains("Северная Корея", ignoreCase = true)) return true
+            } else {
+                if (strippedSub.contains("Корея", ignoreCase = true) || strippedSub.contains("Korea", ignoreCase = true)) return true
+            }
+        }
+        cleanQuery.contains("Великобритания", ignoreCase = true) ||
+        cleanQuery.contains("Англия", ignoreCase = true) ||
+        cleanQuery.contains("Шотландия", ignoreCase = true) ||
+        cleanQuery.contains("Уэльс", ignoreCase = true) -> {
+            if (strippedSub.contains("Великобритания", ignoreCase = true) ||
+                strippedSub.contains("Англия", ignoreCase = true) ||
+                strippedSub.contains("Шотландия", ignoreCase = true) ||
+                strippedSub.contains("Уэльс", ignoreCase = true) ||
+                strippedSub.contains("UK", ignoreCase = true) ||
+                strippedSub.contains("Britain", ignoreCase = true)
+            ) return true
+        }
+        cleanQuery.contains("Германия", ignoreCase = true) || cleanQuery.contains("ГДР", ignoreCase = true) -> {
+            if (strippedSub.contains("Германия", ignoreCase = true) ||
+                strippedSub.contains("ФРГ", ignoreCase = true) ||
+                strippedSub.contains("ГДР", ignoreCase = true) ||
+                strippedSub.contains("Germany", ignoreCase = true)
+            ) return true
+        }
+        cleanQuery.contains("СССР", ignoreCase = true) -> {
+            if (strippedSub.contains("СССР", ignoreCase = true) ||
+                strippedSub.contains("USSR", ignoreCase = true) ||
+                strippedSub.contains("Советский Союз", ignoreCase = true)
+            ) return true
+        }
+        cleanQuery.contains("Гонконг", ignoreCase = true) -> {
+            if (strippedSub.contains("Гонконг", ignoreCase = true) ||
+                strippedSub.contains("Hong Kong", ignoreCase = true)
+            ) return true
+        }
+    }
+
+    // Сопоставление по корню слова (например, "Франция" -> "франци" матчит "Франции")
+    if (cleanQuery.length >= 4) {
+        val stem = cleanQuery.lowercase().take(cleanQuery.length.coerceAtMost(5))
+        if (strippedSub.lowercase().contains(stem)) {
+            return true
+        }
+    }
+
+    return false
+}
 
 data class RezkaItem(
     val id: String,

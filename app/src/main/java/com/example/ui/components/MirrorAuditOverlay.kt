@@ -54,7 +54,7 @@ fun MirrorAuditOverlay(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(CinemaBlack.copy(alpha = 0.94f))
+            .background(CinemaBlack.copy(alpha = 0.35f))
             .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
