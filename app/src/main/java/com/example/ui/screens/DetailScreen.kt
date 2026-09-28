@@ -7,6 +7,9 @@ import android.net.Uri
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -138,6 +141,7 @@ fun DetailScreen(
     val detailState by viewModel.detailState.collectAsState()
     val favorites by viewModel.favorites.collectAsState()
     val defaultQuality by viewModel.defaultQuality.collectAsState()
+    val selectedPlayer by viewModel.selectedPlayer.collectAsState()
     val autoNextEpisode by viewModel.autoNextEpisode.collectAsState()
     val commentsState by viewModel.commentsState.collectAsState()
     val isFavorite = favorites.any { it.id == item.id }
@@ -257,6 +261,7 @@ fun DetailScreen(
 
     var showScheduleCalendarDialog by remember { mutableStateOf(false) }
     var showSeriesDownloadDialog by remember { mutableStateOf(false) }
+    var showPosterModal by remember { mutableStateOf(false) }
     var isDownloadExecuting by remember { mutableStateOf(false) }
     var isActorsExpanded by remember { mutableStateOf(false) }
 
@@ -352,8 +357,14 @@ fun DetailScreen(
         playerTitle = titleText
         playerSubtitle = subtitleText
         playerStartPosition = customStartPos ?: 0L
-        isPlayerOpen = true
-        isDecryptingStreams = true
+
+        val isInternalPlayer = selectedPlayer == RezkaService.PLAYER_INTERNAL
+        if (isInternalPlayer) {
+            isPlayerOpen = true
+            isDecryptingStreams = true
+        } else {
+            Toast.makeText(context, "Получение потока для внешнего плеера...", Toast.LENGTH_SHORT).show()
+        }
 
         playbackJob = scope.launch {
             try {
@@ -432,6 +443,19 @@ fun DetailScreen(
                         pendingPlaySubtitle = subtitleText
                         pendingPlayStartPos = startPos
                         isDecryptingStreams = false
+                    } else if (!isInternalPlayer) {
+                        isDecryptingStreams = false
+                        val chosenIdx = RezkaService.findBestQualityIndex(streams, defaultQuality)
+                        val chosenStream = streams.getOrElse(chosenIdx) { streams.first() }
+                        com.example.data.ExternalPlayerManager.launchPlayback(
+                            context = context,
+                            streamUrl = chosenStream.url,
+                            title = titleText,
+                            subtitle = subtitleText,
+                            startPositionMs = startPos,
+                            subtitles = chosenStream.subtitles,
+                            playerKey = selectedPlayer
+                        )
                     } else {
                         val chosenIdx = RezkaService.findBestQualityIndex(streams, defaultQuality)
                         playerStartPosition = startPos
@@ -442,17 +466,21 @@ fun DetailScreen(
                 } else {
                     isDecryptingStreams = false
                     Toast.makeText(context, "Не удалось получить ссылки на видео", Toast.LENGTH_SHORT).show()
-                    isPlayerOpen = false
-                    activePlayerStreams = null
-                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    if (isInternalPlayer) {
+                        isPlayerOpen = false
+                        activePlayerStreams = null
+                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
                 }
             } catch (e: Exception) {
                 if (e !is kotlinx.coroutines.CancellationException) {
                     isDecryptingStreams = false
                     Toast.makeText(context, "Ошибка сети при загрузке плеера", Toast.LENGTH_SHORT).show()
-                    isPlayerOpen = false
-                    activePlayerStreams = null
-                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    if (isInternalPlayer) {
+                        isPlayerOpen = false
+                        activePlayerStreams = null
+                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
                 }
             }
         }
@@ -765,12 +793,19 @@ fun DetailScreen(
                                 Card(
                                     modifier = Modifier
                                         .width(115.dp)
-                                        .aspectRatio(0.68f),
+                                        .aspectRatio(0.68f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            val img = (detailState as? DetailState.Success)?.detail?.imageUrl.orEmpty().ifEmpty { item.imageUrl }
+                                            if (img.isNotEmpty()) {
+                                                showPosterModal = true
+                                            }
+                                        },
                                     shape = RoundedCornerShape(10.dp),
                                     elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
                                 ) {
                                     AsyncImage(
-                                        model = detail.imageUrl,
+                                        model = detail.imageUrl.ifEmpty { item.imageUrl },
                                         contentDescription = detail.title,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize()
@@ -1125,6 +1160,21 @@ fun DetailScreen(
                                         ) {
                                             detail.franchiseItems.forEach { franchiseItem ->
                                                 val isCurrent = franchiseItem.isCurrent
+                                                val cleanTitle = remember(franchiseItem.title) {
+                                                    var t = franchiseItem.title.replace(Regex("""^\s*(?:\[\d+\]|\(\d+\)|(?:№\s*|#\s*)?\d+\s*[\.)\-:]+)\s*"""), "").trim()
+                                                    val endYearMatch = Regex("""[\s(]+((?:19|20)\d{2})\s*\)?\s*(?:г(?:од|\.)?)?\s*$""").find(t)
+                                                    if (endYearMatch != null && franchiseItem.year.isEmpty()) {
+                                                        t = t.substring(0, endYearMatch.range.first).trim()
+                                                    }
+                                                    t.removeSuffix(":").removeSuffix("-").removeSuffix(",").removeSuffix(";").trim()
+                                                }
+                                                val displayYear = remember(franchiseItem.title, franchiseItem.year) {
+                                                    if (franchiseItem.year.isNotEmpty()) {
+                                                        franchiseItem.year
+                                                    } else {
+                                                        Regex("""[\s(]+((?:19|20)\d{2})\s*\)?\s*(?:г(?:од|\.)?)?\s*$""").find(franchiseItem.title)?.groupValues?.get(1).orEmpty()
+                                                    }
+                                                }
                                                 Row(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
@@ -1133,8 +1183,8 @@ fun DetailScreen(
                                                         .clickable(enabled = !isCurrent && franchiseItem.url.isNotEmpty()) {
                                                             val targetItem = RezkaItem(
                                                                 id = franchiseItem.id.ifEmpty { franchiseItem.url.hashCode().toString() },
-                                                                title = franchiseItem.title,
-                                                                subtitle = franchiseItem.year,
+                                                                title = cleanTitle,
+                                                                subtitle = displayYear,
                                                                 imageUrl = "",
                                                                 rating = "",
                                                                 url = franchiseItem.url,
@@ -1153,7 +1203,7 @@ fun DetailScreen(
                                                      )
                                                     Spacer(modifier = Modifier.width(10.dp))
                                                     Text(
-                                                        text = franchiseItem.title,
+                                                        text = cleanTitle,
                                                         color = if (isCurrent) CinemaPrimary else CinemaTextWhite,
                                                         fontSize = 13.sp,
                                                         fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
@@ -1161,10 +1211,10 @@ fun DetailScreen(
                                                         overflow = TextOverflow.Ellipsis,
                                                         modifier = Modifier.weight(1f)
                                                     )
-                                                    if (franchiseItem.year.isNotEmpty()) {
+                                                    if (displayYear.isNotEmpty()) {
                                                         Spacer(modifier = Modifier.width(8.dp))
                                                         Text(
-                                                            text = franchiseItem.year,
+                                                            text = displayYear,
                                                             color = if (isCurrent) CinemaPrimary.copy(alpha = 0.8f) else CinemaTextGray,
                                                             fontSize = 12.sp,
                                                             fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal
@@ -1569,38 +1619,40 @@ fun DetailScreen(
                                 }
                                 Spacer(modifier = Modifier.height(10.dp))
 
-                                // Кнопка Загрузить сериал
-                                Button(
-                                    onClick = onDownloadClick,
-                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
-                                    shape = RoundedCornerShape(10.dp),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(48.dp)
-                                        .tvFocusableItem(
-                                            onClick = onDownloadClick,
-                                            shape = RoundedCornerShape(10.dp)
-                                        )
-                                        .testTag("series_download_button")
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.Center
+                                // Кнопка Загрузить сериал (отображается только если сериал уже вышел)
+                                if (detail.isReleased) {
+                                    Button(
+                                        onClick = onDownloadClick,
+                                        colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(48.dp)
+                                            .tvFocusableItem(
+                                                onClick = onDownloadClick,
+                                                shape = RoundedCornerShape(10.dp)
+                                            )
+                                            .testTag("series_download_button")
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Download,
-                                            contentDescription = "Загрузить сериал",
-                                            tint = CinemaPrimary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "Загрузить сериал",
-                                            color = CinemaTextWhite,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Download,
+                                                contentDescription = "Загрузить сериал",
+                                                tint = CinemaPrimary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Загрузить сериал",
+                                                color = CinemaTextWhite,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(12.dp))
@@ -1780,38 +1832,40 @@ fun DetailScreen(
                                     }
                                 }
 
-                                // Кнопка Загрузить фильм (под кнопками "Смотреть" и "Трейлер")
-                                Button(
-                                    onClick = onDownloadClick,
-                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
-                                    shape = RoundedCornerShape(10.dp),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(52.dp)
-                                        .tvFocusableItem(
-                                            onClick = onDownloadClick,
-                                            shape = RoundedCornerShape(10.dp)
-                                        )
-                                        .testTag("movie_download_button")
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.Center
+                                // Кнопка Загрузить фильм (под кнопками "Смотреть" и "Трейлер" - только если фильм уже вышел)
+                                if (detail.isReleased) {
+                                    Button(
+                                        onClick = onDownloadClick,
+                                        colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(52.dp)
+                                            .tvFocusableItem(
+                                                onClick = onDownloadClick,
+                                                shape = RoundedCornerShape(10.dp)
+                                            )
+                                            .testTag("movie_download_button")
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Download,
-                                            contentDescription = "Загрузить фильм",
-                                            tint = CinemaPrimary,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "Загрузить фильм",
-                                            color = CinemaTextWhite,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Download,
+                                                contentDescription = "Загрузить фильм",
+                                                tint = CinemaPrimary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Загрузить фильм",
+                                                color = CinemaTextWhite,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -2283,6 +2337,44 @@ fun DetailScreen(
             }
         }
 
+        if (showPosterModal) {
+            val currentDetail = (detailState as? DetailState.Success)?.detail
+            val posterUrl = currentDetail?.imageUrl?.ifEmpty { item.imageUrl } ?: item.imageUrl
+            if (posterUrl.isNotEmpty()) {
+                Dialog(
+                    onDismissRequest = { showPosterModal = false },
+                    properties = DialogProperties(
+                        usePlatformDefaultWidth = false,
+                        dismissOnBackPress = true,
+                        dismissOnClickOutside = true
+                    )
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.35f))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                showPosterModal = false
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AsyncImage(
+                            model = posterUrl,
+                            contentDescription = "Крупный постер",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .fillMaxWidth(0.90f)
+                                .fillMaxHeight(0.85f)
+                                .clip(RoundedCornerShape(16.dp))
+                        )
+                    }
+                }
+            }
+        }
+
         if (showSeriesDownloadDialog) {
             val currentDetail = (detailState as? DetailState.Success)?.detail
             if (currentDetail != null) {
@@ -2321,13 +2413,26 @@ fun DetailScreen(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable {
-                                        playerTitle = pendingPlayTitle
-                                        playerSubtitle = pendingPlaySubtitle
-                                        playerStartPosition = pendingPlayStartPos
-                                        initialQualityIndex = idx
-                                        activePlayerStreams = streams
-                                        isPlayerOpen = true
-                                        pendingStreamsForDialog = null
+                                        if (selectedPlayer != RezkaService.PLAYER_INTERNAL) {
+                                            pendingStreamsForDialog = null
+                                            com.example.data.ExternalPlayerManager.launchPlayback(
+                                                context = context,
+                                                streamUrl = stream.url,
+                                                title = pendingPlayTitle,
+                                                subtitle = pendingPlaySubtitle,
+                                                startPositionMs = pendingPlayStartPos,
+                                                subtitles = stream.subtitles,
+                                                playerKey = selectedPlayer
+                                            )
+                                        } else {
+                                            playerTitle = pendingPlayTitle
+                                            playerSubtitle = pendingPlaySubtitle
+                                            playerStartPosition = pendingPlayStartPos
+                                            initialQualityIndex = idx
+                                            activePlayerStreams = streams
+                                            isPlayerOpen = true
+                                            pendingStreamsForDialog = null
+                                        }
                                     }
                                     .padding(vertical = 12.dp, horizontal = 12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,

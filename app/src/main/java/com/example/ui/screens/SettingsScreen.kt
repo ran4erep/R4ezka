@@ -73,6 +73,8 @@ fun SettingsScreen(
     val scrollState = rememberSavedScrollState("settings", viewModel)
     val currentMirror by viewModel.currentMirror.collectAsState()
     val defaultQuality by viewModel.defaultQuality.collectAsState()
+    val selectedPlayer by viewModel.selectedPlayer.collectAsState()
+    val installedPlayers by viewModel.installedPlayers.collectAsState()
     val autoNextEpisode by viewModel.autoNextEpisode.collectAsState()
     val defaultResizeMode by viewModel.defaultResizeMode.collectAsState()
     val tvModePreference by viewModel.tvModePreference.collectAsState()
@@ -93,6 +95,7 @@ fun SettingsScreen(
     val isCheckingSeriesUpdates by viewModel.isCheckingSeriesUpdates.collectAsState()
 
     var tvModeDropdownExpanded by remember { mutableStateOf(false) }
+    var playerDropdownExpanded by remember { mutableStateOf(false) }
     var gridDropdownExpanded by remember { mutableStateOf(false) }
     var showCustomGridDialog by remember { mutableStateOf(false) }
 
@@ -603,6 +606,247 @@ fun SettingsScreen(
                     ) {
                         Divider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
                         Spacer(modifier = Modifier.height(14.dp))
+
+                        // ---- ОПЦИЯ: ПЛЕЕР ----
+                        Text(
+                            text = "ПЛЕЕР",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = CinemaPrimary,
+                            letterSpacing = 1.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        val currentSelectedExternalPlayer = remember(selectedPlayer, installedPlayers) {
+                            if (selectedPlayer.startsWith("package:")) {
+                                val pkg = selectedPlayer.removePrefix("package:")
+                                installedPlayers.find { it.packageName == pkg }
+                            } else null
+                        }
+
+                        val playerDisplayTitle = when {
+                            selectedPlayer == RezkaService.PLAYER_INTERNAL -> "Встроенный"
+                            selectedPlayer == RezkaService.PLAYER_ASK_EXTERNAL -> "Спросить внешний"
+                            currentSelectedExternalPlayer != null -> currentSelectedExternalPlayer.label
+                            else -> "Внешний плеер"
+                        }
+
+                        val playerDisplaySubtitle = when {
+                            selectedPlayer == RezkaService.PLAYER_INTERNAL -> "Встроенный плеер приложения (по умолчанию)"
+                            selectedPlayer == RezkaService.PLAYER_ASK_EXTERNAL -> "Системный диалог выбора при каждом запуске"
+                            currentSelectedExternalPlayer != null -> currentSelectedExternalPlayer.packageName
+                            else -> "Выбранный сторонний плеер"
+                        }
+
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(CinemaCard)
+                                    .clickable {
+                                        viewModel.loadInstalledPlayers()
+                                        playerDropdownExpanded = true
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                                    .testTag("player_dropdown_trigger"),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f, fill = false),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (currentSelectedExternalPlayer?.icon != null) {
+                                        AsyncImage(
+                                            model = currentSelectedExternalPlayer.icon,
+                                            contentDescription = null,
+                                            modifier = Modifier
+                                                .size(28.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                    } else {
+                                        Icon(
+                                            imageVector = if (selectedPlayer == RezkaService.PLAYER_INTERNAL) Icons.Default.PlayCircle else Icons.AutoMirrored.Filled.OpenInNew,
+                                            contentDescription = null,
+                                            tint = CinemaPrimary,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                    }
+
+                                    Column {
+                                        Text(
+                                            text = playerDisplayTitle,
+                                            color = CinemaTextWhite,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = playerDisplaySubtitle,
+                                            color = CinemaTextGray,
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Icon(
+                                    imageVector = if (playerDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                    contentDescription = "Выбор плеера",
+                                    tint = CinemaPrimary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
+                            DropdownMenu(
+                                expanded = playerDropdownExpanded,
+                                onDismissRequest = { playerDropdownExpanded = false },
+                                modifier = Modifier
+                                    .background(CinemaDark)
+                                    .fillMaxWidth(0.85f)
+                                    .heightIn(max = 360.dp)
+                            ) {
+                                // 1. Встроенный
+                                val isInternalSelected = selectedPlayer == RezkaService.PLAYER_INTERNAL
+                                DropdownMenuItem(
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.PlayCircle,
+                                            contentDescription = null,
+                                            tint = if (isInternalSelected) CinemaPrimary else CinemaTextGray,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    },
+                                    text = {
+                                        Column {
+                                            Text(
+                                                text = "Встроенный",
+                                                color = if (isInternalSelected) CinemaPrimary else CinemaTextWhite,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isInternalSelected) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                            Text(
+                                                text = "Встроенный плеер приложения (по умолчанию)",
+                                                color = if (isInternalSelected) CinemaPrimary.copy(alpha = 0.8f) else CinemaTextGray,
+                                                fontSize = 10.sp
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        playerDropdownExpanded = false
+                                        viewModel.setSelectedPlayer(RezkaService.PLAYER_INTERNAL)
+                                        Toast.makeText(context, "Выбран встроенный плеер", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+
+                                // 2. Спросить внешний
+                                val isAskExternalSelected = selectedPlayer == RezkaService.PLAYER_ASK_EXTERNAL
+                                DropdownMenuItem(
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.OpenInNew,
+                                            contentDescription = null,
+                                            tint = if (isAskExternalSelected) CinemaPrimary else CinemaTextGray,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    },
+                                    text = {
+                                        Column {
+                                            Text(
+                                                text = "Спросить внешний",
+                                                color = if (isAskExternalSelected) CinemaPrimary else CinemaTextWhite,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isAskExternalSelected) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                            Text(
+                                                text = "Системный диалог выбора при каждом запуске",
+                                                color = if (isAskExternalSelected) CinemaPrimary.copy(alpha = 0.8f) else CinemaTextGray,
+                                                fontSize = 10.sp
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        playerDropdownExpanded = false
+                                        viewModel.setSelectedPlayer(RezkaService.PLAYER_ASK_EXTERNAL)
+                                        Toast.makeText(context, "При воспроизведении откроется выбор плеера", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+
+                                // 3. Установленные плееры (динамически обнаруженные в системе)
+                                if (installedPlayers.isNotEmpty()) {
+                                    HorizontalDivider(
+                                        color = CinemaMuted.copy(alpha = 0.4f),
+                                        modifier = Modifier.padding(vertical = 4.dp)
+                                    )
+                                    Box(
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = "УСТАНОВЛЕННЫЕ ПЛЕЕРЫ В СИСТЕМЕ",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = CinemaTextGray,
+                                            letterSpacing = 0.5.sp
+                                        )
+                                    }
+                                    installedPlayers.forEach { player ->
+                                        val isThisPlayerSelected = selectedPlayer == "package:${player.packageName}"
+                                        DropdownMenuItem(
+                                            leadingIcon = {
+                                                if (player.icon != null) {
+                                                    AsyncImage(
+                                                        model = player.icon,
+                                                        contentDescription = player.label,
+                                                        modifier = Modifier
+                                                            .size(22.dp)
+                                                            .clip(RoundedCornerShape(4.dp))
+                                                    )
+                                                } else {
+                                                    Icon(
+                                                        Icons.Default.SmartDisplay,
+                                                        contentDescription = null,
+                                                        tint = if (isThisPlayerSelected) CinemaPrimary else CinemaTextGray,
+                                                        modifier = Modifier.size(22.dp)
+                                                    )
+                                                }
+                                            },
+                                            text = {
+                                                Column {
+                                                    Text(
+                                                        text = player.label,
+                                                        color = if (isThisPlayerSelected) CinemaPrimary else CinemaTextWhite,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = if (isThisPlayerSelected) FontWeight.Bold else FontWeight.Normal,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Text(
+                                                        text = player.packageName,
+                                                        color = if (isThisPlayerSelected) CinemaPrimary.copy(alpha = 0.8f) else CinemaTextGray,
+                                                        fontSize = 10.sp,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                            },
+                                            onClick = {
+                                                playerDropdownExpanded = false
+                                                viewModel.setSelectedPlayer("package:${player.packageName}")
+                                                Toast.makeText(context, "Выбран плеер: ${player.label}", Toast.LENGTH_SHORT).show()
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+                        HorizontalDivider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(16.dp))
 
                         Text(
                             text = "КАЧЕСТВО ВИДЕО ПО УМОЛЧАНИЮ",

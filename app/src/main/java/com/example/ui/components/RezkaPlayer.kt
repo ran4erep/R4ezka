@@ -269,6 +269,8 @@ fun RezkaPlayer(
 
     // Lock Screen state: touches are blocked until user holds lock icon for 2 seconds
     var isScreenLocked by remember { mutableStateOf(false) }
+    var showControls by remember { mutableStateOf(false) }
+    var controlsInteractionKey by remember { mutableIntStateOf(0) }
     var showLockOverlay by remember { mutableStateOf(false) }
     var lockOverlayInteractionKey by remember { mutableIntStateOf(0) }
     var unlockHoldProgress by remember { mutableFloatStateOf(0f) }
@@ -413,6 +415,8 @@ fun RezkaPlayer(
                     )
                 )
 
+            val defaultDataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(context, okHttpDataSourceFactory)
+
             val trackSelector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context).apply {
                 setParameters(
                     buildUponParameters()
@@ -421,7 +425,7 @@ fun RezkaPlayer(
                 )
             }
 
-            val mediaSourceFactory = DefaultMediaSourceFactory(okHttpDataSourceFactory)
+            val mediaSourceFactory = DefaultMediaSourceFactory(defaultDataSourceFactory)
 
             val audioAttributes = AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
@@ -490,6 +494,7 @@ fun RezkaPlayer(
     // Helper to build proper MediaItem with correct container MIME type, metadata and attached subtitles
     fun buildMediaItem(rawUrl: String, subTracks: List<SubtitleTrack>): MediaItem {
         val uri = rawUrl.trim()
+        val parsedUri = Uri.parse(uri)
         val mediaMetadata = MediaMetadata.Builder()
             .setTitle(title)
             .setSubtitle(subtitle)
@@ -498,12 +503,15 @@ fun RezkaPlayer(
             .build()
 
         val builder = MediaItem.Builder()
-            .setUri(uri)
+            .setUri(parsedUri)
             .setMediaMetadata(mediaMetadata)
-        if (uri.contains(".m3u8") || uri.contains(":hls:manifest.m3u8")) {
-            builder.setMimeType(MimeTypes.APPLICATION_M3U8)
-        } else if (uri.endsWith(".mp4") || uri.contains(".mp4?")) {
-            builder.setMimeType(MimeTypes.APPLICATION_MP4)
+
+        val uriLower = uri.lowercase()
+        when {
+            uriLower.contains(".m3u8") || uriLower.contains(":hls:manifest.m3u8") -> builder.setMimeType(MimeTypes.APPLICATION_M3U8)
+            uriLower.contains(".mp4") -> builder.setMimeType(MimeTypes.APPLICATION_MP4)
+            uriLower.contains(".mkv") -> builder.setMimeType(MimeTypes.APPLICATION_MATROSKA)
+            uriLower.contains(".webm") -> builder.setMimeType(MimeTypes.VIDEO_WEBM)
         }
 
         if (subTracks.isNotEmpty()) {
@@ -730,10 +738,18 @@ fun RezkaPlayer(
                 } else if (state == Player.STATE_ENDED) {
                     hasPlaybackEnded = true
                     if (totalDuration > 0) {
+                        currentPosition = totalDuration
                         onProgressUpdate(totalDuration, totalDuration)
                     }
-                    if (isSeries && hasNextEpisode && autoNextEpisode && !isAutoNextDismissed && onNextEpisode != null) {
+                    val canAutoNext = isSeries && hasNextEpisode && autoNextEpisode && !isAutoNextDismissed && onNextEpisode != null
+                    if (canAutoNext) {
                         showAutoNextCountdown = true
+                    } else {
+                        // Просмотр фильма или сериала полностью окончен (дальше серии нет)
+                        // Открываем интерфейс плеера, давая понять пользователю, что просмотр окончен
+                        showControls = true
+                        isScreenLocked = false
+                        controlsInteractionKey++
                     }
                 }
             }
@@ -882,10 +898,6 @@ fun RezkaPlayer(
             delay(500)
         }
     }
-
-    // Controller Visibility State & Interaction Key
-    var showControls by remember { mutableStateOf(false) }
-    var controlsInteractionKey by remember { mutableIntStateOf(0) }
 
     // Media3 MediaSession to intercept and handle system and Bluetooth headset/speaker media buttons
     val mediaSession = remember(exoPlayer) {
@@ -2663,6 +2675,10 @@ fun RezkaPlayer(
                                                     exoPlayer.pause()
                                                     isPlayWhenReady = false
                                                 } else {
+                                                    if (playbackState == Player.STATE_ENDED) {
+                                                        exoPlayer.seekTo(0L)
+                                                        currentPosition = 0L
+                                                    }
                                                     exoPlayer.play()
                                                     isPlayWhenReady = true
                                                 }
@@ -3220,6 +3236,9 @@ fun RezkaPlayer(
                             onClick = {
                                 showAutoNextCountdown = false
                                 isAutoNextDismissed = true
+                                showControls = true
+                                isScreenLocked = false
+                                controlsInteractionKey++
                             },
                             border = BorderStroke(1.dp, CinemaMuted),
                             shape = RoundedCornerShape(12.dp),

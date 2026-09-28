@@ -777,4 +777,25 @@ object CountryFlags {
         val clean = stripFlags(text).trim().lowercase().removeSuffix(".").removeSuffix(",")
         return KNOWN_GENRES.contains(clean)
     }
+
+    /**
+     * Высокопроизводительное извлечение распознанных стран из подзаголовка карточки каталога
+     * без регулярных выражений и лишних аллокаций.
+     */
+    fun extractCountries(subtitle: String): List<String> {
+        if (subtitle.isBlank()) return emptyList()
+        val parts = subtitle.split(",", "/", ";").map { it.trim() }.filter { it.isNotEmpty() }
+        val result = ArrayList<String>(2)
+        for (part in parts) {
+            if (isYearToken(part) || isAgeToken(part) || isGenreToken(part)) continue
+            val pureName = stripFlags(part).trim()
+            if (pureName.isEmpty()) continue
+            val flag = getFlag(pureName, fallbackToDefault = false)
+            if (flag.isNotEmpty() || COUNTRIES_WITHOUT_EMOJI.contains(cleanCountryName(pureName))) {
+                val capitalized = pureName.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+                result.add(capitalized)
+            }
+        }
+        return result
+    }
 }

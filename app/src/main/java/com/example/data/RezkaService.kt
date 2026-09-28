@@ -420,6 +420,7 @@ object RezkaService {
                     RezkaType.SERIES -> "series"
                     RezkaType.ANIME -> "animation"
                     RezkaType.CARTOON -> "cartoons"
+                    RezkaType.COLLECTIONS -> "collections"
                 }
                 return "$currentBase/$categoryPath/$id.html"
             }
@@ -452,6 +453,7 @@ object RezkaService {
                 RezkaType.SERIES -> "series"
                 RezkaType.ANIME -> "animation"
                 RezkaType.CARTOON -> "cartoons"
+                RezkaType.COLLECTIONS -> "collections"
             }
             return "$currentBase/$categoryPath/$id.html"
         }
@@ -816,6 +818,13 @@ object RezkaService {
     private val _tvModePreference = MutableStateFlow("auto")
     val tvModePreference: StateFlow<String> = _tvModePreference.asStateFlow()
 
+    // Выбор плеера для воспроизведения (локальная настройка, без облачной синхронизации)
+    const val PLAYER_INTERNAL = "internal"
+    const val PLAYER_ASK_EXTERNAL = "ask_external"
+
+    private val _selectedPlayer = MutableStateFlow(PLAYER_INTERNAL)
+    val selectedPlayer: StateFlow<String> = _selectedPlayer.asStateFlow()
+
     // Сетка карточек в каталоге (auto или "WxH", где W in 1..10, H in 1..5)
     const val GRID_MODE_AUTO = "auto"
     data class CardGridLayout(val columns: Int, val rows: Int) {
@@ -877,8 +886,17 @@ object RezkaService {
         val savedTvMode = prefs?.getString("tv_mode_preference", "auto") ?: "auto"
         _tvModePreference.value = savedTvMode
 
+        val savedPlayer = prefs?.getString("selected_video_player", PLAYER_INTERNAL) ?: PLAYER_INTERNAL
+        _selectedPlayer.value = savedPlayer
+
         val savedGridMode = prefs?.getString("card_grid_mode", GRID_MODE_AUTO) ?: GRID_MODE_AUTO
         _cardGridMode.value = if (savedGridMode == GRID_MODE_AUTO || parseCardGrid(savedGridMode) != null) savedGridMode else GRID_MODE_AUTO
+    }
+
+    fun setSelectedPlayer(playerKey: String) {
+        val clean = playerKey.trim().ifEmpty { PLAYER_INTERNAL }
+        _selectedPlayer.value = clean
+        prefs?.edit()?.putString("selected_video_player", clean)?.apply()
     }
 
     fun setDefaultQuality(quality: String) {
@@ -1164,7 +1182,7 @@ object RezkaService {
         }
 
         val normalized = normalizeMirrorUrl(mirrorUrl)
-        val catalogUrl = buildCatalogUrl(RezkaType.MOVIE, SectionType.LATEST, "", 1, baseUrl = normalized)
+        val catalogUrl = buildCatalogUrl(RezkaType.MOVIE, SectionType.LATEST, "", page = 1, baseUrl = normalized)
         try {
             val request = Request.Builder()
                 .url(catalogUrl)
@@ -1265,7 +1283,9 @@ object RezkaService {
         streamCache.evictAll()
         seasonEpisodesCache.evictAll()
         translatorPremiumCache.evictAll()
+        collectionsCache.evictAll()
         categoryGenres.clear()
+        categoryYears.clear()
         cookieJar.clear()
         try {
             client.connectionPool.evictAll()
@@ -1276,7 +1296,7 @@ object RezkaService {
     /**
      * Высокоточная проверка HTML-документа на наличие страниц защиты от ботов (Cloudflare, Anubis, DDOS-GUARD и т.д.)
      */
-    fun isAntiBotPage(html: String, doc: org.jsoup.nodes.Document): Boolean {
+    fun isAntiBotPage(html: String, doc: org.jsoup.nodes.Document? = null): Boolean {
         if (html.isBlank()) return false
         val lowerHtml = html.lowercase()
         val botKeywords = listOf(
@@ -1299,10 +1319,14 @@ object RezkaService {
             }
         }
 
-        val title = doc.selectFirst(".b-post__title h1")?.text()
-            ?: doc.selectFirst(".b-post__title")?.text()
-            ?: doc.selectFirst("h1")?.text()
-            ?: doc.title()
+        val title = if (doc != null) {
+            doc.selectFirst(".b-post__title h1")?.text()
+                ?: doc.selectFirst(".b-post__title")?.text()
+                ?: doc.selectFirst("h1")?.text()
+                ?: doc.title()
+        } else {
+            Regex("""<title[^>]*>(.*?)</title>""", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1).orEmpty()
+        }
 
         return isAntiBotTitle(title)
     }
@@ -1409,9 +1433,15 @@ object RezkaService {
     }
 
     private val categoryGenres = ConcurrentHashMap<RezkaType, List<GenreItem>>()
+    private val categoryYears = ConcurrentHashMap<RezkaType, List<YearItem>>()
+    private val collectionsCache = LruCache<String, List<CollectionItem>>(20)
 
     fun getGenresForCategory(type: RezkaType): List<GenreItem> {
         return categoryGenres[type] ?: listOf(GenreItem("Без жанра", ""))
+    }
+
+    fun getYearsForCategory(type: RezkaType): List<YearItem> {
+        return categoryYears[type] ?: listOf(YearItem("Все года", ""))
     }
 
     private fun parseGenresFromHtml(doc: org.jsoup.nodes.Document, type: RezkaType) {
@@ -1420,6 +1450,7 @@ object RezkaService {
             RezkaType.SERIES -> "series"
             RezkaType.ANIME -> "animation"
             RezkaType.CARTOON -> "cartoons"
+            RezkaType.COLLECTIONS -> "collections"
         }
 
         val genres = mutableListOf<GenreItem>()
@@ -1456,13 +1487,90 @@ object RezkaService {
     }
 
     /**
-     * Высокооптимизированный генератор URL каталога без вызова регулярных выражений в GC
+     * Динамический парсинг годов с сайта без хардкода.
+     * Извлекает актуальный селект select.select-year из шапки категории или блоков фильтрации.
+     */
+    private fun parseYearsFromHtml(doc: org.jsoup.nodes.Document, type: RezkaType) {
+        val years = ArrayList<YearItem>()
+        years.add(YearItem("Все года", ""))
+
+        try {
+            val blockId = when (type) {
+                RezkaType.MOVIE -> "find-best-block-1"
+                RezkaType.SERIES -> "find-best-block-2"
+                RezkaType.CARTOON -> "find-best-block-3"
+                RezkaType.ANIME -> "find-best-block-82"
+                else -> ""
+            }
+
+            // 1. Извлечение из специализированного блока категории
+            var yearSelect = if (blockId.isNotEmpty()) doc.select("#$blockId select.select-year").firstOrNull() else null
+            // 2. Если не найден, взять общий select.select-year
+            if (yearSelect == null) {
+                yearSelect = doc.select("select.select-year").firstOrNull()
+            }
+            // 3. Дополнительные фильтры страницы
+            if (yearSelect == null) {
+                yearSelect = doc.select("select[name*='year'], .additional-filter-block select").firstOrNull()
+            }
+
+            if (yearSelect != null) {
+                val options = yearSelect.select("option")
+                for (opt in options) {
+                    val rawVal = opt.attr("value").trim()
+                    val text = opt.text().trim()
+                    if (rawVal == "0" || rawVal.isEmpty() || text.contains("все время", ignoreCase = true) || text.contains("выбрать год", ignoreCase = true)) {
+                        continue
+                    }
+                    if (rawVal.all { it.isDigit() } && years.none { it.year == rawVal }) {
+                        years.add(YearItem(name = text.ifEmpty { rawVal }, year = rawVal))
+                    }
+                }
+            }
+
+            // Если селекты отсутствовали, ищем ссылки на года в HTML
+            if (years.size <= 1) {
+                val categorySlug = when (type) {
+                    RezkaType.MOVIE -> "films"
+                    RezkaType.SERIES -> "series"
+                    RezkaType.ANIME -> "animation"
+                    RezkaType.CARTOON -> "cartoons"
+                    else -> "films"
+                }
+                val yearRegex = Regex("""/$categorySlug/(?:[a-zA-Z0-9_-]+/)?(19\d{2}|20\d{2})/?(?:\?|$)""")
+                val links = doc.select("a[href]")
+                val parsedYearsSet = LinkedHashSet<String>()
+                for (link in links) {
+                    val href = link.attr("href")
+                    val m = yearRegex.find(href)
+                    if (m != null) {
+                        parsedYearsSet.add(m.groupValues[1])
+                    }
+                }
+                for (y in parsedYearsSet.sortedDescending()) {
+                    if (years.none { it.year == y }) {
+                        years.add(YearItem(name = y, year = y))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Ошибка парсинга годов для $type", e)
+        }
+
+        if (years.size > 1) {
+            categoryYears[type] = years
+        }
+    }
+
+    /**
+     * Высокооптимизированный генератор URL каталога с поддержкой фильтрации по разделу, жанру и году
      */
     fun buildCatalogUrl(
         type: RezkaType,
         section: SectionType,
         genre: String,
-        page: Int,
+        year: String = "",
+        page: Int = 1,
         baseUrl: String = currentBaseUrl
     ): String {
         val domain = baseUrl.trimEnd('/')
@@ -1471,17 +1579,27 @@ object RezkaService {
             RezkaType.SERIES -> "series"
             RezkaType.ANIME -> "animation"
             RezkaType.CARTOON -> "cartoons"
+            RezkaType.COLLECTIONS -> "collections"
         }
         val cleanGenre = genre.trim().trim('/')
+        val cleanYear = year.trim().trim('/')
 
-        val sb = StringBuilder(domain.length + 40)
+        val sb = StringBuilder(domain.length + 60)
             .append(domain)
             .append('/')
             .append(categoryPath)
             .append('/')
 
-        if (cleanGenre.isNotEmpty()) {
-            sb.append(cleanGenre).append('/')
+        if (cleanYear.isNotEmpty()) {
+            sb.append("best/")
+            if (cleanGenre.isNotEmpty()) {
+                sb.append(cleanGenre).append('/')
+            }
+            sb.append(cleanYear).append('/')
+        } else {
+            if (cleanGenre.isNotEmpty()) {
+                sb.append(cleanGenre).append('/')
+            }
         }
 
         if (page > 1) {
@@ -1500,13 +1618,19 @@ object RezkaService {
     }
 
     /**
-     * Получение каталога фильмов/сериалов с актуального зеркала с динамической фильтрацией по разделу и жанру
+     * Получение каталога фильмов/сериалов с актуального зеркала с динамической фильтрацией по разделу, жанру и году
      */
-    suspend fun getCatalog(type: RezkaType, section: SectionType = SectionType.LATEST, genre: String = "", page: Int = 1): List<RezkaItem> = withContext(Dispatchers.IO) {
-        val cacheKey = "$type-$section-$genre-$page"
+    suspend fun getCatalog(
+        type: RezkaType,
+        section: SectionType = SectionType.LATEST,
+        genre: String = "",
+        year: String = "",
+        page: Int = 1
+    ): List<RezkaItem> = withContext(Dispatchers.IO) {
+        val cacheKey = "$type-$section-$genre-$year-$page"
         catalogCache.get(cacheKey)?.let { return@withContext it }
 
-        val url = buildCatalogUrl(type, section, genre, page)
+        val url = buildCatalogUrl(type, section, genre, year, page)
 
         val maxAttempts = 3
         var lastException: Exception? = null
@@ -1521,8 +1645,17 @@ object RezkaService {
                     .header("Referer", "$currentBaseUrl/")
                     .build()
 
-                val (html, isSuccess) = client.newCall(request).execute().use { response ->
-                    Pair(response.body?.string().orEmpty(), response.isSuccessful)
+                val (html, statusCode, isSuccess) = client.newCall(request).execute().use { response ->
+                    Triple(response.body?.string().orEmpty(), response.code, response.isSuccessful)
+                }
+
+                // Rezka возвращает HTTP 404 для категорий или комбинаций фильтров с 0 результатов
+                if (statusCode == 404 && html.isNotBlank()) {
+                    if (html.contains("Ничего не можем найти", ignoreCase = true) ||
+                        html.contains("b-content", ignoreCase = true)) {
+                        catalogCache.put(cacheKey, emptyList())
+                        return@withContext emptyList()
+                    }
                 }
 
                 if (!isSuccess || html.isBlank()) {
@@ -1530,6 +1663,10 @@ object RezkaService {
                         kotlinx.coroutines.delay(500L * attempt)
                         continue
                     } else {
+                        if (statusCode == 404) {
+                            catalogCache.put(cacheKey, emptyList())
+                            return@withContext emptyList()
+                        }
                         throw Exception("Не удалось загрузить данные")
                     }
                 }
@@ -1546,20 +1683,10 @@ object RezkaService {
                 }
 
                 parseGenresFromHtml(doc, type)
+                parseYearsFromHtml(doc, type)
                 val items = parseCatalogHtml(html, type)
-                if (items.isNotEmpty()) {
-                    catalogCache.put(cacheKey, items)
-                    return@withContext items
-                } else if (page > 1) {
-                    return@withContext emptyList()
-                } else {
-                    if (attempt < maxAttempts) {
-                        kotlinx.coroutines.delay(500L * attempt)
-                        continue
-                    } else {
-                        throw Exception("Фильмы не найдены")
-                    }
-                }
+                catalogCache.put(cacheKey, items)
+                return@withContext items
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 lastException = e
@@ -1570,6 +1697,147 @@ object RezkaService {
             }
         }
         throw lastException ?: Exception("Не удалось загрузить данные")
+    }
+
+    data class CollectionsPageResult(
+        val items: List<CollectionItem>,
+        val totalPages: Int
+    )
+
+    private val COLLECTION_ITEM_REGEX = Regex(
+        """<div class=["']b-content__collections_item["']\s+data-url=["']([^"']+)["'][^>]*>(.*?)</div>\s*</div>""",
+        RegexOption.DOT_MATCHES_ALL
+    )
+    private val COLLECTION_IMG_REGEX = Regex("""<img[^>]+src=["']([^"']+)["']""")
+    private val COLLECTION_NUM_REGEX = Regex("""class=["'][^"']*num[^"']*["'][^>]*>(\d+)</div>""")
+    private val COLLECTION_TITLE_REGEX = Regex("""class=["']title["'][^>]*>(.*?)</a>""")
+    private val COLLECTION_PAGE_REGEX = Regex("""/collections/page/(\d+)/""")
+
+    /**
+     * Загрузка конкретной страницы подборок
+     */
+    suspend fun fetchCollectionsPage(page: Int = 1): CollectionsPageResult = withContext(Dispatchers.IO) {
+        val domain = currentBaseUrl.trimEnd('/')
+        val url = if (page > 1) "$domain/collections/page/$page/" else "$domain/collections/"
+
+        val maxAttempts = 3
+        for (attempt in 1..maxAttempts) {
+            try {
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", USER_AGENT)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                    .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+                    .header("Referer", "$currentBaseUrl/")
+                    .build()
+
+                val (html, isSuccess) = client.newCall(request).execute().use { response ->
+                    Pair(response.body?.string().orEmpty(), response.isSuccessful)
+                }
+
+                if (!isSuccess || html.isBlank()) {
+                    if (attempt < maxAttempts) {
+                        kotlinx.coroutines.delay(400L * attempt)
+                        continue
+                    } else {
+                        return@withContext CollectionsPageResult(emptyList(), 1)
+                    }
+                }
+
+                if (isAntiBotPage(html, null)) {
+                    if (attempt < maxAttempts) {
+                        kotlinx.coroutines.delay(400L * attempt)
+                        continue
+                    }
+                }
+
+                var maxPage = 1
+                for (m in COLLECTION_PAGE_REGEX.findAll(html)) {
+                    val p = m.groupValues[1].toIntOrNull() ?: 1
+                    if (p > maxPage) maxPage = p
+                }
+
+                val items = ArrayList<CollectionItem>()
+                for (m in COLLECTION_ITEM_REGEX.findAll(html)) {
+                    val rawUrl = m.groupValues[1].trim()
+                    val content = m.groupValues[2]
+
+                    val itemUrl = normalizeUrl(rawUrl, currentBaseUrl)
+                    val rawImg = COLLECTION_IMG_REGEX.find(content)?.groupValues?.get(1)?.trim().orEmpty()
+                    val imageUrl = normalizeUrl(rawImg, currentBaseUrl)
+                    val count = COLLECTION_NUM_REGEX.find(content)?.groupValues?.get(1)?.trim().orEmpty()
+                    val title = COLLECTION_TITLE_REGEX.find(content)?.groupValues?.get(1)?.trim().orEmpty()
+
+                    val id = Regex("""/collections/(\d+)""").find(itemUrl)?.groupValues?.get(1) ?: itemUrl
+
+                    if (title.isNotEmpty() && itemUrl.isNotEmpty()) {
+                        items.add(
+                            CollectionItem(
+                                id = id,
+                                title = title,
+                                url = itemUrl,
+                                imageUrl = imageUrl,
+                                count = count
+                            )
+                        )
+                    }
+                }
+
+                return@withContext CollectionsPageResult(items, maxPage)
+            } catch (e: Exception) {
+                if (attempt == maxAttempts) {
+                    Log.e(TAG, "Ошибка загрузки страницы подборок $url", e)
+                }
+            }
+        }
+        CollectionsPageResult(emptyList(), 1)
+    }
+
+    /**
+     * Загрузка всех подборок без пагинации в приложении.
+     * Загружает все доступные страницы параллельно и объединяет их в единый кэшированный список.
+     */
+    suspend fun getCollections(fetchAll: Boolean = true): List<CollectionItem> = withContext(Dispatchers.IO) {
+        val cacheKey = if (fetchAll) "collections-all" else "collections-1"
+        collectionsCache.get(cacheKey)?.let { return@withContext it }
+
+        val firstPageResult = fetchCollectionsPage(1)
+        val firstItems = firstPageResult.items
+        val totalPages = firstPageResult.totalPages
+
+        if (!fetchAll || totalPages <= 1) {
+            if (firstItems.isNotEmpty()) collectionsCache.put(cacheKey, firstItems)
+            return@withContext firstItems
+        }
+
+        val allItems = ArrayList<CollectionItem>(firstItems.size * totalPages)
+        allItems.addAll(firstItems)
+
+        coroutineScope {
+            val deferredPages = (2..totalPages).map { p ->
+                async(Dispatchers.IO) {
+                    try {
+                        fetchCollectionsPage(p).items
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Ошибка загрузки страницы подборок $p", e)
+                        emptyList<CollectionItem>()
+                    }
+                }
+            }
+            val results = deferredPages.awaitAll()
+            for (pageItems in results) {
+                for (item in pageItems) {
+                    if (allItems.none { it.id == item.id || it.url == item.url }) {
+                        allItems.add(item)
+                    }
+                }
+            }
+        }
+
+        if (allItems.isNotEmpty()) {
+            collectionsCache.put(cacheKey, allItems)
+        }
+        return@withContext allItems
     }
 
     /**
@@ -1616,8 +1884,17 @@ object RezkaService {
                     .header("Referer", "$currentBaseUrl/")
                     .build()
 
-                val (html, isSuccess) = client.newCall(request).execute().use { response ->
-                    Pair(response.body?.string().orEmpty(), response.isSuccessful)
+                val (html, statusCode, isSuccess) = client.newCall(request).execute().use { response ->
+                    Triple(response.body?.string().orEmpty(), response.code, response.isSuccessful)
+                }
+
+                // Rezka возвращает HTTP 404 когда в подборке ничего нет или фильтр не дал результатов
+                if (statusCode == 404 && html.isNotBlank()) {
+                    if (html.contains("Ничего не можем найти", ignoreCase = true) ||
+                        html.contains("b-content", ignoreCase = true)) {
+                        catalogCache.put(cacheKey, emptyList())
+                        return@withContext emptyList()
+                    }
                 }
 
                 if (!isSuccess || html.isBlank()) {
@@ -1625,6 +1902,10 @@ object RezkaService {
                         kotlinx.coroutines.delay(500L * attempt)
                         continue
                     } else {
+                        if (statusCode == 404) {
+                            catalogCache.put(cacheKey, emptyList())
+                            return@withContext emptyList()
+                        }
                         throw Exception("Не удалось загрузить данные")
                     }
                 }
@@ -1640,20 +1921,14 @@ object RezkaService {
                     }
                 }
 
-                val items = parseCatalogHtml(html, RezkaType.MOVIE)
-                if (items.isNotEmpty()) {
-                    catalogCache.put(cacheKey, items)
-                    return@withContext items
-                } else if (page > 1) {
+                if (html.contains("Ничего не можем найти по данному запросу", ignoreCase = true)) {
+                    catalogCache.put(cacheKey, emptyList())
                     return@withContext emptyList()
-                } else {
-                    if (attempt < maxAttempts) {
-                        kotlinx.coroutines.delay(500L * attempt)
-                        continue
-                    } else {
-                        throw Exception("Фильмы не найдены")
-                    }
                 }
+
+                val items = parseCatalogHtml(html, RezkaType.MOVIE)
+                catalogCache.put(cacheKey, items)
+                return@withContext items
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 lastException = e
@@ -2447,21 +2722,39 @@ object RezkaService {
                                 val isCurrent = item.hasClass("current") || item.hasClass("active") || linkEl == null
                                 val itemId = if (url.isNotEmpty()) extractIdFromUrl(url) else ""
 
-                                // Находим год в элементе с классом .td_year
-                                val yearEl = item.selectFirst(".td_year")
+                                // Находим год в элементе с классом .td_year или .year
+                                val yearEl = item.selectFirst(".td_year, .year, .td-year")
                                 var itemYear = ""
                                 if (yearEl != null) {
                                     // Из td_year выбрасываем всё кроме цифр
                                     itemYear = yearEl.text().replace(Regex("[^0-9]"), "").trim()
                                 }
 
-                                // Название фильма получаем путем клонирования элемента и удаления лишних частей (.td_rating, .td_year и т.д.)
+                                // Название фильма получаем путем клонирования элемента и удаления лишних частей (.td_num, .td_rating, .td_year и т.д.)
                                 val titleClone = item.clone()
-                                titleClone.select(".td_rating, .td-rating, .rating, .kp, .imdb, .td_year, .td-year, .year").remove()
+                                titleClone.select(".td_num, .td-num, .num, .number, .item_num, .td_rating, .td-rating, .rating, .kp, .imdb, .td_year, .td-year, .year").remove()
                                 
                                 var cleanedTitle = titleClone.text().trim()
                                 
-                                // Если год не был найден в .td_year, попробуем извлечь его регулярным выражением из названия
+                                // Извлечение года выхода в самом конце строки (как на сайте HDRezka в блоке частей)
+                                if (itemYear.isEmpty()) {
+                                    val endYearRegex = Regex("""[\s(]+((?:19|20)\d{2})\s*\)?\s*(?:г(?:од|\.)?)?\s*$""")
+                                    val endYearMatch = endYearRegex.find(cleanedTitle)
+                                    if (endYearMatch != null) {
+                                        itemYear = endYearMatch.groupValues[1]
+                                        cleanedTitle = cleanedTitle.substring(0, endYearMatch.range.first).trim()
+                                    } else {
+                                        // Проверяем исходный текст всего элемента item
+                                        val itemRawText = item.text().trim()
+                                        val itemEndYearMatch = endYearRegex.find(itemRawText)
+                                        if (itemEndYearMatch != null) {
+                                            itemYear = itemEndYearMatch.groupValues[1]
+                                            cleanedTitle = cleanedTitle.replace(Regex("""[\s(]*""" + itemYear + """\s*\)?\s*(?:г(?:од|\.)?)?\s*$"""), "").trim()
+                                        }
+                                    }
+                                }
+
+                                // Если год не был найден в конце строки, попробуем извлечь его регулярным выражением из названия
                                 if (itemYear.isEmpty()) {
                                     val yearRegex = Regex("""\((19\d{2}|20\d{2})\)""")
                                     val yearMatch = yearRegex.find(cleanedTitle)
@@ -2486,9 +2779,12 @@ object RezkaService {
                                 // Вырезаем остаточную оценку, если она указана в конце строки просто числом с точкой или запятой (например, "7.5" или "7,5")
                                 cleanedTitle = cleanedTitle.replace(Regex("""\b\d[.,]\d\b\s*$"""), "")
                                 
+                                // Убираем нумерацию в начале строки (например "1.", "01.", "1 -", "№1.", "[1]", etc.)
+                                cleanedTitle = cleanedTitle.replace(Regex("""^\s*(?:\[\d+\]|\(\d+\)|(?:№\s*|#\s*)?\d+\s*[\.)\-:]+)\s*"""), "")
+
                                 // Чистим лишние пробелы и разделители на концах названия
                                 cleanedTitle = cleanedTitle.replace(Regex("""\s+"""), " ").trim()
-                                if (cleanedTitle.endsWith(",") || cleanedTitle.endsWith(";") || cleanedTitle.endsWith("-")) {
+                                if (cleanedTitle.endsWith(",") || cleanedTitle.endsWith(";") || cleanedTitle.endsWith("-") || cleanedTitle.endsWith(":")) {
                                     cleanedTitle = cleanedTitle.substring(0, cleanedTitle.length - 1).trim()
                                 }
                                 cleanedTitle = cleanedTitle.replace(Regex("""\s+"""), " ").trim()

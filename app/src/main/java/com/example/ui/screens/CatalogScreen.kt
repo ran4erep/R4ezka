@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -52,14 +53,19 @@ import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.isImeVisible
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun CatalogScreen(
     viewModel: RezkaViewModel,
     onNavigateToDetail: (RezkaItem) -> Unit,
+    onNavigateToThematic: (String, String) -> Unit = { _, _ -> },
     onNavigateToSettings: () -> Unit = {},
     isTopScreen: Boolean = true,
+    isTvMode: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -68,6 +74,11 @@ fun CatalogScreen(
     val currentSection by viewModel.currentSection.collectAsState()
     val currentGenre by viewModel.currentGenre.collectAsState()
     val genresList by viewModel.genresList.collectAsState()
+    val currentYear by viewModel.currentYear.collectAsState()
+    val yearsList by viewModel.yearsList.collectAsState()
+    val currentCountry by viewModel.currentCountry.collectAsState()
+    val countriesList by viewModel.countriesList.collectAsState()
+    val collectionsState by viewModel.collectionsState.collectAsState()
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val isEndReached by viewModel.isEndReached.collectAsState()
     val cardGridMode by viewModel.cardGridMode.collectAsState()
@@ -76,11 +87,22 @@ fun CatalogScreen(
     val searchHistory by viewModel.searchHistory.collectAsState()
     var isSearchFocused by remember { mutableStateOf(false) }
 
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val isMobilePortrait = !isTvMode && !isLandscape
+
+    var isFiltersExpanded by rememberSaveable { mutableStateOf(false) }
+
+    val hasActiveFilters = currentSection != SectionType.LATEST ||
+            currentGenre.isNotEmpty() ||
+            currentYear.isNotEmpty() ||
+            currentCountry.isNotEmpty()
+
     // Persistent grid state for catalog with smart scroll reset on search or filter change
     val gridState = rememberSavedLazyGridState("catalog", viewModel)
 
-    val currentCatalogKey = remember(currentType, currentSection, currentGenre, viewModel.searchQuery) {
-        "${currentType.name}_${currentSection.name}_${currentGenre}_${viewModel.searchQuery.trim()}"
+    val currentCatalogKey = remember(currentType, currentSection, currentGenre, currentYear, currentCountry, viewModel.searchQuery) {
+        "${currentType.name}_${currentSection.name}_${currentGenre}_${currentYear}_${currentCountry}_${viewModel.searchQuery.trim()}"
     }
     var lastRenderedCatalogKey by rememberSaveable { mutableStateOf(currentCatalogKey) }
 
@@ -132,61 +154,175 @@ fun CatalogScreen(
             .background(CinemaBlack)
     ) {
         // ---- SEARCH BAR ----
-        TextField(
-            value = searchInput,
-            onValueChange = {
-                searchInput = it
-                viewModel.onSearchQueryChanged(it)
-            },
-            placeholder = { Text("Поиск фильмов, сериалов, аниме...", color = CinemaMuted) },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Поиск", tint = CinemaPrimary) },
-            trailingIcon = {
-                if (searchInput.isNotEmpty()) {
-                    IconButton(onClick = {
-                        searchInput = ""
-                        viewModel.onSearchQueryChanged("")
-                    }) {
-                        Icon(Icons.Default.Close, contentDescription = "Очистить", tint = CinemaTextGray)
+        if (isMobilePortrait && currentType != RezkaType.COLLECTIONS) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TextField(
+                    value = searchInput,
+                    onValueChange = {
+                        searchInput = it
+                        viewModel.onSearchQueryChanged(it)
+                    },
+                    placeholder = { Text("Поиск фильмов, сериалов, аниме...", color = CinemaMuted) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Поиск", tint = CinemaPrimary) },
+                    trailingIcon = {
+                        if (searchInput.isNotEmpty()) {
+                            IconButton(onClick = {
+                                searchInput = ""
+                                viewModel.onSearchQueryChanged("")
+                            }) {
+                                Icon(Icons.Default.Close, contentDescription = "Очистить", tint = CinemaTextGray)
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            viewModel.commitSearchQuery(searchInput)
+                            keyboardController?.hide()
+                            focusManager.clearFocus()
+                        }
+                    ),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = CinemaDark,
+                        unfocusedContainerColor = CinemaDark,
+                        focusedTextColor = CinemaTextWhite,
+                        unfocusedTextColor = CinemaTextWhite,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp)
+                        .onFocusChanged { isSearchFocused = it.isFocused }
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown &&
+                                (keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
+                                 keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER)
+                            ) {
+                                viewModel.commitSearchQuery(searchInput)
+                                keyboardController?.hide()
+                                focusManager.clearFocus()
+                                true
+                            } else false
+                        }
+                        .testTag("catalog_search_bar")
+                )
+
+                // Кнопка скрытия/раскрытия выпадающих списков чисто для телефонов в вертикальной ориентации
+                // Умный клик: одиночное нажатие переключает видимость, двойное сбрасывает фильтры без открытия/закрытия
+                val filterClickScope = rememberCoroutineScope()
+                var singleClickJob by remember { mutableStateOf<Job?>(null) }
+
+                Surface(
+                    onClick = {
+                        val activeJob = singleClickJob
+                        if (activeJob != null && activeJob.isActive) {
+                            // Второе нажатие пришло в пределах таймаута: отменяем одиночный клик и выполняем сброс!
+                            activeJob.cancel()
+                            singleClickJob = null
+                            viewModel.resetCatalogFilters()
+                        } else {
+                            // Первое нажатие: запускаем отложенный таймер одиночного клика
+                            singleClickJob = filterClickScope.launch {
+                                delay(280L)
+                                isFiltersExpanded = !isFiltersExpanded
+                            }
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    color = CinemaDark,
+                    border = BorderStroke(1.dp, CinemaBorder),
+                    modifier = Modifier
+                        .size(52.dp)
+                        .testTag("catalog_filter_toggle_button")
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.FilterList,
+                            contentDescription = if (isFiltersExpanded) "Скрыть фильтры" else "Показать фильтры",
+                            tint = CinemaTextWhite,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        // Акцентная точка активных фильтров (всегда отображается, даже если фильтры открыты)
+                        if (hasActiveFilters) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(top = 9.dp, end = 9.dp)
+                                    .size(8.dp)
+                                    .background(CinemaPrimary, CircleShape)
+                            )
+                        }
                     }
                 }
-            },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(
-                onSearch = {
-                    viewModel.commitSearchQuery(searchInput)
-                    keyboardController?.hide()
-                    focusManager.clearFocus()
-                }
-            ),
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = CinemaDark,
-                unfocusedContainerColor = CinemaDark,
-                focusedTextColor = CinemaTextWhite,
-                unfocusedTextColor = CinemaTextWhite,
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-                disabledIndicatorColor = Color.Transparent
-            ),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .height(52.dp)
-                .onFocusChanged { isSearchFocused = it.isFocused }
-                .onKeyEvent { keyEvent ->
-                    if (keyEvent.type == KeyEventType.KeyDown &&
-                        (keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
-                         keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER)
-                    ) {
+            }
+        } else {
+            // Для телевизоров и ландшафтной ориентации исходное поле во всю ширину
+            TextField(
+                value = searchInput,
+                onValueChange = {
+                    searchInput = it
+                    viewModel.onSearchQueryChanged(it)
+                },
+                placeholder = { Text("Поиск фильмов, сериалов, аниме...", color = CinemaMuted) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Поиск", tint = CinemaPrimary) },
+                trailingIcon = {
+                    if (searchInput.isNotEmpty()) {
+                        IconButton(onClick = {
+                            searchInput = ""
+                            viewModel.onSearchQueryChanged("")
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = "Очистить", tint = CinemaTextGray)
+                        }
+                    }
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(
+                    onSearch = {
                         viewModel.commitSearchQuery(searchInput)
                         keyboardController?.hide()
                         focusManager.clearFocus()
-                        true
-                    } else false
-                }
-                .testTag("catalog_search_bar")
-        )
+                    }
+                ),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = CinemaDark,
+                    unfocusedContainerColor = CinemaDark,
+                    focusedTextColor = CinemaTextWhite,
+                    unfocusedTextColor = CinemaTextWhite,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    disabledIndicatorColor = Color.Transparent
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .height(52.dp)
+                    .onFocusChanged { isSearchFocused = it.isFocused }
+                    .onKeyEvent { keyEvent ->
+                        if (keyEvent.type == KeyEventType.KeyDown &&
+                            (keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
+                             keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER)
+                        ) {
+                            viewModel.commitSearchQuery(searchInput)
+                            keyboardController?.hide()
+                            focusManager.clearFocus()
+                            true
+                        } else false
+                    }
+                    .testTag("catalog_search_bar")
+            )
+        }
 
         // ---- ВСПЛЫВАЮЩАЯ ИСТОРИЯ ПОИСКА (ПОСЛЕДНИЕ 5 ЗАПРОСОВ) ----
         AnimatedVisibility(
@@ -285,202 +421,463 @@ fun CatalogScreen(
             }
         }
 
-        // ---- FILTERS DROPDOWNS (Category, Section, Genre) ----
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp, horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Dropdown 1: Категории
-            val categories = listOf(
-                RezkaType.MOVIE to "Фильмы",
-                RezkaType.SERIES to "Сериалы",
-                RezkaType.ANIME to "Аниме",
-                RezkaType.CARTOON to "Мультики"
-            )
-            val currentCategoryPair = categories.find { it.first == currentType } ?: categories[0]
+        // ---- FILTERS DROPDOWNS ----
+        val categories = listOf(
+            RezkaType.MOVIE to "Фильмы",
+            RezkaType.SERIES to "Сериалы",
+            RezkaType.ANIME to "Аниме",
+            RezkaType.CARTOON to "Мультики",
+            RezkaType.COLLECTIONS to "Подборки"
+        )
+        val currentCategoryPair = categories.find { it.first == currentType } ?: categories[0]
 
-            RezkaDropdown(
-                label = "Категория",
-                options = categories,
-                selectedOption = currentCategoryPair,
-                onOptionSelected = { pair ->
-                    searchInput = ""
-                    viewModel.loadCatalog(type = pair.first, genre = "", forceRefresh = true)
-                },
-                getLabel = { it.second },
-                modifier = Modifier.weight(1f)
-            )
+        if (currentType == RezkaType.COLLECTIONS) {
+            // Для подборок: список категорий ВСЕГДА активен и виден на телефоне и любом экране
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 10.dp, horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RezkaDropdown(
+                    label = "Категория",
+                    options = categories,
+                    selectedOption = currentCategoryPair,
+                    onOptionSelected = { pair ->
+                        searchInput = ""
+                        viewModel.loadCatalog(type = pair.first, forceRefresh = true)
+                    },
+                    getLabel = { it.second },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        } else {
+            AnimatedVisibility(
+                visible = !isMobilePortrait || isFiltersExpanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                // Dropdown 2: Разделы
+                val sections = listOf(
+                    SectionType.LATEST,
+                    SectionType.POPULAR,
+                    SectionType.WATCHING,
+                    SectionType.AWAITING
+                )
 
-            // Dropdown 2: Разделы
-            val sections = listOf(
-                SectionType.LATEST,
-                SectionType.POPULAR,
-                SectionType.WATCHING,
-                SectionType.AWAITING
-            )
+                // Dropdown 3: Жанры
+                val currentGenreItem = genresList.find { it.slug == currentGenre } ?: genresList.firstOrNull() ?: GenreItem("Без жанра", "")
 
-            RezkaDropdown(
-                label = "Раздел",
-                options = sections,
-                selectedOption = currentSection,
-                onOptionSelected = { section ->
-                    searchInput = ""
-                    viewModel.loadCatalog(section = section, forceRefresh = true)
-                },
-                getLabel = { it.getDisplayName() },
-                modifier = Modifier.weight(1f)
-            )
+                // Dropdown 4: Года (динамически спарсенные с сайта, рядом с жанром)
+                val currentYearItem = yearsList.find { it.year == currentYear } ?: yearsList.firstOrNull() ?: YearItem("Все года", "")
 
-            // Dropdown 3: Жанры
-            val currentGenreItem = genresList.find { it.slug == currentGenre } ?: genresList.firstOrNull() ?: GenreItem("Без жанра", "")
+                // Dropdown 5: Страна
+                val currentCountryItem = countriesList.find { it.query == currentCountry } ?: countriesList.firstOrNull() ?: CountryItem("Все страны", "")
 
-            RezkaDropdown(
-                label = "Жанр",
-                options = genresList,
-                selectedOption = currentGenreItem,
-                onOptionSelected = { genreItem ->
-                    searchInput = ""
-                    viewModel.loadCatalog(genre = genreItem.slug, forceRefresh = true)
-                },
-                getLabel = { it.name },
-                modifier = Modifier.weight(1f)
-            )
+                if (isLandscape) {
+                    // Широкий экран: 5 фильтров в один аккуратный ряд
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 10.dp, horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        RezkaDropdown(
+                            label = "Категория",
+                            options = categories,
+                            selectedOption = currentCategoryPair,
+                            onOptionSelected = { pair ->
+                                searchInput = ""
+                                viewModel.loadCatalog(type = pair.first, genre = "", year = "", forceRefresh = true)
+                            },
+                            getLabel = { it.second },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        RezkaDropdown(
+                            label = "Раздел",
+                            options = sections,
+                            selectedOption = currentSection,
+                            onOptionSelected = { section ->
+                                searchInput = ""
+                                viewModel.loadCatalog(section = section, forceRefresh = true)
+                            },
+                            getLabel = { it.getDisplayName() },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        RezkaDropdown(
+                            label = "Жанр",
+                            options = genresList,
+                            selectedOption = currentGenreItem,
+                            onOptionSelected = { genreItem ->
+                                searchInput = ""
+                                viewModel.loadCatalog(genre = genreItem.slug, forceRefresh = true)
+                            },
+                            getLabel = { it.name },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        RezkaDropdown(
+                            label = "Год",
+                            options = yearsList,
+                            selectedOption = currentYearItem,
+                            onOptionSelected = { yearItem ->
+                                searchInput = ""
+                                viewModel.loadCatalog(year = yearItem.year, forceRefresh = true)
+                            },
+                            getLabel = { it.name },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        RezkaDropdown(
+                            label = "Страна",
+                            options = countriesList,
+                            selectedOption = currentCountryItem,
+                            onOptionSelected = { countryItem ->
+                                viewModel.setCountry(countryItem.query)
+                            },
+                            getLabel = { it.name },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                } else {
+                    // Мобильный вертикальный экран: 2 строки фильтров (жанры, года и страны объединены в одну строку)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp, horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        // Строка 1: Категория и Раздел
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            RezkaDropdown(
+                                label = "Категория",
+                                options = categories,
+                                selectedOption = currentCategoryPair,
+                                onOptionSelected = { pair ->
+                                    searchInput = ""
+                                    viewModel.loadCatalog(type = pair.first, genre = "", year = "", forceRefresh = true)
+                                },
+                                getLabel = { it.second },
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            RezkaDropdown(
+                                label = "Раздел",
+                                options = sections,
+                                selectedOption = currentSection,
+                                onOptionSelected = { section ->
+                                    searchInput = ""
+                                    viewModel.loadCatalog(section = section, forceRefresh = true)
+                                },
+                                getLabel = { it.getDisplayName() },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        // Строка 2: Жанры, Года и Страны в одну строку
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            RezkaDropdown(
+                                label = "Жанр",
+                                options = genresList,
+                                selectedOption = currentGenreItem,
+                                onOptionSelected = { genreItem ->
+                                    searchInput = ""
+                                    viewModel.loadCatalog(genre = genreItem.slug, forceRefresh = true)
+                                },
+                                getLabel = { it.name },
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            RezkaDropdown(
+                                label = "Год",
+                                options = yearsList,
+                                selectedOption = currentYearItem,
+                                onOptionSelected = { yearItem ->
+                                    searchInput = ""
+                                    viewModel.loadCatalog(year = yearItem.year, forceRefresh = true)
+                                },
+                                getLabel = { it.name },
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            RezkaDropdown(
+                                label = "Страна",
+                                options = countriesList,
+                                selectedOption = currentCountryItem,
+                                onOptionSelected = { countryItem ->
+                                    viewModel.setCountry(countryItem.query)
+                                },
+                                getLabel = { it.name },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
         }
 
-        // ---- CATALOG GRID / CONTENT ----
+        // ---- CATALOG / COLLECTIONS GRID / CONTENT ----
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
         ) {
-            when (val state = catalogState) {
-                is CatalogState.Loading -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
-                    }
-                }
-                is CatalogState.Error -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(32.dp),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(Icons.Default.CloudOff, contentDescription = null, tint = CinemaPrimary, modifier = Modifier.size(64.dp))
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(state.message, color = CinemaTextWhite, textAlign = TextAlign.Center, fontSize = 16.sp)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(
-                            onClick = { viewModel.loadCatalog(forceRefresh = true) },
-                            colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
-                        ) {
-                            Text("Повторить")
+            if (currentType == RezkaType.COLLECTIONS) {
+                // ---- ВЫВОД ПОДБОРОК (БЕЗ ПАГИНАЦИИ) ----
+                when (val cState = collectionsState) {
+                    is CollectionsState.Loading -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
                         }
                     }
-                }
-                is CatalogState.Success -> {
-                    if (state.items.isEmpty()) {
+                    is CollectionsState.Error -> {
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(24.dp),
+                                .padding(32.dp),
                             verticalArrangement = Arrangement.Center,
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Icon(Icons.Default.SearchOff, contentDescription = null, tint = CinemaMuted, modifier = Modifier.size(64.dp))
+                            Icon(Icons.Default.CloudOff, contentDescription = null, tint = CinemaPrimary, modifier = Modifier.size(64.dp))
                             Spacer(modifier = Modifier.height(16.dp))
-                            Text(
-                                text = if (searchInput.isNotBlank()) "Нам не удалось ничего найти.\nМожет стоит изменить поисковый запрос?" else "Ничего не найдено",
-                                color = CinemaTextGray,
-                                fontSize = 15.sp,
-                                textAlign = TextAlign.Center,
-                                lineHeight = 22.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    } else {
-                        // Ultra-efficient scroll observer via derivedStateOf
-                        val shouldLoadMore by remember {
-                            derivedStateOf {
-                                val totalItems = gridState.layoutInfo.totalItemsCount
-                                val lastVisibleIndex = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                                totalItems > 0 && lastVisibleIndex >= totalItems - 4
+                            Text(cState.message, color = CinemaTextWhite, textAlign = TextAlign.Center, fontSize = 16.sp)
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Button(
+                                onClick = { viewModel.loadCollections(forceRefresh = true) },
+                                colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
+                            ) {
+                                Text("Повторить")
                             }
                         }
-
-                        LaunchedEffect(shouldLoadMore, isLoadingMore, isEndReached) {
-                            if (shouldLoadMore && !isLoadingMore && !isEndReached && searchInput.isEmpty()) {
-                                viewModel.loadNextPage()
-                            }
-                        }
-
-                        // Засчитываем запрос в историю поиска при начале скролла результатов
-                        LaunchedEffect(gridState.isScrollInProgress) {
-                            if (gridState.isScrollInProgress && searchInput.isNotBlank()) {
-                                viewModel.commitSearchQuery(searchInput)
-                            }
-                        }
-
-                        val configuration = LocalConfiguration.current
-                        val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-
-                        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                            val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight, isLandscape) {
-                                com.example.ui.tv.CardGridEngine.calculate(
-                                    cardGridMode = cardGridMode,
-                                    availableWidth = maxWidth - 32.dp,
-                                    availableHeight = maxHeight - 12.dp,
-                                    isLandscapeOrTv = isLandscape
-                                )
-                            }
-
-                            val columnsCount = resolvedGrid.columns
-                            val cardHeight = resolvedGrid.cardHeight
-
-                            LazyVerticalGrid(
-                                columns = GridCells.Fixed(columnsCount),
-                                state = gridState,
-                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
-                                horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
-                                verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
+                    }
+                    is CollectionsState.Success -> {
+                        if (cState.items.isEmpty()) {
+                            Column(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .dpadScrollable(gridState)
-                                    .testTag("catalog_items_grid")
+                                    .padding(24.dp),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(Icons.Default.SearchOff, contentDescription = null, tint = CinemaMuted, modifier = Modifier.size(64.dp))
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = if (searchInput.isNotBlank()) "Подборок по вашему запросу не найдено" else "Ничего не можем найти по данному запросу",
+                                    color = CinemaTextGray,
+                                    fontSize = 15.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        } else {
+                            val configuration = LocalConfiguration.current
+                            val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                            val columns = if (isLandscape) 3 else 2
+
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(columns),
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .testTag("collections_grid")
                             ) {
                                 items(
-                                    items = state.items,
+                                    items = cState.items,
                                     key = { it.id }
-                                ) { item ->
-                                    RezkaItemCard(
-                                        item = item,
-                                        columnsCount = columnsCount,
-                                        cardHeight = cardHeight,
+                                ) { collectionItem ->
+                                    CollectionCard(
+                                        item = collectionItem,
                                         onClick = {
                                             viewModel.commitSearchQuery(searchInput)
                                             keyboardController?.hide()
                                             focusManager.clearFocus()
-                                            onNavigateToDetail(item)
+                                            onNavigateToThematic(collectionItem.title, collectionItem.url)
                                         }
                                     )
                                 }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // ---- СТАНДАРТНЫЙ КАТАЛОГ ФИЛЬМОВ/СЕРИАЛОВ ----
+                when (val state = catalogState) {
+                    is CatalogState.Loading -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
+                        }
+                    }
+                    is CatalogState.Error -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(32.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(Icons.Default.CloudOff, contentDescription = null, tint = CinemaPrimary, modifier = Modifier.size(64.dp))
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(state.message, color = CinemaTextWhite, textAlign = TextAlign.Center, fontSize = 16.sp)
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Button(
+                                onClick = { viewModel.loadCatalog(forceRefresh = true) },
+                                colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
+                            ) {
+                                Text("Повторить")
+                            }
+                        }
+                    }
+                    is CatalogState.Success -> {
+                        val displayedItems = remember(state.items, currentCountry) {
+                            if (currentCountry.isEmpty()) {
+                                state.items
+                            } else {
+                                state.items.filter { it.matchesCountry(currentCountry) }
+                            }
+                        }
 
-                                if (isLoadingMore) {
-                                    item(span = { GridItemSpan(maxLineSpan) }) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(vertical = 16.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            CircularProgressIndicator(
-                                                color = CinemaPrimary,
-                                                modifier = Modifier.size(32.dp),
-                                                strokeWidth = 3.dp
-                                            )
+                        // Если выбран фильтр по стране и найдено мало карточек, автоматически подгружаем следующую страницу
+                        LaunchedEffect(displayedItems.size, currentCountry, isEndReached, isLoadingMore) {
+                            if (currentCountry.isNotEmpty() && displayedItems.size < 20 && !isEndReached && !isLoadingMore && searchInput.isEmpty()) {
+                                viewModel.loadNextPage()
+                            }
+                        }
+
+                        if (displayedItems.isEmpty()) {
+                            if (currentCountry.isNotEmpty() && !isEndReached) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(24.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        CircularProgressIndicator(
+                                            color = CinemaPrimary,
+                                            modifier = Modifier.size(36.dp),
+                                            strokeWidth = 3.dp
+                                        )
+                                        Spacer(modifier = Modifier.height(14.dp))
+                                        Text(
+                                            text = "Поиск фильмов по выбранной стране...",
+                                            color = CinemaTextGray,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+                                }
+                            } else {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(24.dp),
+                                    verticalArrangement = Arrangement.Center,
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Icon(Icons.Default.SearchOff, contentDescription = null, tint = CinemaMuted, modifier = Modifier.size(64.dp))
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = if (currentCountry.isNotEmpty()) "Фильмы по данной стране не найдены" else "Ничего не можем найти по данному запросу",
+                                        color = CinemaTextGray,
+                                        fontSize = 15.sp,
+                                        textAlign = TextAlign.Center,
+                                        lineHeight = 22.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        } else {
+                            // Ultra-efficient scroll observer via derivedStateOf
+                            val shouldLoadMore by remember {
+                                derivedStateOf {
+                                    val totalItems = displayedItems.size
+                                    val lastVisibleIndex = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                                    if (currentCountry.isNotEmpty()) {
+                                        totalItems > 0 && lastVisibleIndex >= totalItems - 6
+                                    } else {
+                                        totalItems >= 12 && lastVisibleIndex >= totalItems - 4 && gridState.canScrollForward
+                                    }
+                                }
+                            }
+
+                            LaunchedEffect(shouldLoadMore, isLoadingMore, isEndReached) {
+                                if (shouldLoadMore && !isLoadingMore && !isEndReached && searchInput.isEmpty()) {
+                                    viewModel.loadNextPage()
+                                }
+                            }
+
+                            // Засчитываем запрос в историю поиска при начале скролла результатов
+                            LaunchedEffect(gridState.isScrollInProgress) {
+                                if (gridState.isScrollInProgress && searchInput.isNotBlank()) {
+                                    viewModel.commitSearchQuery(searchInput)
+                                }
+                            }
+
+                            val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+                            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                                val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight, isLandscape) {
+                                    com.example.ui.tv.CardGridEngine.calculate(
+                                        cardGridMode = cardGridMode,
+                                        availableWidth = maxWidth - 32.dp,
+                                        availableHeight = maxHeight - 12.dp,
+                                        isLandscapeOrTv = isLandscape
+                                    )
+                                }
+
+                                val columnsCount = resolvedGrid.columns
+                                val cardHeight = resolvedGrid.cardHeight
+
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(columnsCount),
+                                    state = gridState,
+                                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
+                                    verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .dpadScrollable(gridState)
+                                        .testTag("catalog_items_grid")
+                                ) {
+                                    items(
+                                        items = displayedItems,
+                                        key = { it.id }
+                                    ) { item ->
+                                        RezkaItemCard(
+                                            item = item,
+                                            columnsCount = columnsCount,
+                                            cardHeight = cardHeight,
+                                            onClick = {
+                                                viewModel.commitSearchQuery(searchInput)
+                                                keyboardController?.hide()
+                                                focusManager.clearFocus()
+                                                onNavigateToDetail(item)
+                                            }
+                                        )
+                                    }
+
+                                    if (isLoadingMore && displayedItems.size >= 8) {
+                                        item(span = { GridItemSpan(maxLineSpan) }) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 16.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                CircularProgressIndicator(
+                                                    color = CinemaPrimary,
+                                                    modifier = Modifier.size(32.dp),
+                                                    strokeWidth = 3.dp
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -666,6 +1063,85 @@ fun <T> RezkaDropdown(
                     colors = MenuDefaults.itemColors(
                         textColor = CinemaTextWhite
                     )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CollectionCard(
+    item: CollectionItem,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val bottomFadeBrush = remember {
+        Brush.verticalGradient(
+            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.92f)),
+            startY = 50f
+        )
+    }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .tvFocusableItem(onClick = onClick, scaleFactor = 1.04f, shape = RoundedCornerShape(12.dp))
+            .testTag("collection_card_${item.id}"),
+        colors = CardDefaults.cardColors(containerColor = CinemaDark),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1.65f)
+        ) {
+            AsyncImage(
+                model = item.imageUrl,
+                contentDescription = item.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // Bottom gradient overlay
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(bottomFadeBrush)
+            )
+
+            // Badge count (e.g., "74 видео")
+            if (item.count.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .background(CinemaPrimary, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 7.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = "${item.count} видео",
+                        color = CinemaTextWhite,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Title
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text = item.title,
+                    color = CinemaTextWhite,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 16.sp
                 )
             }
         }

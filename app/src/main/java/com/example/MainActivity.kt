@@ -146,6 +146,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     val currentUser by viewModel.currentUser.collectAsState()
     val currentUserAvatar by viewModel.currentUserAvatar.collectAsState()
     val mirrorAuditState by viewModel.mirrorAuditState.collectAsState()
+    val externalVideoToPlay by viewModel.externalVideoToPlay.collectAsState()
     var showAuthDialog by remember { mutableStateOf(false) }
 
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
@@ -191,8 +192,10 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     }
 
     // System Back Press Handler inside Compose
-    BackHandler(enabled = (mirrorAuditState !is MirrorAuditUiState.Idle) || isSettingsOpen || navigationStack.isNotEmpty()) {
-        if (mirrorAuditState !is MirrorAuditUiState.Idle) {
+    BackHandler(enabled = (externalVideoToPlay != null) || (mirrorAuditState !is MirrorAuditUiState.Idle) || isSettingsOpen || navigationStack.isNotEmpty()) {
+        if (externalVideoToPlay != null) {
+            viewModel.clearExternalVideoToPlay()
+        } else if (mirrorAuditState !is MirrorAuditUiState.Idle) {
             viewModel.cancelMirrorAudit()
         } else if (navigationStack.isNotEmpty()) {
             popBackStack()
@@ -383,6 +386,9 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 onNavigateToDetail = { item ->
                                     pushToStack(ScreenState.Detail(item))
                                 },
+                                onNavigateToThematic = { title, url ->
+                                    pushToStack(ScreenState.ThematicList(title, url))
+                                },
                                 onNavigateToSettings = { isSettingsOpen = true },
                                 isTopScreen = navigationStack.isEmpty() && !isSettingsOpen
                             )
@@ -503,6 +509,19 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                         viewModel.dismissMirrorAudit()
                         isSettingsOpen = true
                     }
+                )
+            }
+
+            // Воспроизведение любого видео с телефона (из проводника, галереи, мессенджера)
+            externalVideoToPlay?.let { extVideo ->
+                com.example.ui.components.RezkaPlayer(
+                    title = extVideo.title,
+                    subtitle = "",
+                    itemId = "ext_${extVideo.uri.hashCode()}",
+                    streams = listOf(com.example.data.StreamUrl(quality = "Оригинал", url = extVideo.uri.toString())),
+                    isTvMode = isTvMode,
+                    onBack = { viewModel.clearExternalVideoToPlay() },
+                    onProgressUpdate = { _, _ -> }
                 )
             }
         }

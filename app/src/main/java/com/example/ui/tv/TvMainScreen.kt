@@ -483,7 +483,7 @@ private fun TvCatalogContent(
         derivedStateOf {
             val totalItems = gridState.layoutInfo.totalItemsCount
             val lastVisibleIndex = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            totalItems > 0 && lastVisibleIndex >= totalItems - 6
+            totalItems >= 12 && lastVisibleIndex >= totalItems - 6 && gridState.canScrollForward
         }
     }
 
@@ -654,7 +654,7 @@ private fun TvCatalogContent(
                                 )
                             }
 
-                            if (isLoadingMore) {
+                            if (isLoadingMore && catalogState.items.size >= 8) {
                                 item(span = { GridItemSpan(maxLineSpan) }) {
                                     Box(
                                         modifier = Modifier
@@ -918,7 +918,8 @@ private fun TvCatalogFiltersBar(
                     RezkaType.MOVIE to "Фильмы",
                     RezkaType.SERIES to "Сериалы",
                     RezkaType.ANIME to "Аниме",
-                    RezkaType.CARTOON to "Мультики"
+                    RezkaType.CARTOON to "Мультики",
+                    RezkaType.COLLECTIONS to "Подборки"
                 )
             }
             val currentCategoryPair = categories.find { it.first == currentType } ?: categories[0]
