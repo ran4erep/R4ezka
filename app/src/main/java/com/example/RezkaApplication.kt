@@ -26,6 +26,19 @@ class RezkaApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            android.util.Log.e("RezkaApp", "Неперехваченная системная ошибка в потоке ${thread.name}: ${throwable.message}", throwable)
+            try {
+                val stackTrace = android.util.Log.getStackTraceString(throwable)
+                val logFile = com.example.data.SeriesUpdateLogger.getLogFile(this@RezkaApplication)
+                logFile.parentFile?.mkdirs()
+                logFile.appendText("\n💥 FATAL CRASH: $stackTrace\n", Charsets.UTF_8)
+            } catch (_: Throwable) {}
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
+
         RezkaService.init(this)
         FirebaseSyncManager.init(this, repository)
         com.example.data.SeriesUpdateEngine.createNotificationChannel(this)

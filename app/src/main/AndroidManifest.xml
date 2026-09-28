@@ -171,6 +171,9 @@
             android:supportsPictureInPicture="true"
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
+            android:taskAffinity=""
+            android:launchMode="singleInstance"
+            android:excludeFromRecents="true"
             android:theme="@style/Theme.MyApplication">
             <intent-filter android:label="@string/app_name">
                 <action android:name="android.intent.action.VIEW" />

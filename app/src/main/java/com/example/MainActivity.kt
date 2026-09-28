@@ -74,8 +74,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try {
-            SeriesUpdateScheduler.schedulePeriodicCheck(this)
-            viewModel.triggerManualSeriesCheck(this)
+            SeriesUpdateScheduler.schedulePeriodicCheck(applicationContext)
+            viewModel.triggerManualSeriesCheck(applicationContext)
         } catch (_: Exception) {}
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -204,6 +204,8 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
             isSettingsOpen = false
         }
     }
+
+
 
     CompositionLocalProvider(LocalTvShowCursor provides showTvCursor) {
         Box(

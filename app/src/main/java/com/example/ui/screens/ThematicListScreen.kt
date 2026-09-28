@@ -58,15 +58,6 @@ fun ThematicListScreen(
     val loadedItems = remember(url) { mutableStateListOf<RezkaItem>() }
 
     val isCollection = remember(url) { url.contains("/collections/") }
-    val categories = remember {
-        listOf<Pair<RezkaType, String>>(
-            RezkaType.MOVIE to "Все категории",
-            RezkaType.SERIES to "Сериалы",
-            RezkaType.ANIME to "Аниме",
-            RezkaType.CARTOON to "Мультики"
-        )
-    }
-    var selectedCategoryPair by remember(url) { mutableStateOf(categories[0]) }
 
     val sections = remember {
         listOf(
@@ -84,7 +75,7 @@ fun ThematicListScreen(
         mutableStateOf(initial)
     }
 
-    val effectiveUrl = remember(url, selectedSection, selectedCategoryPair, isCollection) {
+    val effectiveUrl = remember(url, selectedSection, isCollection) {
         if (!isCollection) {
             url
         } else {
@@ -94,24 +85,15 @@ fun ThematicListScreen(
                 SectionType.AWAITING -> "soon"
                 SectionType.WATCHING -> "watching"
             }
-            val typeParam = when (selectedCategoryPair.first) {
-                RezkaType.SERIES -> "2"
-                RezkaType.ANIME -> "3"
-                RezkaType.CARTOON -> "4"
-                else -> ""
-            }
             val baseWithoutParams = url.substringBefore("?")
             val existingParams = if (url.contains("?")) {
                 url.substringAfter("?").split("&")
-                    .filterNot { it.startsWith("filter=") || it.startsWith("type=") || it.isBlank() }
+                    .filterNot { it.startsWith("filter=") || it.isBlank() }
                     .joinToString("&")
             } else ""
 
             val normalizedBase = if (baseWithoutParams.endsWith("/")) baseWithoutParams else "$baseWithoutParams/"
             val paramsList = mutableListOf("filter=$filterParam")
-            if (typeParam.isNotEmpty()) {
-                paramsList.add("type=$typeParam")
-            }
             if (existingParams.isNotEmpty()) {
                 paramsList.add(existingParams)
             }
@@ -169,7 +151,6 @@ fun ThematicListScreen(
     BackHandler(onBack = onBack)
 
     val backFocusRequester = remember { FocusRequester() }
-    val categoryFocusRequester = remember { FocusRequester() }
     val sectionFocusRequester = remember { FocusRequester() }
 
     val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
@@ -180,7 +161,7 @@ fun ThematicListScreen(
     LaunchedEffect(Unit) {
         if (isTvMode) {
             if (isCollection) {
-                categoryFocusRequester.requestFocusSafe()
+                sectionFocusRequester.requestFocusSafe()
             } else {
                 backFocusRequester.requestFocusSafe()
             }
@@ -252,7 +233,7 @@ fun ThematicListScreen(
             )
         )
 
-        // ---- CATEGORY & SECTION FILTERS (for collections) ----
+        // ---- SECTION FILTERS (for collections) ----
         if (isCollection) {
             Row(
                 modifier = Modifier
@@ -263,31 +244,7 @@ fun ThematicListScreen(
             ) {
                 if (isTvMode) {
                     com.example.ui.tv.TvRezkaDropdown(
-                        label = "",
-                        options = categories,
-                        selectedOption = selectedCategoryPair,
-                        onOptionSelected = { pair ->
-                            if (selectedCategoryPair != pair) {
-                                selectedCategoryPair = pair
-                            }
-                        },
-                        getLabel = { it.second },
-                        modifier = Modifier.weight(1f),
-                        focusRequester = categoryFocusRequester,
-                        onUp = { backFocusRequester.requestFocusSafe() },
-                        onLeft = { backFocusRequester.requestFocusSafe() },
-                        onRight = { sectionFocusRequester.requestFocusSafe() },
-                        onDown = {
-                            coroutineScope.launch {
-                                try {
-                                    getFocusRequesterForIndex(0).requestFocusSafe()
-                                } catch (_: Exception) {}
-                            }
-                        }
-                    )
-
-                    com.example.ui.tv.TvRezkaDropdown(
-                        label = "",
+                        label = "Сортировка",
                         options = sections,
                         selectedOption = selectedSection,
                         onOptionSelected = { newSection ->
@@ -299,7 +256,7 @@ fun ThematicListScreen(
                         modifier = Modifier.weight(1f),
                         focusRequester = sectionFocusRequester,
                         onUp = { backFocusRequester.requestFocusSafe() },
-                        onLeft = { categoryFocusRequester.requestFocusSafe() },
+                        onLeft = { backFocusRequester.requestFocusSafe() },
                         onDown = {
                             coroutineScope.launch {
                                 try {
@@ -310,19 +267,7 @@ fun ThematicListScreen(
                     )
                 } else {
                     RezkaDropdown(
-                        label = "",
-                        options = categories,
-                        selectedOption = selectedCategoryPair,
-                        onOptionSelected = { pair ->
-                            if (selectedCategoryPair != pair) {
-                                selectedCategoryPair = pair
-                            }
-                        },
-                        getLabel = { it.second },
-                        modifier = Modifier.weight(1f)
-                    )
-                    RezkaDropdown(
-                        label = "",
+                        label = "Сортировка",
                         options = sections,
                         selectedOption = selectedSection,
                         onOptionSelected = { newSection ->
@@ -496,7 +441,7 @@ fun ThematicListScreen(
                                         focusRequester = if (isTvMode) getFocusRequesterForIndex(index) else null,
                                         onUp = {
                                             if (isCollection) {
-                                                categoryFocusRequester.requestFocusSafe()
+                                                sectionFocusRequester.requestFocusSafe()
                                             } else {
                                                 backFocusRequester.requestFocusSafe()
                                             }
