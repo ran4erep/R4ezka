@@ -2247,7 +2247,6 @@ fun RezkaPlayer(
                                             if (gestureCurrentSide == SeekSide.NONE) {
                                                 showControls = !showControls
                                                 controlsInteractionKey++
-                                                HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                                 if (!isTvCursorConfigured) {
                                                     isRemoteActive = false
                                                 }
