@@ -22,6 +22,8 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.MirrorAuditUiState
 import com.example.ui.theme.*
 import com.example.ui.tv.tvFocusableItem
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 import kotlinx.coroutines.delay
 
 @Composable
@@ -91,7 +93,10 @@ fun MirrorAuditOverlay(
                         )
                         Spacer(modifier = Modifier.height(24.dp))
                         Button(
-                            onClick = onCancel,
+                            onClick = {
+                                HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                onCancel()
+                            },
                             colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
@@ -131,7 +136,10 @@ fun MirrorAuditOverlay(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             OutlinedButton(
-                                onClick = onCancel,
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                    onCancel()
+                                },
                                 shape = RoundedCornerShape(12.dp),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(
                                     brush = androidx.compose.ui.graphics.SolidColor(CinemaMuted)
@@ -144,7 +152,10 @@ fun MirrorAuditOverlay(
                                 Text("Отмена", color = CinemaTextGray, fontSize = 14.sp)
                             }
                             Button(
-                                onClick = onOpenSettings,
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                    onOpenSettings()
+                                },
                                 colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier

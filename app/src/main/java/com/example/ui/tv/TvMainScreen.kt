@@ -12,6 +12,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.lazy.items
 import com.example.ui.haptics.bounceOverscroll
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -87,6 +89,7 @@ fun TvMainScreen(
     var selectedDestination by remember { mutableStateOf(TvNavDestination.CATALOG) }
     var isSidebarFocused by remember { mutableStateOf(false) }
 
+    val isOnline by viewModel.isOnline.collectAsState()
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val currentUserAvatar by viewModel.currentUserAvatar.collectAsState()
@@ -158,10 +161,14 @@ fun TvMainScreen(
                 // Navigation Destinations
                 TvNavDestination.values().forEach { dest ->
                     val isSelected = selectedDestination == dest
+                    val title = if (dest == TvNavDestination.CATALOG && !isOnline) "Оффлайн" else dest.title
+                    val icon = if (dest == TvNavDestination.CATALOG && !isOnline) Icons.Default.CloudOff else dest.icon
                     TvSidebarButton(
                         destination = dest,
                         isSelected = isSelected,
                         isExpanded = isSidebarFocused,
+                        overrideTitle = title,
+                        overrideIcon = icon,
                         focusRequester = if (dest == TvNavDestination.CATALOG) sidebarCatalogFocusRequester else null,
                         onRight = if (dest == TvNavDestination.CATALOG) {
                             { rightContentFocusRequester.requestFocusSafe() }
@@ -259,12 +266,16 @@ private fun TvSidebarButton(
     destination: TvNavDestination,
     isSelected: Boolean,
     isExpanded: Boolean,
+    overrideTitle: String? = null,
+    overrideIcon: ImageVector? = null,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
     onRight: (() -> Unit)? = null
 ) {
     val bgColor = if (isSelected) CinemaPrimary.copy(alpha = 0.2f) else Color.Transparent
     val contentColor = if (isSelected) CinemaPrimary else CinemaTextWhite
+    val displayTitle = overrideTitle ?: destination.title
+    val displayIcon = overrideIcon ?: destination.icon
 
     Row(
         modifier = Modifier
@@ -290,15 +301,15 @@ private fun TvSidebarButton(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            imageVector = destination.icon,
-            contentDescription = destination.title,
+            imageVector = displayIcon,
+            contentDescription = displayTitle,
             tint = contentColor,
             modifier = Modifier.size(22.dp)
         )
         if (isExpanded) {
             Spacer(modifier = Modifier.width(12.dp))
             Text(
-                text = destination.title,
+                text = displayTitle,
                 color = contentColor,
                 fontSize = 14.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
@@ -684,7 +695,10 @@ private fun TvCatalogContent(
                                 Text(cState.message, color = CinemaTextWhite, fontSize = 16.sp)
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Button(
-                                    onClick = { viewModel.loadCollections(forceRefresh = true) },
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                        viewModel.loadCollections(forceRefresh = true)
+                                    },
                                     colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
                                 ) {
                                     Text("Повторить")
@@ -763,7 +777,10 @@ private fun TvCatalogContent(
                                 Text(catalogState.message, color = CinemaTextWhite, fontSize = 16.sp)
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Button(
-                                    onClick = { viewModel.loadCatalog(forceRefresh = true) },
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                        viewModel.loadCatalog(forceRefresh = true)
+                                    },
                                     colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
                                 ) {
                                     Text("Повторить")

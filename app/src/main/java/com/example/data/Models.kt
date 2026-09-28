@@ -341,6 +341,32 @@ data class SeriesSubscriptionEntity(
     val lastNotifiedEpisode: Int = 0
 ) : Serializable
 
+@Entity(tableName = "offline_media")
+data class OfflineMediaEntity(
+    @PrimaryKey val id: String, // itemId_season_episode_quality
+    val itemId: String,
+    val title: String,
+    val subtitle: String = "",
+    val imageUrl: String = "",
+    val localPosterPath: String = "",
+    val videoPath: String,
+    val type: String = "MOVIE", // MOVIE, SERIES, ANIME, CARTOON
+    val genres: String = "",
+    val year: String = "",
+    val country: String = "",
+    val season: Int = 0,
+    val episode: String = "",
+    val translatorId: String = "",
+    val translatorName: String = "",
+    val quality: String = "",
+    val fileSizeBytes: Long = 0L,
+    val durationMs: Long = 0L,
+    val downloadId: Long = -1L,
+    val downloadStatus: Int = 0, // 0 = downloading/pending, 1 = completed, 2 = failed
+    val createdAt: Long = System.currentTimeMillis(),
+    val description: String = ""
+) : Serializable
+
 fun SeriesSubscriptionEntity.isMovie(): Boolean {
     val typeUpper = type.trim().uppercase()
     if (typeUpper == "MOVIE") return true

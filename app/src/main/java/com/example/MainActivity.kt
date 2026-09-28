@@ -17,6 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Movie
@@ -149,6 +150,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     }
 
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
+    val isOnline by viewModel.isOnline.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val currentUserAvatar by viewModel.currentUserAvatar.collectAsState()
     val mirrorAuditState by viewModel.mirrorAuditState.collectAsState()
@@ -322,6 +324,9 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 .fillMaxWidth()
                                 .testTag("bottom_nav_bar")
                         ) {
+                            val feedLabel = if (isOnline) "Каталог" else "Оффлайн"
+                            val feedIcon = if (isOnline) Icons.Default.Movie else Icons.Default.CloudOff
+
                             // 1. Feed / Catalog tab
                             NavigationBarItem(
                                 selected = currentTab == NavTab.FEED,
@@ -329,8 +334,8 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                     HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                     currentTab = NavTab.FEED
                                 },
-                                icon = { Icon(Icons.Default.Movie, contentDescription = "Каталог") },
-                                label = { Text("Каталог", fontSize = 11.sp) },
+                                icon = { Icon(feedIcon, contentDescription = feedLabel) },
+                                label = { Text(feedLabel, fontSize = 11.sp) },
                                 colors = NavigationBarItemDefaults.colors(
                                     selectedIconColor = CinemaPrimary,
                                     selectedTextColor = CinemaPrimary,
@@ -601,7 +606,10 @@ fun UpdateBanner(
                                         if (!state.changelog.isNullOrBlank()) {
                                             Spacer(modifier = Modifier.width(6.dp))
                                             IconButton(
-                                                onClick = { isExpanded = !isExpanded },
+                                                onClick = {
+                                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                                    isExpanded = !isExpanded
+                                                },
                                                 modifier = Modifier.size(24.dp)
                                             ) {
                                                 Icon(
@@ -662,6 +670,7 @@ fun UpdateBanner(
                             is UpdateState.UpdateAvailable -> {
                                 Button(
                                     onClick = {
+                                        HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                         scope.launch {
                                             UpdateManager.startDownload(context, state.downloadUrl)
                                         }
@@ -676,6 +685,7 @@ fun UpdateBanner(
                             is UpdateState.ReadyToInstall -> {
                                 Button(
                                     onClick = {
+                                        HapticEngine.get().perform(HapticType.CONFIRM)
                                         UpdateManager.installApk(context, state.apkFile)
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
@@ -687,7 +697,10 @@ fun UpdateBanner(
                             }
                             is UpdateState.Error -> {
                                 TextButton(
-                                    onClick = { UpdateManager.dismissUpdate() },
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                        UpdateManager.dismissUpdate()
+                                    },
                                     modifier = Modifier.height(32.dp)
                                 ) {
                                     Text("ОК", color = CinemaPrimary, fontSize = 11.sp)
@@ -699,7 +712,10 @@ fun UpdateBanner(
                         if (updateState is UpdateState.UpdateAvailable) {
                             Spacer(modifier = Modifier.width(6.dp))
                             IconButton(
-                                onClick = { UpdateManager.dismissUpdate() },
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                    UpdateManager.dismissUpdate()
+                                },
                                 modifier = Modifier.size(28.dp)
                             ) {
                                 Icon(

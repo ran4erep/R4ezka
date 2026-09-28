@@ -38,6 +38,7 @@ import com.example.ui.theme.*
 import com.example.ui.tv.*
 import com.example.ui.haptics.bounceOverscroll
 import com.example.ui.haptics.LocalHapticEngine
+import com.example.ui.haptics.HapticEngine
 import com.example.ui.haptics.HapticType
 
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -74,6 +75,7 @@ fun CatalogScreen(
 ) {
     val context = LocalContext.current
     val catalogState by viewModel.catalogState.collectAsState()
+    val isOnline by viewModel.isOnline.collectAsState()
     val currentType by viewModel.currentType.collectAsState()
     val currentSection by viewModel.currentSection.collectAsState()
     val currentGenre by viewModel.currentGenre.collectAsState()
@@ -177,6 +179,7 @@ fun CatalogScreen(
                     trailingIcon = {
                         if (searchInput.isNotEmpty()) {
                             IconButton(onClick = {
+                                HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                 searchInput = ""
                                 viewModel.onSearchQueryChanged("")
                             }) {
@@ -284,6 +287,7 @@ fun CatalogScreen(
                 trailingIcon = {
                     if (searchInput.isNotEmpty()) {
                         IconButton(onClick = {
+                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
                             searchInput = ""
                             viewModel.onSearchQueryChanged("")
                         }) {
@@ -374,7 +378,10 @@ fun CatalogScreen(
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier
-                                .clickable { viewModel.clearSearchHistory() }
+                                .clickable {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                    viewModel.clearSearchHistory()
+                                }
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                                 .testTag("clear_search_history_btn")
                         )
@@ -385,6 +392,7 @@ fun CatalogScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
+                                    HapticEngine.get().perform(HapticType.SELECTION)
                                     searchInput = query
                                     viewModel.onSearchQueryChanged(query)
                                     viewModel.commitSearchQuery(query)
@@ -411,7 +419,10 @@ fun CatalogScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             IconButton(
-                                onClick = { viewModel.removeSearchQueryFromHistory(query) },
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                    viewModel.removeSearchQueryFromHistory(query)
+                                },
                                 modifier = Modifier.size(24.dp)
                             ) {
                                 Icon(
@@ -657,7 +668,10 @@ fun CatalogScreen(
                             Text(cState.message, color = CinemaTextWhite, textAlign = TextAlign.Center, fontSize = 16.sp)
                             Spacer(modifier = Modifier.height(16.dp))
                             Button(
-                                onClick = { viewModel.loadCollections(forceRefresh = true) },
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                    viewModel.loadCollections(forceRefresh = true)
+                                },
                                 colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
                             ) {
                                 Text("Повторить")
@@ -724,6 +738,11 @@ fun CatalogScreen(
                         }
                     }
                     is CatalogState.Error -> {
+                        if (!isOnline) {
+                            LaunchedEffect(Unit) {
+                                viewModel.loadOfflineCatalog()
+                            }
+                        }
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -733,13 +752,40 @@ fun CatalogScreen(
                         ) {
                             Icon(Icons.Default.CloudOff, contentDescription = null, tint = CinemaPrimary, modifier = Modifier.size(64.dp))
                             Spacer(modifier = Modifier.height(16.dp))
-                            Text(state.message, color = CinemaTextWhite, textAlign = TextAlign.Center, fontSize = 16.sp)
+                            Text(
+                                text = if (!isOnline) "Нет подключения к интернету\nОтображается оффлайн библиотека" else state.message,
+                                color = CinemaTextWhite,
+                                textAlign = TextAlign.Center,
+                                fontSize = 16.sp
+                            )
                             Spacer(modifier = Modifier.height(16.dp))
-                            Button(
-                                onClick = { viewModel.loadCatalog(forceRefresh = true) },
-                                colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
-                            ) {
-                                Text("Повторить")
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Button(
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                        viewModel.loadCatalog(forceRefresh = true)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.tvFocusableItem(onClick = { viewModel.loadCatalog(forceRefresh = true) })
+                                ) {
+                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Повторить")
+                                }
+                                if (!isOnline) {
+                                    Button(
+                                        onClick = {
+                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                            viewModel.loadOfflineCatalog(forceRefresh = true)
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.tvFocusableItem(onClick = { viewModel.loadOfflineCatalog(forceRefresh = true) })
+                                    ) {
+                                        Text("Оффлайн")
+                                    }
+                                }
                             }
                         }
                     }
@@ -754,13 +800,65 @@ fun CatalogScreen(
 
                         // Если выбран фильтр по стране и найдено мало карточек, автоматически подгружаем следующую страницу
                         LaunchedEffect(displayedItems.size, currentCountry, isEndReached, isLoadingMore) {
-                            if (currentCountry.isNotEmpty() && displayedItems.size < 20 && !isEndReached && !isLoadingMore && searchInput.isEmpty()) {
+                            if (isOnline && currentCountry.isNotEmpty() && displayedItems.size < 20 && !isEndReached && !isLoadingMore && searchInput.isEmpty()) {
                                 viewModel.loadNextPage()
                             }
                         }
 
                         if (displayedItems.isEmpty()) {
-                            if (currentCountry.isNotEmpty() && !isEndReached) {
+                            if (!isOnline) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(32.dp),
+                                    verticalArrangement = Arrangement.Center,
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Icon(Icons.Default.CloudOff, contentDescription = null, tint = CinemaPrimary, modifier = Modifier.size(64.dp))
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = if (searchInput.isNotBlank()) "В оффлайн библиотеке ничего не найдено по запросу \"$searchInput\"" else "Оффлайн библиотека пуста",
+                                        color = CinemaTextWhite,
+                                        textAlign = TextAlign.Center,
+                                        fontSize = 17.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "Сохраняйте фильмы и серии в оффлайн библиотеку со страницы просмотра, чтобы смотреть их без интернета.",
+                                        color = CinemaTextGray,
+                                        textAlign = TextAlign.Center,
+                                        fontSize = 14.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(20.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Button(
+                                            onClick = {
+                                                HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                                viewModel.loadCatalog(forceRefresh = true)
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.tvFocusableItem(onClick = { viewModel.loadCatalog(forceRefresh = true) })
+                                        ) {
+                                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("Проверить сеть")
+                                        }
+                                        OutlinedButton(
+                                            onClick = {
+                                                HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                                onNavigateToSettings()
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.6f)),
+                                            modifier = Modifier.tvFocusableItem(onClick = onNavigateToSettings)
+                                        ) {
+                                            Text("Настройки", color = CinemaTextWhite)
+                                        }
+                                    }
+                                }
+                            } else if (currentCountry.isNotEmpty() && !isEndReached) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()

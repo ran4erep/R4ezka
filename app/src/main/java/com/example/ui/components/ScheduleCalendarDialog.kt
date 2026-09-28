@@ -38,6 +38,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.ScheduleDateParser
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 import com.example.data.ScheduleItem
 import com.example.ui.theme.*
 import com.example.ui.tv.tvFocusableItem
@@ -589,6 +591,7 @@ fun ScheduleCalendarDialog(
                                 if (selectedYear != initialTarget.year || selectedMonth != initialTarget.month) {
                                     IconButton(
                                         onClick = {
+                                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                             selectedYear = initialTarget.year
                                             selectedMonth = initialTarget.month
                                         },
@@ -604,7 +607,10 @@ fun ScheduleCalendarDialog(
                                 }
 
                                 IconButton(
-                                    onClick = onDismiss,
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                        onDismiss()
+                                    },
                                     modifier = Modifier.size(32.dp).background(CinemaCard, CircleShape)
                                 ) {
                                     Icon(
@@ -630,6 +636,7 @@ fun ScheduleCalendarDialog(
                         ) {
                             IconButton(
                                 onClick = {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                     if (selectedMonth == 1) {
                                         selectedMonth = 12
                                         selectedYear -= 1
@@ -656,6 +663,7 @@ fun ScheduleCalendarDialog(
 
                             IconButton(
                                 onClick = {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                     if (selectedMonth == 12) {
                                         selectedMonth = 1
                                         selectedYear += 1

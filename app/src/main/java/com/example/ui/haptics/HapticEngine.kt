@@ -561,3 +561,15 @@ fun Modifier.hapticClickable(
         }
     )
 }
+
+/**
+ * Высокопроизводительный хелпер для подключения тактильного отклика к лямбда-обработчикам onClick.
+ * Нулевые аллокации благодаря inline.
+ */
+inline fun (() -> Unit).withHaptic(
+    type: HapticType = HapticType.GENTLE_TICK
+): () -> Unit = {
+    HapticEngine.get().perform(type)
+    this()
+}
+

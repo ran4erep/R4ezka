@@ -108,6 +108,45 @@ interface SeriesSubscriptionDao {
     suspend fun markSeen(id: String)
 }
 
+@Dao
+interface OfflineMediaDao {
+    @Query("SELECT * FROM offline_media ORDER BY createdAt DESC")
+    fun getAllOfflineMedia(): Flow<List<OfflineMediaEntity>>
+
+    @Query("SELECT * FROM offline_media ORDER BY createdAt DESC")
+    suspend fun getAllOfflineMediaList(): List<OfflineMediaEntity>
+
+    @Query("SELECT * FROM offline_media WHERE id = :id LIMIT 1")
+    suspend fun getOfflineMediaById(id: String): OfflineMediaEntity?
+
+    @Query("SELECT * FROM offline_media WHERE itemId = :itemId ORDER BY season ASC, episode ASC")
+    suspend fun getOfflineMediaByItemId(itemId: String): List<OfflineMediaEntity>
+
+    @Query("SELECT * FROM offline_media WHERE itemId = :itemId ORDER BY season ASC, episode ASC")
+    fun getOfflineMediaByItemIdFlow(itemId: String): Flow<List<OfflineMediaEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOfflineMedia(item: OfflineMediaEntity)
+
+    @Query("DELETE FROM offline_media WHERE id = :id")
+    suspend fun deleteOfflineMediaById(id: String)
+
+    @Query("DELETE FROM offline_media WHERE itemId = :itemId")
+    suspend fun deleteOfflineMediaByItemId(itemId: String)
+
+    @Query("DELETE FROM offline_media")
+    suspend fun clearAllOfflineMedia()
+
+    @Query("UPDATE offline_media SET downloadStatus = :status, fileSizeBytes = :fileSizeBytes WHERE id = :id")
+    suspend fun updateDownloadStatus(id: String, status: Int, fileSizeBytes: Long)
+
+    @Query("SELECT COUNT(*) FROM offline_media")
+    fun getOfflineCount(): Flow<Int>
+
+    @Query("SELECT SUM(fileSizeBytes) FROM offline_media")
+    fun getTotalSizeBytes(): Flow<Long?>
+}
+
 val MIGRATION_3_4 = object : Migration(3, 4) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE watch_history ADD COLUMN episodeIndex INTEGER NOT NULL DEFAULT 0")
@@ -150,11 +189,43 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
     }
 }
 
-@Database(entities = [FavoriteEntity::class, WatchHistoryEntity::class, SeriesSubscriptionEntity::class], version = 7, exportSchema = false)
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS `offline_media` (
+                `id` TEXT NOT NULL PRIMARY KEY,
+                `itemId` TEXT NOT NULL,
+                `title` TEXT NOT NULL,
+                `subtitle` TEXT NOT NULL DEFAULT '',
+                `imageUrl` TEXT NOT NULL DEFAULT '',
+                `localPosterPath` TEXT NOT NULL DEFAULT '',
+                `videoPath` TEXT NOT NULL,
+                `type` TEXT NOT NULL DEFAULT 'MOVIE',
+                `genres` TEXT NOT NULL DEFAULT '',
+                `year` TEXT NOT NULL DEFAULT '',
+                `country` TEXT NOT NULL DEFAULT '',
+                `season` INTEGER NOT NULL DEFAULT 0,
+                `episode` TEXT NOT NULL DEFAULT '',
+                `translatorId` TEXT NOT NULL DEFAULT '',
+                `translatorName` TEXT NOT NULL DEFAULT '',
+                `quality` TEXT NOT NULL DEFAULT '',
+                `fileSizeBytes` INTEGER NOT NULL DEFAULT 0,
+                `durationMs` INTEGER NOT NULL DEFAULT 0,
+                `downloadId` INTEGER NOT NULL DEFAULT -1,
+                `downloadStatus` INTEGER NOT NULL DEFAULT 0,
+                `createdAt` INTEGER NOT NULL DEFAULT 0,
+                `description` TEXT NOT NULL DEFAULT ''
+            )
+        """.trimIndent())
+    }
+}
+
+@Database(entities = [FavoriteEntity::class, WatchHistoryEntity::class, SeriesSubscriptionEntity::class, OfflineMediaEntity::class], version = 8, exportSchema = false)
 abstract class RezkaDatabase : RoomDatabase() {
     abstract fun favoriteDao(): FavoriteDao
     abstract fun watchHistoryDao(): WatchHistoryDao
     abstract fun seriesSubscriptionDao(): SeriesSubscriptionDao
+    abstract fun offlineMediaDao(): OfflineMediaDao
 
     companion object {
         @Volatile
@@ -167,7 +238,7 @@ abstract class RezkaDatabase : RoomDatabase() {
                     RezkaDatabase::class.java,
                     "rezka_database"
                 )
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                     .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
                 INSTANCE = instance
@@ -181,6 +252,19 @@ class RezkaRepository(private val db: RezkaDatabase) {
     val favorites: Flow<List<FavoriteEntity>> = db.favoriteDao().getAllFavorites()
     val watchHistory: Flow<List<WatchHistoryEntity>> = db.watchHistoryDao().getAllHistory()
     val subscriptions: Flow<List<SeriesSubscriptionEntity>> = db.seriesSubscriptionDao().getAllSubscriptions()
+    val offlineMedia: Flow<List<OfflineMediaEntity>> = db.offlineMediaDao().getAllOfflineMedia()
+
+    suspend fun getAllOfflineMediaList(): List<OfflineMediaEntity> = db.offlineMediaDao().getAllOfflineMediaList()
+    suspend fun getOfflineMediaById(id: String): OfflineMediaEntity? = db.offlineMediaDao().getOfflineMediaById(id)
+    suspend fun getOfflineMediaByItemId(itemId: String): List<OfflineMediaEntity> = db.offlineMediaDao().getOfflineMediaByItemId(itemId)
+    fun getOfflineMediaByItemIdFlow(itemId: String): Flow<List<OfflineMediaEntity>> = db.offlineMediaDao().getOfflineMediaByItemIdFlow(itemId)
+    suspend fun insertOfflineMedia(entity: OfflineMediaEntity) = db.offlineMediaDao().insertOfflineMedia(entity)
+    suspend fun deleteOfflineMediaById(id: String) = db.offlineMediaDao().deleteOfflineMediaById(id)
+    suspend fun deleteOfflineMediaByItemId(itemId: String) = db.offlineMediaDao().deleteOfflineMediaByItemId(itemId)
+    suspend fun clearAllOfflineMedia() = db.offlineMediaDao().clearAllOfflineMedia()
+    suspend fun updateOfflineDownloadStatus(id: String, status: Int, fileSizeBytes: Long) = db.offlineMediaDao().updateDownloadStatus(id, status, fileSizeBytes)
+    fun getOfflineCount(): Flow<Int> = db.offlineMediaDao().getOfflineCount()
+    fun getTotalOfflineSizeBytes(): Flow<Long?> = db.offlineMediaDao().getTotalSizeBytes()
 
     fun isSubscribedFlow(id: String): Flow<Boolean> = db.seriesSubscriptionDao().isSubscribedFlow(id)
     suspend fun isSubscribed(id: String): Boolean = db.seriesSubscriptionDao().isSubscribed(id)

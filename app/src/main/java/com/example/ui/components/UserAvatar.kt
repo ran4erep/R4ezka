@@ -38,6 +38,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 import com.example.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -75,7 +77,10 @@ fun UserAvatar(
     onClick: (() -> Unit)? = null
 ) {
     val clickModifier = if (onClick != null) {
-        Modifier.clickable(onClick = onClick)
+        Modifier.clickable(onClick = {
+            HapticEngine.get().perform(HapticType.SOFT_CLICK)
+            onClick()
+        })
     } else Modifier
 
     val baseModifier = modifier
@@ -215,7 +220,10 @@ fun AvatarPickerDialog(
                         fontWeight = FontWeight.Bold
                     )
                     IconButton(
-                        onClick = onDismiss,
+                        onClick = {
+                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                            onDismiss()
+                        },
                         modifier = Modifier.size(28.dp)
                     ) {
                         Icon(Icons.Default.Close, contentDescription = "Закрыть", tint = CinemaTextGray)
@@ -227,6 +235,7 @@ fun AvatarPickerDialog(
                 // Кнопка загрузки из галереи
                 OutlinedButton(
                     onClick = {
+                        HapticEngine.get().perform(HapticType.SOFT_CLICK)
                         photoPickerLauncher.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                         )
@@ -297,6 +306,7 @@ fun AvatarPickerDialog(
                                     shape = CircleShape
                                 )
                                 .clickable {
+                                    HapticEngine.get().perform(HapticType.SELECTION)
                                     onAvatarSelected(preset.id)
                                     onDismiss()
                                 },
@@ -312,6 +322,7 @@ fun AvatarPickerDialog(
                     Spacer(modifier = Modifier.height(14.dp))
                     TextButton(
                         onClick = {
+                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
                             onAvatarSelected(null)
                             onDismiss()
                         },

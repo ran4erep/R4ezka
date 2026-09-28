@@ -38,13 +38,13 @@ import com.example.data.RezkaCareerSection
 import com.example.data.RezkaItem
 import com.example.data.RezkaPerson
 import com.example.data.RezkaService
+import com.example.ui.haptics.bounceOverscroll
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 import com.example.ui.theme.*
 import com.example.ui.tv.dpadScrollable
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusableItem
-import com.example.ui.haptics.bounceOverscroll
-import com.example.ui.haptics.HapticEngine
-import com.example.ui.haptics.HapticType
 import com.example.ui.util.rememberSavedLazyGridState
 import com.example.ui.RezkaViewModel
 
@@ -173,7 +173,10 @@ fun PersonProfileScreen(
                 )
             },
             navigationIcon = {
-                IconButton(onClick = onBack) {
+                IconButton(onClick = {
+                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                    onBack()
+                }) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Назад",
@@ -223,6 +226,7 @@ fun PersonProfileScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
                             onClick = {
+                                HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                 state = PersonState.Loading
                                 // Trigger retry
                             },
@@ -446,7 +450,10 @@ fun PersonProfileScreen(
                                             val totalSum = person.careerSections.sumOf { it.items.size }
                                             FilterChip(
                                                 selected = selectedSectionIndex == -1,
-                                                onClick = { selectedSectionIndex = -1 },
+                                                onClick = {
+                                                    HapticEngine.get().perform(HapticType.SELECTION)
+                                                    selectedSectionIndex = -1
+                                                },
                                                 label = {
                                                     Text("Все ($totalSum)")
                                                 },
@@ -470,7 +477,10 @@ fun PersonProfileScreen(
                                         itemsIndexed(person.careerSections) { index, section ->
                                             FilterChip(
                                                 selected = selectedSectionIndex == index,
-                                                onClick = { selectedSectionIndex = index },
+                                                onClick = {
+                                                    HapticEngine.get().perform(HapticType.SELECTION)
+                                                    selectedSectionIndex = index
+                                                },
                                                 label = {
                                                     Text("${section.title} (${section.items.size})")
                                                 },

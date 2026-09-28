@@ -330,6 +330,7 @@ fun ThematicListScreen(
                             Spacer(modifier = Modifier.height(16.dp))
                             Button(
                                 onClick = {
+                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                     coroutineScope.launch {
                                         state = ThematicState.Loading
                                         try {

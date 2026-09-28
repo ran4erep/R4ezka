@@ -34,6 +34,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -268,6 +269,12 @@ fun RezkaPlayer(
             compActivity.removeOnPictureInPictureModeChangedListener(listener)
         }
     }
+
+    // Remote Control (D-Pad) 3-tier Navigation State
+    var currentFocusArea by remember { mutableStateOf(PlayerFocusArea.MAIN) }
+    var selectedTopIndex by remember { mutableIntStateOf(1) } // 0: Back, 1: PiP, 2: Lock
+    var selectedCenterIndex by remember { mutableIntStateOf(if (isSeries) 1 else 0) } // 0: Prev Episode, 1: Play/Pause, 2: Next Episode
+    var selectedBottomIndex by remember { mutableIntStateOf(0) }
 
     // Lock Screen state: touches are blocked until user holds lock icon for 2 seconds
     var isScreenLocked by remember { mutableStateOf(false) }
@@ -674,6 +681,8 @@ fun RezkaPlayer(
         showAutoNextCountdown = false
         isAutoNextDismissed = false
         hasInitialPlayStarted = false
+        selectedCenterIndex = if (isSeries) 1 else 0
+        currentFocusArea = PlayerFocusArea.MAIN
         val targetIndex = if (preferredQualityName != null) {
             val match = cleanStreams.indexOfFirst { it.quality.equals(preferredQualityName, ignoreCase = true) }
             if (match >= 0) match else initialQualityIndex.coerceIn(0, cleanStreams.lastIndex)
@@ -1014,12 +1023,6 @@ fun RezkaPlayer(
         }
     }
 
-    // Remote Control (D-Pad) 3-tier Navigation State
-    var currentFocusArea by remember { mutableStateOf(PlayerFocusArea.MAIN) }
-    var selectedTopIndex by remember { mutableIntStateOf(1) } // 0: Back, 1: PiP, 2: Lock
-    var selectedCenterIndex by remember { mutableIntStateOf(if (isSeries) 1 else 0) } // 0: Prev Episode, 1: Play/Pause, 2: Next Episode
-    var selectedBottomIndex by remember { mutableIntStateOf(0) }
-
     // Детектор пульта и курсора:
     // Кнопки масштаба "+" и "-" отображаются строго тогда, когда управление осуществляется курсором / пультом,
     // и скрываются, если курсора нет (например, обычный мобильный интерфейс с сенсорным управлением жестами).
@@ -1077,9 +1080,15 @@ fun RezkaPlayer(
         selectedCenterIndex = if (isSeries) 1 else 0
     }
 
-    // Multi-tap continuous seek accumulation state
+    // Multi-tap continuous seek accumulation & gesture state
     var activeSeekSide by remember { mutableStateOf(SeekSide.NONE) }
     var accumulatedSeekSeconds by remember { mutableIntStateOf(0) }
+    var gestureLastTapTime by remember { mutableLongStateOf(0L) }
+    var gestureLastTapIsLeft by remember { mutableStateOf(false) }
+    var gestureSingleTapJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var gestureDismissJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var gestureCurrentSide by remember { mutableStateOf(SeekSide.NONE) }
+    var gestureAccumulatedSec by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(showControls, shouldShowPause, controlsInteractionKey, isScreenLocked) {
         if (showControls && shouldShowPause && playerErrorMessage == null && !isScreenLocked) {
@@ -1274,6 +1283,7 @@ fun RezkaPlayer(
                         ) {
                             IconButton(
                                 onClick = {
+                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                     isFloating = false
                                 },
                                 modifier = Modifier
@@ -1294,6 +1304,7 @@ fun RezkaPlayer(
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity != null) {
                                     IconButton(
                                         onClick = {
+                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                             try {
                                                 val params = PictureInPictureParams.Builder()
                                                     .setAspectRatio(Rational(16, 9))
@@ -1317,7 +1328,10 @@ fun RezkaPlayer(
                                 }
 
                                 IconButton(
-                                    onClick = onBack,
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                        onBack()
+                                    },
                                     modifier = Modifier
                                         .size(32.dp)
                                         .background(Color.Black.copy(alpha = 0.6f), CircleShape)
@@ -1621,7 +1635,10 @@ fun RezkaPlayer(
                                     } else {
                                         if (isSeries) {
                                             when (selectedCenterIndex) {
-                                                0 -> if (hasPreviousEpisode) onPreviousEpisode?.invoke()
+                                                0 -> if (hasPreviousEpisode) {
+                                                    selectedCenterIndex = 1
+                                                    onPreviousEpisode?.invoke()
+                                                }
                                                 1 -> {
                                                     if (shouldShowPause) {
                                                         exoPlayer.pause()
@@ -1631,7 +1648,10 @@ fun RezkaPlayer(
                                                         isPlayWhenReady = true
                                                     }
                                                 }
-                                                2 -> if (hasNextEpisode) onNextEpisode?.invoke()
+                                                2 -> if (hasNextEpisode) {
+                                                    selectedCenterIndex = 1
+                                                    onNextEpisode?.invoke()
+                                                }
                                             }
                                         } else {
                                             if (shouldShowPause) {
@@ -2102,11 +2122,24 @@ fun RezkaPlayer(
                                 }
                             )
                         } else {
-                            coroutineScope {
-                                launch {
-                                    detectTransformGestures(panZoomLock = false) { _, _, zoom, _ ->
-                                        if (zoom != 1f) {
-                                            val newScale = (customZoomScale * zoom).coerceIn(0.5f, 3.0f)
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val startX = down.position.x
+                                val startY = down.position.y
+                                val isLeft = startX < size.width / 2f
+                                var maxDistancePx = 0f
+                                var isMultiTouch = false
+                                var pointerUpEvent: androidx.compose.ui.input.pointer.PointerInputChange? = null
+
+                                do {
+                                    val event = awaitPointerEvent()
+                                    val changes = event.changes
+
+                                    if (changes.size > 1) {
+                                        isMultiTouch = true
+                                        val zoomFactor = event.calculateZoom()
+                                        if (zoomFactor != 1f) {
+                                            val newScale = (customZoomScale * zoomFactor).coerceIn(0.5f, 3.0f)
                                             if (kotlin.math.abs(newScale - customZoomScale) >= 0.002f) {
                                                 customZoomScale = newScale
                                                 showZoomIndicator = true
@@ -2116,109 +2149,111 @@ fun RezkaPlayer(
                                                 }
                                             }
                                         }
+                                    } else {
+                                        val curPos = changes.firstOrNull()?.position
+                                        if (curPos != null) {
+                                            val dx = curPos.x - startX
+                                            val dy = curPos.y - startY
+                                            val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+                                            if (dist > maxDistancePx) {
+                                                maxDistancePx = dist
+                                            }
+                                        }
                                     }
-                                }
-                                launch {
-                                    var lastTapTime = 0L
-                                    var lastTapIsLeft = false
-                                    var singleTapJob: kotlinx.coroutines.Job? = null
-                                    var dismissJob: kotlinx.coroutines.Job? = null
-                                    var currentSide = SeekSide.NONE
-                                    var accumulatedSec = 0
 
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false)
-                                    val isLeft = down.position.x < size.width / 2f
-
-                                    val up = waitForUpOrCancellation()
+                                    val up = changes.firstOrNull { it.id == down.id && !it.pressed }
                                     if (up != null) {
-                                        val now = System.currentTimeMillis()
-                                        val delta = now - lastTapTime
-                                        val tappedSide = if (isLeft) SeekSide.LEFT else SeekSide.RIGHT
+                                        pointerUpEvent = up
+                                    }
+                                } while (event.changes.any { it.pressed })
 
-                                        if (currentSide != SeekSide.NONE && currentSide == tappedSide) {
-                                            // 3rd, 4th, 5th, ... continuous taps while badge is active
-                                            singleTapJob?.cancel()
-                                            accumulatedSec += 10
-                                            accumulatedSeekSeconds = accumulatedSec
-                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                if (!isMultiTouch && maxDistancePx < 36f && pointerUpEvent != null) {
+                                    val now = System.currentTimeMillis()
+                                    val delta = now - gestureLastTapTime
+                                    val tappedSide = if (isLeft) SeekSide.LEFT else SeekSide.RIGHT
 
-                                            val seekDelta = 10_000L
-                                            val currentPos = exoPlayer.currentPosition
-                                            val newPos = if (isLeft) {
-                                                (currentPos - seekDelta).coerceAtLeast(0L)
-                                            } else {
-                                                val dur = exoPlayer.duration.coerceAtLeast(0L)
-                                                if (dur > 0) (currentPos + seekDelta).coerceAtMost(dur) else (currentPos + seekDelta)
-                                            }
-                                            exoPlayer.seekTo(newPos)
-                                            currentPosition = newPos
-                                            showControls = true
-                                            controlsInteractionKey++
+                                    if (gestureCurrentSide != SeekSide.NONE && gestureCurrentSide == tappedSide) {
+                                        // 3rd, 4th, 5th, ... continuous taps
+                                        gestureSingleTapJob?.cancel()
+                                        gestureAccumulatedSec += 10
+                                        accumulatedSeekSeconds = gestureAccumulatedSec
+                                        activeSeekSide = tappedSide
+                                        HapticEngine.get().perform(HapticType.SOFT_CLICK)
 
-                                            lastTapTime = now
-                                            lastTapIsLeft = isLeft
-
-                                            dismissJob?.cancel()
-                                            dismissJob = launch {
-                                                delay(850)
-                                                currentSide = SeekSide.NONE
-                                                accumulatedSec = 0
-                                                activeSeekSide = SeekSide.NONE
-                                                accumulatedSeekSeconds = 0
-                                            }
-                                        } else if (delta < 380 && lastTapIsLeft == isLeft) {
-                                            // 2nd tap: activate double-tap seek!
-                                            singleTapJob?.cancel()
-                                            currentSide = tappedSide
-                                            accumulatedSec = 10
-                                            activeSeekSide = tappedSide
-                                            accumulatedSeekSeconds = 10
-                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
-
-                                            val seekDelta = 10_000L
-                                            val currentPos = exoPlayer.currentPosition
-                                            val newPos = if (isLeft) {
-                                                (currentPos - seekDelta).coerceAtLeast(0L)
-                                            } else {
-                                                val dur = exoPlayer.duration.coerceAtLeast(0L)
-                                                if (dur > 0) (currentPos + seekDelta).coerceAtMost(dur) else (currentPos + seekDelta)
-                                            }
-                                            exoPlayer.seekTo(newPos)
-                                            currentPosition = newPos
-                                            showControls = true
-                                            controlsInteractionKey++
-
-                                            lastTapTime = now
-                                            lastTapIsLeft = isLeft
-
-                                            dismissJob?.cancel()
-                                            dismissJob = launch {
-                                                delay(850)
-                                                currentSide = SeekSide.NONE
-                                                accumulatedSec = 0
-                                                activeSeekSide = SeekSide.NONE
-                                                accumulatedSeekSeconds = 0
-                                            }
+                                        val seekDelta = 10_000L
+                                        val currentPos = exoPlayer.currentPosition
+                                        val newPos = if (isLeft) {
+                                            (currentPos - seekDelta).coerceAtLeast(0L)
                                         } else {
-                                            // 1st tap: wait briefly in case of second tap, then toggle controls
-                                            lastTapTime = now
-                                            lastTapIsLeft = isLeft
-                                            singleTapJob?.cancel()
-                                            singleTapJob = launch {
-                                                delay(260)
-                                                if (currentSide == SeekSide.NONE) {
-                                                    showControls = !showControls
-                                                    controlsInteractionKey++
-                                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                                                    if (!isTvCursorConfigured) {
-                                                        isRemoteActive = false
-                                                    }
+                                            val dur = exoPlayer.duration.coerceAtLeast(0L)
+                                            if (dur > 0) (currentPos + seekDelta).coerceAtMost(dur) else (currentPos + seekDelta)
+                                        }
+                                        exoPlayer.seekTo(newPos)
+                                        currentPosition = newPos
+                                        showControls = true
+                                        controlsInteractionKey++
+
+                                        gestureLastTapTime = now
+                                        gestureLastTapIsLeft = isLeft
+
+                                        gestureDismissJob?.cancel()
+                                        gestureDismissJob = scope.launch {
+                                            delay(850)
+                                            gestureCurrentSide = SeekSide.NONE
+                                            gestureAccumulatedSec = 0
+                                            activeSeekSide = SeekSide.NONE
+                                            accumulatedSeekSeconds = 0
+                                        }
+                                    } else if (delta < 320 && gestureLastTapIsLeft == isLeft) {
+                                        // 2nd tap: activate double-tap seek!
+                                        gestureSingleTapJob?.cancel()
+                                        gestureCurrentSide = tappedSide
+                                        gestureAccumulatedSec = 10
+                                        activeSeekSide = tappedSide
+                                        accumulatedSeekSeconds = 10
+                                        HapticEngine.get().perform(HapticType.SOFT_CLICK)
+
+                                        val seekDelta = 10_000L
+                                        val currentPos = exoPlayer.currentPosition
+                                        val newPos = if (isLeft) {
+                                            (currentPos - seekDelta).coerceAtLeast(0L)
+                                        } else {
+                                            val dur = exoPlayer.duration.coerceAtLeast(0L)
+                                            if (dur > 0) (currentPos + seekDelta).coerceAtMost(dur) else (currentPos + seekDelta)
+                                        }
+                                        exoPlayer.seekTo(newPos)
+                                        currentPosition = newPos
+                                        showControls = true
+                                        controlsInteractionKey++
+
+                                        gestureLastTapTime = now
+                                        gestureLastTapIsLeft = isLeft
+
+                                        gestureDismissJob?.cancel()
+                                        gestureDismissJob = scope.launch {
+                                            delay(850)
+                                            gestureCurrentSide = SeekSide.NONE
+                                            gestureAccumulatedSec = 0
+                                            activeSeekSide = SeekSide.NONE
+                                            accumulatedSeekSeconds = 0
+                                        }
+                                    } else {
+                                        // 1st tap: trigger controls toggle immediately with 200ms window for double tap
+                                        gestureLastTapTime = now
+                                        gestureLastTapIsLeft = isLeft
+                                        gestureSingleTapJob?.cancel()
+                                        gestureSingleTapJob = scope.launch {
+                                            delay(200)
+                                            if (gestureCurrentSide == SeekSide.NONE) {
+                                                showControls = !showControls
+                                                controlsInteractionKey++
+                                                HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                                if (!isTvCursorConfigured) {
+                                                    isRemoteActive = false
                                                 }
                                             }
                                         }
                                     }
-                                }
                                 }
                             }
                         }
@@ -2243,7 +2278,13 @@ fun RezkaPlayer(
                         Spacer(modifier = Modifier.height(16.dp))
                         Text("Ссылки на видео не найдены", color = CinemaTextWhite, fontSize = 18.sp)
                         Spacer(modifier = Modifier.height(16.dp))
-                        Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)) {
+                        Button(
+                            onClick = {
+                                HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                onBack()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary)
+                        ) {
                             Text("Назад")
                         }
                     }
@@ -2295,6 +2336,7 @@ fun RezkaPlayer(
                                 currentStream?.let { stream ->
                                     Button(
                                         onClick = {
+                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                             playerErrorMessage = null
                                             playStreamUrl(stream.url)
                                         },
@@ -2305,7 +2347,10 @@ fun RezkaPlayer(
 
                                     if (cleanStreams.size > 1) {
                                         Button(
-                                            onClick = { showQualityDialog = true },
+                                            onClick = {
+                                                HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                                showQualityDialog = true
+                                            },
                                             colors = ButtonDefaults.buttonColors(containerColor = CinemaSecondary)
                                         ) {
                                             Text("Качество (${stream.quality})")
@@ -2315,6 +2360,7 @@ fun RezkaPlayer(
                                     if (stream.directMp4Url.isNotEmpty() && currentPlayingUrl != stream.directMp4Url) {
                                         Button(
                                             onClick = {
+                                                HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                                 triedDirectMp4 = true
                                                 playStreamUrl(stream.directMp4Url)
                                             },
@@ -2326,7 +2372,10 @@ fun RezkaPlayer(
                                 }
 
                                 OutlinedButton(
-                                    onClick = onBack,
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                        onBack()
+                                    },
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = CinemaTextWhite)
                                 ) {
                                     Text("Назад")
@@ -2473,6 +2522,7 @@ fun RezkaPlayer(
                     ) {
                         IconButton(
                             onClick = {
+                                HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                 controlsInteractionKey++
                                 selectedTopIndex = 0
                                 onBack()
@@ -2522,6 +2572,7 @@ fun RezkaPlayer(
                                 // 1. Floating mini-player button (PiP with drag & resize)
                                 IconButton(
                                     onClick = {
+                                        HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                         controlsInteractionKey++
                                         selectedTopIndex = 1
                                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity != null) {
@@ -2609,9 +2660,10 @@ fun RezkaPlayer(
                             if (isSeries && canPlayPause && showControls) {
                                 IconButton(
                                     onClick = {
+                                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                         controlsInteractionKey++
                                         currentFocusArea = PlayerFocusArea.MAIN
-                                        selectedCenterIndex = 0
+                                        selectedCenterIndex = if (isSeries) 1 else 0
                                         onPreviousEpisode?.invoke()
                                     },
                                     enabled = hasPreviousEpisode,
@@ -2715,9 +2767,10 @@ fun RezkaPlayer(
                             if (isSeries && canPlayPause && showControls) {
                                 IconButton(
                                     onClick = {
+                                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                         controlsInteractionKey++
                                         currentFocusArea = PlayerFocusArea.MAIN
-                                        selectedCenterIndex = 2
+                                        selectedCenterIndex = if (isSeries) 1 else 0
                                         onNextEpisode?.invoke()
                                     },
                                     enabled = hasNextEpisode,
@@ -3073,6 +3126,7 @@ fun RezkaPlayer(
                                     // "-" Zoom Out button
                                     Button(
                                         onClick = {
+                                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                             selectedBottomIndex = bottomControls.indexOf(BottomControl.ZOOM_OUT)
                                             performZoomOut()
                                         },
@@ -3098,6 +3152,7 @@ fun RezkaPlayer(
                                     // "+" Zoom In button
                                     Button(
                                         onClick = {
+                                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                             selectedBottomIndex = bottomControls.indexOf(BottomControl.ZOOM_IN)
                                             performZoomIn()
                                         },
@@ -3124,6 +3179,7 @@ fun RezkaPlayer(
                                 // Base Scale Mode Button
                                 Button(
                                     onClick = {
+                                        HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                         selectedBottomIndex = bottomControls.indexOf(BottomControl.RESIZE_MODE)
                                         cycleResizeMode()
                                     },
@@ -3321,7 +3377,10 @@ fun RezkaPlayer(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showQualityDialog = false }) {
+                TextButton(onClick = {
+                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                    showQualityDialog = false
+                }) {
                     Text("Закрыть", color = CinemaPrimary)
                 }
             }
@@ -3400,7 +3459,10 @@ fun RezkaPlayer(
               }
             },
             confirmButton = {
-                TextButton(onClick = { showSpeedDialog = false }) {
+                TextButton(onClick = {
+                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                    showSpeedDialog = false
+                }) {
                     Text("Закрыть", color = CinemaPrimary)
                 }
             }
@@ -3598,7 +3660,10 @@ fun RezkaPlayer(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showSubtitlesDialog = false }) {
+                TextButton(onClick = {
+                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                    showSubtitlesDialog = false
+                }) {
                     Text("Закрыть", color = CinemaPrimary)
                 }
             }
@@ -3705,7 +3770,10 @@ fun RezkaPlayer(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showTranslatorDialog = false }) {
+                TextButton(onClick = {
+                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                    showTranslatorDialog = false
+                }) {
                     Text("Закрыть", color = CinemaPrimary)
                 }
             }
