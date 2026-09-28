@@ -183,7 +183,7 @@ class HapticEngine private constructor() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && v.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_LOW_TICK)) {
                 val effect = VibrationEffect.startComposition()
-                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.35f)
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.15f)
                     .compose()
                 vibrateWithAttributes(v, effect)
                 return
@@ -196,7 +196,45 @@ class HapticEngine private constructor() {
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && hasAmplitudeControl) {
-                val effect = VibrationEffect.createOneShot(10L, 28)
+                val effect = VibrationEffect.createOneShot(5L, 16)
+                vibrateWithAttributes(v, effect)
+                return
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                v.vibrate(VibrationEffect.createOneShot(5L, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                v.vibrate(5L)
+            }
+        } catch (_: Throwable) {
+            view?.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        }
+    }
+
+    /**
+     * Мягкий бархатный клик для открытия фильмов и карточек
+     */
+    @SuppressLint("MissingPermission")
+    private fun triggerSoftClick(view: View?) {
+        val v = vibrator ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && v.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_LOW_TICK)) {
+                val effect = VibrationEffect.startComposition()
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.22f)
+                    .compose()
+                vibrateWithAttributes(v, effect)
+                return
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val effect = VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
+                vibrateWithAttributes(v, effect)
+                return
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && hasAmplitudeControl) {
+                val effect = VibrationEffect.createOneShot(8L, 24)
                 vibrateWithAttributes(v, effect)
                 return
             }
@@ -213,74 +251,33 @@ class HapticEngine private constructor() {
     }
 
     /**
-     * Мягкий бархатный клик для открытия фильмов и карточек
-     */
-    @SuppressLint("MissingPermission")
-    private fun triggerSoftClick(view: View?) {
-        val v = vibrator ?: return
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && v.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_CLICK)) {
-                val effect = VibrationEffect.startComposition()
-                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.45f)
-                    .compose()
-                vibrateWithAttributes(v, effect)
-                return
-            }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val effect = VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
-                vibrateWithAttributes(v, effect)
-                return
-            }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && hasAmplitudeControl) {
-                val effect = VibrationEffect.createOneShot(14L, 40)
-                vibrateWithAttributes(v, effect)
-                return
-            }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                v.vibrate(VibrationEffect.createOneShot(12L, VibrationEffect.DEFAULT_AMPLITUDE))
-            } else {
-                @Suppress("DEPRECATION")
-                v.vibrate(12L)
-            }
-        } catch (_: Throwable) {
-            view?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-        }
-    }
-
-    /**
      * Упругий Bounce-отскок при ударе прокрутки о границы экрана.
-     * Реализует эластичный отклик: основной упругий импульс + мягкий затухающий эхо-отскок.
+     * Реализует эластичный отклик: мягкий упругий импульс + микро-затухающий эхо-отскок.
      */
     @SuppressLint("MissingPermission")
     private fun triggerBounceEffect(velocity: Float, view: View?) {
         val v = vibrator ?: return
         try {
-            val speedNormalized = (abs(velocity) / 2500f).coerceIn(0.4f, 1.0f)
-            val primaryScale = (0.40f * speedNormalized).coerceIn(0.25f, 0.85f)
-            val echoScale = (primaryScale * 0.45f).coerceIn(0.15f, 0.40f)
+            val speedNormalized = (abs(velocity) / 2500f).coerceIn(0.2f, 1.0f)
+            val primaryScale = (0.20f * speedNormalized).coerceIn(0.10f, 0.35f)
+            val echoScale = (primaryScale * 0.35f).coerceIn(0.05f, 0.15f)
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
-                v.areAllPrimitivesSupported(
-                    VibrationEffect.Composition.PRIMITIVE_CLICK,
-                    VibrationEffect.Composition.PRIMITIVE_LOW_TICK
-                )
+                v.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_LOW_TICK)
             ) {
-                // Аппаратная композиция: удар -> задержка 32мс -> затухающий отскок
+                // Аппаратная композиция: нежный упругий микро-удар -> затухание
                 val effect = VibrationEffect.startComposition()
-                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, primaryScale)
-                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, echoScale, 32)
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, primaryScale)
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, echoScale, 28)
                     .compose()
                 vibrateWithAttributes(v, effect)
                 return
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && hasAmplitudeControl) {
-                val primaryAmp = (primaryScale * 140).toInt().coerceIn(25, 110)
-                val echoAmp = (echoScale * 100).toInt().coerceIn(15, 50)
-                val timings = longArrayOf(0, 12, 28, 8)
+                val primaryAmp = (primaryScale * 80).toInt().coerceIn(12, 40)
+                val echoAmp = (echoScale * 50).toInt().coerceIn(6, 18)
+                val timings = longArrayOf(0, 8, 24, 6)
                 val amplitudes = intArrayOf(0, primaryAmp, 0, echoAmp)
                 val effect = VibrationEffect.createWaveform(timings, amplitudes, -1)
                 vibrateWithAttributes(v, effect)
@@ -288,19 +285,19 @@ class HapticEngine private constructor() {
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val effect = VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+                val effect = VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
                 vibrateWithAttributes(v, effect)
                 return
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                v.vibrate(VibrationEffect.createOneShot(14L, VibrationEffect.DEFAULT_AMPLITUDE))
+                v.vibrate(VibrationEffect.createOneShot(8L, VibrationEffect.DEFAULT_AMPLITUDE))
             } else {
                 @Suppress("DEPRECATION")
-                v.vibrate(14L)
+                v.vibrate(8L)
             }
         } catch (_: Throwable) {
-            view?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            view?.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
         }
     }
 
@@ -313,7 +310,7 @@ class HapticEngine private constructor() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && v.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_LOW_TICK)) {
                 val effect = VibrationEffect.startComposition()
-                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.25f)
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.10f)
                     .compose()
                 vibrateWithAttributes(v, effect)
                 return
@@ -326,7 +323,7 @@ class HapticEngine private constructor() {
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && hasAmplitudeControl) {
-                val effect = VibrationEffect.createOneShot(8L, 20)
+                val effect = VibrationEffect.createOneShot(5L, 12)
                 vibrateWithAttributes(v, effect)
                 return
             }
@@ -344,16 +341,16 @@ class HapticEngine private constructor() {
     private fun triggerToggle(view: View?) {
         val v = vibrator ?: return
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && v.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_CLICK)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && v.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_LOW_TICK)) {
                 val effect = VibrationEffect.startComposition()
-                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.40f)
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.18f)
                     .compose()
                 vibrateWithAttributes(v, effect)
                 return
             }
             triggerGentleTick(view)
         } catch (_: Throwable) {
-            view?.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            view?.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
         }
     }
 
@@ -364,9 +361,9 @@ class HapticEngine private constructor() {
     private fun triggerSelection(view: View?) {
         val v = vibrator ?: return
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && v.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_TICK)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && v.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_LOW_TICK)) {
                 val effect = VibrationEffect.startComposition()
-                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, 0.30f)
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.14f)
                     .compose()
                 vibrateWithAttributes(v, effect)
                 return
@@ -385,14 +382,11 @@ class HapticEngine private constructor() {
         val v = vibrator ?: return
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
-                v.areAllPrimitivesSupported(
-                    VibrationEffect.Composition.PRIMITIVE_LOW_TICK,
-                    VibrationEffect.Composition.PRIMITIVE_CLICK
-                )
+                v.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_LOW_TICK)
             ) {
                 val effect = VibrationEffect.startComposition()
-                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.35f)
-                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.42f, 40)
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.16f)
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.22f, 35)
                     .compose()
                 vibrateWithAttributes(v, effect)
                 return
@@ -410,10 +404,10 @@ class HapticEngine private constructor() {
     private fun triggerWarning(view: View?) {
         val v = vibrator ?: return
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && v.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_TICK)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && v.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_LOW_TICK)) {
                 val effect = VibrationEffect.startComposition()
-                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, 0.40f)
-                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, 0.40f, 60)
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.18f)
+                    .addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.18f, 50)
                     .compose()
                 vibrateWithAttributes(v, effect)
                 return
@@ -492,14 +486,18 @@ class BounceNestedScrollConnection(
         source: NestedScrollSource
     ): Offset {
         val overscrollDelta = if (orientation == Orientation.Vertical) available.y else available.x
+        val consumedDelta = if (orientation == Orientation.Vertical) consumed.y else consumed.x
 
-        if (abs(overscrollDelta) > 1.0f) {
-            if (source == NestedScrollSource.Drag && !hasTriggeredDragEdge) {
-                hasTriggeredDragEdge = true
-                hapticEngine.perform(HapticType.EDGE_PULL, viewFallback = view)
+        if (source == NestedScrollSource.Drag) {
+            if (abs(overscrollDelta) > 1.0f) {
+                if (!hasTriggeredDragEdge) {
+                    hasTriggeredDragEdge = true
+                    hapticEngine.perform(HapticType.BOUNCE, impactVelocity = abs(overscrollDelta) * 40f, viewFallback = view)
+                }
+            } else if (abs(consumedDelta) > 1.0f) {
+                // Сбрасываем флаг ТОЛЬКО если пользователь начал прокручивать содержимое списка обратно
+                hasTriggeredDragEdge = false
             }
-        } else {
-            hasTriggeredDragEdge = false
         }
         return Offset.Zero
     }
@@ -510,7 +508,7 @@ class BounceNestedScrollConnection(
 
         if (speed > 140f) {
             val now = SystemClock.uptimeMillis()
-            if (now - lastFlingBounceTime > 180L) {
+            if (now - lastFlingBounceTime > 220L) {
                 lastFlingBounceTime = now
                 hapticEngine.perform(HapticType.BOUNCE, impactVelocity = speed, viewFallback = view)
             }
