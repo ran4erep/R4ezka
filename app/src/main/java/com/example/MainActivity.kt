@@ -274,6 +274,9 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                         onNavigateToDetail = { item ->
                             pushToStack(ScreenState.Detail(item))
                         },
+                        onNavigateToThematic = { title, url ->
+                            pushToStack(ScreenState.ThematicList(title, url))
+                        },
                         isTopScreen = navigationStack.isEmpty() && !isSettingsOpen,
                         modifier = Modifier.fillMaxSize()
                     )
