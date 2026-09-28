@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.RezkaItem
 import com.example.data.RezkaService
+import com.example.data.RezkaType
 import com.example.data.SectionType
 import com.example.ui.theme.*
 import com.example.ui.tv.dpadScrollable
@@ -57,6 +58,16 @@ fun ThematicListScreen(
     val loadedItems = remember(url) { mutableStateListOf<RezkaItem>() }
 
     val isCollection = remember(url) { url.contains("/collections/") }
+    val categories = remember {
+        listOf<Pair<RezkaType, String>>(
+            RezkaType.MOVIE to "Все категории",
+            RezkaType.SERIES to "Сериалы",
+            RezkaType.ANIME to "Аниме",
+            RezkaType.CARTOON to "Мультики"
+        )
+    }
+    var selectedCategoryPair by remember(url) { mutableStateOf(categories[0]) }
+
     val sections = remember {
         listOf(
             SectionType.POPULAR,
@@ -73,7 +84,7 @@ fun ThematicListScreen(
         mutableStateOf(initial)
     }
 
-    val effectiveUrl = remember(url, selectedSection, isCollection) {
+    val effectiveUrl = remember(url, selectedSection, selectedCategoryPair, isCollection) {
         if (!isCollection) {
             url
         } else {
@@ -83,19 +94,28 @@ fun ThematicListScreen(
                 SectionType.AWAITING -> "soon"
                 SectionType.WATCHING -> "watching"
             }
+            val typeParam = when (selectedCategoryPair.first) {
+                RezkaType.SERIES -> "2"
+                RezkaType.ANIME -> "3"
+                RezkaType.CARTOON -> "4"
+                else -> ""
+            }
             val baseWithoutParams = url.substringBefore("?")
             val existingParams = if (url.contains("?")) {
                 url.substringAfter("?").split("&")
-                    .filterNot { it.startsWith("filter=") || it.isBlank() }
+                    .filterNot { it.startsWith("filter=") || it.startsWith("type=") || it.isBlank() }
                     .joinToString("&")
             } else ""
 
             val normalizedBase = if (baseWithoutParams.endsWith("/")) baseWithoutParams else "$baseWithoutParams/"
-            if (existingParams.isNotEmpty()) {
-                "$normalizedBase?filter=$filterParam&$existingParams"
-            } else {
-                "$normalizedBase?filter=$filterParam"
+            val paramsList = mutableListOf("filter=$filterParam")
+            if (typeParam.isNotEmpty()) {
+                paramsList.add("type=$typeParam")
             }
+            if (existingParams.isNotEmpty()) {
+                paramsList.add(existingParams)
+            }
+            "$normalizedBase?" + paramsList.joinToString("&")
         }
     }
 
@@ -149,9 +169,21 @@ fun ThematicListScreen(
     BackHandler(onBack = onBack)
 
     val backFocusRequester = remember { FocusRequester() }
+    val categoryFocusRequester = remember { FocusRequester() }
+    val sectionFocusRequester = remember { FocusRequester() }
+
+    val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+    fun getFocusRequesterForIndex(index: Int): FocusRequester {
+        return itemFocusRequesters.getOrPut(index) { FocusRequester() }
+    }
+
     LaunchedEffect(Unit) {
         if (isTvMode) {
-            backFocusRequester.requestFocusSafe()
+            if (isCollection) {
+                categoryFocusRequester.requestFocusSafe()
+            } else {
+                backFocusRequester.requestFocusSafe()
+            }
         }
     }
 
@@ -220,26 +252,88 @@ fun ThematicListScreen(
             )
         )
 
-        // ---- SECTION FILTER (for collections) ----
+        // ---- CATEGORY & SECTION FILTERS (for collections) ----
         if (isCollection) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                RezkaDropdown(
-                    label = "Раздел",
-                    options = sections,
-                    selectedOption = selectedSection,
-                    onOptionSelected = { newSection ->
-                        if (selectedSection != newSection) {
-                            selectedSection = newSection
+                if (isTvMode) {
+                    com.example.ui.tv.TvRezkaDropdown(
+                        label = "",
+                        options = categories,
+                        selectedOption = selectedCategoryPair,
+                        onOptionSelected = { pair ->
+                            if (selectedCategoryPair != pair) {
+                                selectedCategoryPair = pair
+                            }
+                        },
+                        getLabel = { it.second },
+                        modifier = Modifier.weight(1f),
+                        focusRequester = categoryFocusRequester,
+                        onUp = { backFocusRequester.requestFocusSafe() },
+                        onLeft = { backFocusRequester.requestFocusSafe() },
+                        onRight = { sectionFocusRequester.requestFocusSafe() },
+                        onDown = {
+                            coroutineScope.launch {
+                                try {
+                                    getFocusRequesterForIndex(0).requestFocusSafe()
+                                } catch (_: Exception) {}
+                            }
                         }
-                    },
-                    getLabel = { it.getDisplayName() },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                    )
+
+                    com.example.ui.tv.TvRezkaDropdown(
+                        label = "",
+                        options = sections,
+                        selectedOption = selectedSection,
+                        onOptionSelected = { newSection ->
+                            if (selectedSection != newSection) {
+                                selectedSection = newSection
+                            }
+                        },
+                        getLabel = { it.getDisplayName() },
+                        modifier = Modifier.weight(1f),
+                        focusRequester = sectionFocusRequester,
+                        onUp = { backFocusRequester.requestFocusSafe() },
+                        onLeft = { categoryFocusRequester.requestFocusSafe() },
+                        onDown = {
+                            coroutineScope.launch {
+                                try {
+                                    getFocusRequesterForIndex(0).requestFocusSafe()
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    )
+                } else {
+                    RezkaDropdown(
+                        label = "",
+                        options = categories,
+                        selectedOption = selectedCategoryPair,
+                        onOptionSelected = { pair ->
+                            if (selectedCategoryPair != pair) {
+                                selectedCategoryPair = pair
+                            }
+                        },
+                        getLabel = { it.second },
+                        modifier = Modifier.weight(1f)
+                    )
+                    RezkaDropdown(
+                        label = "",
+                        options = sections,
+                        selectedOption = selectedSection,
+                        onOptionSelected = { newSection ->
+                            if (selectedSection != newSection) {
+                                selectedSection = newSection
+                            }
+                        },
+                        getLabel = { it.getDisplayName() },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
 
@@ -372,14 +466,42 @@ fun ThematicListScreen(
                                     .dpadScrollable(gridState)
                                     .testTag("thematic_items_grid")
                             ) {
-                                items(
+                                itemsIndexed(
                                     items = loadedItems,
-                                    key = { it.id }
-                                ) { item ->
+                                    key = { _, item -> item.id }
+                                ) { index, item ->
+                                    val navigateToItem: (Int) -> Unit = { targetIndex ->
+                                        val total = loadedItems.size
+                                        if (total > 0) {
+                                            val clampedIndex = targetIndex.coerceIn(0, total - 1)
+                                            coroutineScope.launch {
+                                                try {
+                                                    val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
+                                                    if (!isVisible) {
+                                                        gridState.scrollToItem(clampedIndex)
+                                                    }
+                                                } catch (_: Exception) {}
+                                                getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
+                                            }
+                                        }
+                                    }
+
                                     RezkaItemCard(
                                         item = item,
+                                        index = index,
+                                        totalItems = loadedItems.size,
                                         columnsCount = columnsCount,
                                         cardHeight = cardHeight,
+                                        onNavigateIndex = navigateToItem,
+                                        focusRequester = if (isTvMode) getFocusRequesterForIndex(index) else null,
+                                        onUp = {
+                                            if (isCollection) {
+                                                categoryFocusRequester.requestFocusSafe()
+                                            } else {
+                                                backFocusRequester.requestFocusSafe()
+                                            }
+                                        },
+                                        onLeft = { backFocusRequester.requestFocusSafe() },
                                         onClick = { onNavigateToDetail(item) }
                                     )
                                 }

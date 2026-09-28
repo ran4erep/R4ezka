@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -19,6 +20,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.focus.FocusRequester
+import com.example.ui.tv.requestFocusSafe
+import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalConfiguration
 import android.content.res.Configuration
 import androidx.compose.ui.Alignment
@@ -127,6 +132,12 @@ fun FavoritesScreen(
                 val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val coroutineScope = rememberCoroutineScope()
+                    val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+                    fun getFocusRequesterForIndex(idx: Int): FocusRequester {
+                        return itemFocusRequesters.getOrPut(idx) { FocusRequester() }
+                    }
+
                     val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight, isLandscape) {
                         com.example.ui.tv.CardGridEngine.calculate(
                             cardGridMode = cardGridMode,
@@ -156,10 +167,10 @@ fun FavoritesScreen(
                             .dpadScrollable(gridState)
                             .testTag("favorites_grid")
                     ) {
-                        items(
+                        itemsIndexed(
                             items = favorites,
-                            key = { it.id }
-                        ) { fav ->
+                            key = { _, fav -> fav.id }
+                        ) { index, fav ->
                             val itemType = RezkaType.valueOf(fav.type)
                             val item = RezkaItem(
                                 id = fav.id,
@@ -170,6 +181,22 @@ fun FavoritesScreen(
                                 url = RezkaService.adjustUrlToCurrentMirror(fav.url, itemType, fav.id),
                                 type = itemType
                             )
+                            val navigateToItem: (Int) -> Unit = { targetIndex ->
+                                val total = favorites.size
+                                if (total > 0) {
+                                    val clampedIndex = targetIndex.coerceIn(0, total - 1)
+                                    coroutineScope.launch {
+                                        try {
+                                            val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
+                                            if (!isVisible) {
+                                                gridState.scrollToItem(clampedIndex)
+                                            }
+                                        } catch (_: Exception) {}
+                                        getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
+                                    }
+                                }
+                            }
+
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -177,8 +204,12 @@ fun FavoritesScreen(
                             ) {
                                 RezkaItemCard(
                                     item = item,
+                                    index = index,
+                                    totalItems = favorites.size,
                                     columnsCount = columnsCount,
                                     cardHeight = itemCardHeight,
+                                    onNavigateIndex = navigateToItem,
+                                    focusRequester = getFocusRequesterForIndex(index),
                                     onClick = { onNavigateToDetail(item) },
                                     showMovieRating = false,
                                     modifier = Modifier.fillMaxWidth()

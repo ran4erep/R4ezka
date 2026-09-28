@@ -73,13 +73,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        SeriesUpdateScheduler.schedulePeriodicCheck(this)
-        viewModel.triggerManualSeriesCheck(this)
+        try {
+            SeriesUpdateScheduler.schedulePeriodicCheck(this)
+            viewModel.triggerManualSeriesCheck(this)
+        } catch (_: Exception) {}
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
-        viewModel.handleIncomingIntent(intent)
+        try {
+            viewModel.handleIncomingIntent(intent)
+        } catch (_: Exception) {}
 
         setContent {
             MyApplicationTheme {
@@ -175,11 +179,11 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
         }
     }
 
-    val showTvCursor = remember(context, tvModePrefString, isLandscape) {
+    val showTvCursor = remember(context, tvModePrefString, isLandscape, isTvMode) {
         when (tvModePrefString) {
             "force_tv" -> true
             "force_mobile" -> false
-            else -> TvDetector.isRunningOnTv(context)
+            else -> isTvMode
         }
     }
 

@@ -825,6 +825,12 @@ fun CatalogScreen(
                             val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
                             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                                val coroutineScope = rememberCoroutineScope()
+                                val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+                                fun getFocusRequesterForIndex(idx: Int): FocusRequester {
+                                    return itemFocusRequesters.getOrPut(idx) { FocusRequester() }
+                                }
+
                                 val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight, isLandscape) {
                                     com.example.ui.tv.CardGridEngine.calculate(
                                         cardGridMode = cardGridMode,
@@ -837,7 +843,7 @@ fun CatalogScreen(
                                 val columnsCount = resolvedGrid.columns
                                 val cardHeight = resolvedGrid.cardHeight
 
-                                LazyVerticalGrid(
+                                 LazyVerticalGrid(
                                     columns = GridCells.Fixed(columnsCount),
                                     state = gridState,
                                     contentPadding = PaddingValues(top = 10.dp, start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
@@ -848,14 +854,34 @@ fun CatalogScreen(
                                         .dpadScrollable(gridState)
                                         .testTag("catalog_items_grid")
                                 ) {
-                                    items(
+                                    itemsIndexed(
                                         items = displayedItems,
-                                        key = { it.id }
-                                    ) { item ->
+                                        key = { _, item -> item.id }
+                                    ) { index, item ->
+                                        val navigateToItem: (Int) -> Unit = { targetIndex ->
+                                            val total = displayedItems.size
+                                            if (total > 0) {
+                                                val clampedIndex = targetIndex.coerceIn(0, total - 1)
+                                                coroutineScope.launch {
+                                                    try {
+                                                        val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
+                                                        if (!isVisible) {
+                                                            gridState.scrollToItem(clampedIndex)
+                                                        }
+                                                    } catch (_: Exception) {}
+                                                    getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
+                                                }
+                                            }
+                                        }
+
                                         RezkaItemCard(
                                             item = item,
+                                            index = index,
+                                            totalItems = displayedItems.size,
                                             columnsCount = columnsCount,
                                             cardHeight = cardHeight,
+                                            onNavigateIndex = navigateToItem,
+                                            focusRequester = getFocusRequesterForIndex(index),
                                             onClick = {
                                                 viewModel.commitSearchQuery(searchInput)
                                                 keyboardController?.hide()
@@ -898,7 +924,14 @@ fun RezkaItemCard(
     modifier: Modifier = Modifier,
     columnsCount: Int = 2,
     cardHeight: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp.Unspecified,
-    showMovieRating: Boolean = true
+    showMovieRating: Boolean = true,
+    index: Int = 0,
+    totalItems: Int = 1,
+    focusRequester: FocusRequester? = null,
+    onNavigateIndex: ((Int) -> Unit)? = null,
+    onUp: (() -> Unit)? = null,
+    onLeft: (() -> Unit)? = null,
+    onFocused: (() -> Unit)? = null
 ) {
     val bottomFadeBrush = remember {
         Brush.verticalGradient(
@@ -907,6 +940,9 @@ fun RezkaItemCard(
         )
     }
 
+    val safeCols = if (columnsCount > 0) columnsCount else 2
+    val isFirstColumn = index % safeCols == 0
+
     val isDense = columnsCount >= 5 || (cardHeight != androidx.compose.ui.unit.Dp.Unspecified && cardHeight.value < 140f)
     val isUltraDense = columnsCount >= 8 || (cardHeight != androidx.compose.ui.unit.Dp.Unspecified && cardHeight.value < 100f)
 
@@ -914,7 +950,66 @@ fun RezkaItemCard(
         modifier = modifier
             .fillMaxWidth()
             .then(if (cardHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.height(cardHeight) else Modifier)
-            .tvFocusableItem(onClick = onClick, scaleFactor = 1.0f, shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp))
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown) {
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                            val targetIndex = index + safeCols
+                            if (onNavigateIndex != null) {
+                                if (targetIndex < totalItems) {
+                                    onNavigateIndex(targetIndex)
+                                    true
+                                } else if (index < totalItems - 1) {
+                                    onNavigateIndex(totalItems - 1)
+                                    true
+                                } else true
+                            } else false
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                            if (index >= safeCols) {
+                                if (onNavigateIndex != null) {
+                                    onNavigateIndex(index - safeCols)
+                                    true
+                                } else false
+                            } else if (onUp != null) {
+                                onUp()
+                                true
+                            } else false
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                            if (isFirstColumn) {
+                                if (onLeft != null) {
+                                    onLeft()
+                                    true
+                                } else false
+                            } else {
+                                if (onNavigateIndex != null) {
+                                    onNavigateIndex(index - 1)
+                                    true
+                                } else false
+                            }
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if ((index + 1) % safeCols == 0 || index == totalItems - 1) {
+                                true
+                            } else {
+                                if (onNavigateIndex != null) {
+                                    onNavigateIndex(index + 1)
+                                    true
+                                } else false
+                            }
+                        }
+                        else -> false
+                    }
+                } else false
+            }
+            .tvFocusableItem(
+                onClick = onClick,
+                onFocused = onFocused,
+                scaleFactor = 1.0f,
+                shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp),
+                focusRequester = focusRequester
+            )
             .testTag("movie_card_${item.id}"),
         colors = CardDefaults.cardColors(containerColor = CinemaDark),
         shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp)
@@ -1075,6 +1170,12 @@ fun CollectionCard(
     item: CollectionItem,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    index: Int = 0,
+    totalItems: Int = 1,
+    columnCount: Int = 3,
+    onNavigateIndex: ((Int) -> Unit)? = null,
+    onUp: (() -> Unit)? = null,
+    onLeft: (() -> Unit)? = null,
     focusRequester: FocusRequester? = null
 ) {
     val bottomFadeBrush = remember {
@@ -1084,9 +1185,65 @@ fun CollectionCard(
         )
     }
 
+    val safeCols = if (columnCount > 0) columnCount else 3
+    val isFirstColumn = index % safeCols == 0
+
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown) {
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                            val targetIndex = index + safeCols
+                            if (onNavigateIndex != null) {
+                                if (targetIndex < totalItems) {
+                                    onNavigateIndex(targetIndex)
+                                    true
+                                } else if (index < totalItems - 1) {
+                                    onNavigateIndex(totalItems - 1)
+                                    true
+                                } else true
+                            } else false
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                            if (index >= safeCols) {
+                                if (onNavigateIndex != null) {
+                                    onNavigateIndex(index - safeCols)
+                                    true
+                                } else false
+                            } else if (onUp != null) {
+                                onUp()
+                                true
+                            } else false
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                            if (isFirstColumn) {
+                                if (onLeft != null) {
+                                    onLeft()
+                                    true
+                                } else false
+                            } else {
+                                if (onNavigateIndex != null) {
+                                    onNavigateIndex(index - 1)
+                                    true
+                                } else false
+                            }
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if ((index + 1) % safeCols == 0 || index == totalItems - 1) {
+                                true
+                            } else {
+                                if (onNavigateIndex != null) {
+                                    onNavigateIndex(index + 1)
+                                    true
+                                } else false
+                            }
+                        }
+                        else -> false
+                    }
+                } else false
+            }
             .tvFocusableItem(onClick = onClick, scaleFactor = 1.04f, shape = RoundedCornerShape(12.dp), focusRequester = focusRequester)
             .testTag("collection_card_${item.id}"),
         colors = CardDefaults.cardColors(containerColor = CinemaDark),

@@ -53,6 +53,15 @@ object UpdateManager {
     suspend fun checkForUpdates(currentVersion: String) {
         withContext(Dispatchers.IO) {
             try {
+                val current = _updateState.value
+                if (current is UpdateState.ReadyToInstall) {
+                    if (!current.apkFile.exists()) {
+                        _updateState.value = UpdateState.Idle
+                    }
+                } else if (current is UpdateState.Error) {
+                    _updateState.value = UpdateState.Idle
+                }
+
                 val request = Request.Builder()
                     .url("https://api.github.com/repos/ran4erep/R4ezka/releases/latest")
                     .header("User-Agent", "R4ezka-App-Updater")
@@ -148,6 +157,10 @@ object UpdateManager {
 
     fun installApk(context: Context, apkFile: File) {
         try {
+            if (!apkFile.exists()) {
+                _updateState.value = UpdateState.Idle
+                return
+            }
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
