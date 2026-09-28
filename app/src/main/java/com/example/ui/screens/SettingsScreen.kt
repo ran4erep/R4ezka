@@ -52,8 +52,10 @@ import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
 import com.example.ui.tv.TvDetector
 import com.example.ui.tv.TvModePreference
+import com.example.ui.tv.TvRemoteInputField
 import com.example.ui.tv.dpadScrollable
 import com.example.ui.tv.tvFocusableItem
+import androidx.compose.foundation.shape.CircleShape
 import kotlinx.coroutines.launch
 
 private data class QualityOption(
@@ -139,12 +141,17 @@ fun SettingsScreen(
                 .padding(vertical = 8.dp)
         ) {
             if (onBack != null) {
-                IconButton(
-                    onClick = onBack,
+                Box(
                     modifier = Modifier
                         .size(36.dp)
-                        .clip(RoundedCornerShape(50.dp))
+                        .clip(CircleShape)
                         .background(CinemaCard)
+                        .tvFocusableItem(
+                            onClick = onBack,
+                            shape = CircleShape,
+                            scaleFactor = 1.08f
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.ArrowBack,
@@ -189,9 +196,13 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .clickable { isMirrorsExpanded = !isMirrorsExpanded }
+                        .tvFocusableItem(
+                            onClick = { isMirrorsExpanded = !isMirrorsExpanded },
+                            shape = RoundedCornerShape(16.dp),
+                            scaleFactor = 1.01f
+                        )
                         .padding(16.dp)
+                        .testTag("settings_accordion_mirrors")
                 ) {
                     Box(
                         modifier = Modifier
@@ -214,17 +225,14 @@ fun SettingsScreen(
                         color = CinemaTextWhite,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(
-                        onClick = { isMirrorsExpanded = !isMirrorsExpanded },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = if (isMirrorsExpanded) "Свернуть" else "Развернуть",
-                            tint = CinemaTextGray,
-                            modifier = Modifier.rotate(mirrorArrowRotation)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (isMirrorsExpanded) "Свернуть" else "Развернуть",
+                        tint = CinemaTextGray,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .rotate(mirrorArrowRotation)
+                    )
                 }
 
                 // Тело аккордеона Зеркала
@@ -276,25 +284,32 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Button(
-                                onClick = {
-                                    isPinging = true
-                                    pingResult = null
-                                    coroutineScope.launch {
-                                        val result = viewModel.testMirror(currentMirror)
-                                        isPinging = false
-                                        if (result.isSuccess) {
-                                            val ms = result.getOrNull() ?: 0
-                                            pingResult = "Отклик: ${ms} мс (Каталог доступен)"
-                                        } else {
-                                            pingResult = "Недоступно: ${result.exceptionOrNull()?.message ?: "таймаут"}"
-                                        }
+                            val triggerPing: () -> Unit = {
+                                isPinging = true
+                                pingResult = null
+                                coroutineScope.launch {
+                                    val result = viewModel.testMirror(currentMirror)
+                                    isPinging = false
+                                    if (result.isSuccess) {
+                                        val ms = result.getOrNull() ?: 0
+                                        pingResult = "Отклик: ${ms} мс (Каталог доступен)"
+                                    } else {
+                                        pingResult = "Недоступно: ${result.exceptionOrNull()?.message ?: "таймаут"}"
                                     }
-                                },
+                                }
+                            }
+                            Button(
+                                onClick = triggerPing,
                                 colors = ButtonDefaults.buttonColors(containerColor = CinemaSecondary),
                                 shape = RoundedCornerShape(10.dp),
                                 enabled = !isPinging,
-                                modifier = Modifier.testTag("ping_mirror_button")
+                                modifier = Modifier
+                                    .tvFocusableItem(
+                                        onClick = { if (!isPinging) triggerPing() },
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.04f
+                                    )
+                                    .testTag("ping_mirror_button")
                             ) {
                                 if (isPinging) {
                                     CircularProgressIndicator(
@@ -316,14 +331,20 @@ fun SettingsScreen(
                             }
 
                             if (currentMirror != RezkaService.PRIMARY_MIRROR) {
+                                val triggerReset = {
+                                    val def = viewModel.resetMirrorToDefault()
+                                    customMirrorInput = def
+                                    Toast.makeText(context, "Сброшено на $def", Toast.LENGTH_SHORT).show()
+                                }
                                 OutlinedButton(
-                                    onClick = {
-                                        val def = viewModel.resetMirrorToDefault()
-                                        customMirrorInput = def
-                                        Toast.makeText(context, "Сброшено на $def", Toast.LENGTH_SHORT).show()
-                                    },
+                                    onClick = triggerReset,
                                     shape = RoundedCornerShape(10.dp),
-                                    border = ButtonDefaults.outlinedButtonBorder.copy(brush = androidx.compose.ui.graphics.SolidColor(CinemaMuted))
+                                    border = ButtonDefaults.outlinedButtonBorder.copy(brush = androidx.compose.ui.graphics.SolidColor(CinemaMuted)),
+                                    modifier = Modifier.tvFocusableItem(
+                                        onClick = triggerReset,
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.04f
+                                    )
                                 ) {
                                     Text("Сброс", fontSize = 12.sp, color = CinemaTextGray)
                                 }
@@ -332,13 +353,19 @@ fun SettingsScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
+                        val triggerAudit = { viewModel.startMirrorAudit(isFirstLaunch = false) }
                         Button(
-                            onClick = { viewModel.startMirrorAudit(isFirstLaunch = false) },
+                            onClick = triggerAudit,
                             colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
                             shape = RoundedCornerShape(10.dp),
                             border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .tvFocusableItem(
+                                    onClick = triggerAudit,
+                                    shape = RoundedCornerShape(10.dp),
+                                    scaleFactor = 1.02f
+                                )
                                 .testTag("run_mirror_audit_button")
                         ) {
                             Icon(
@@ -389,7 +416,11 @@ fun SettingsScreen(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(CinemaCard)
-                                    .clickable { mirrorDropdownExpanded = true }
+                                    .tvFocusableItem(
+                                        onClick = { mirrorDropdownExpanded = true },
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.02f
+                                    )
                                     .padding(horizontal = 14.dp, vertical = 12.dp)
                                     .testTag("mirror_dropdown_trigger"),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -469,7 +500,7 @@ fun SettingsScreen(
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Своё зеркало вручную (подсказка убрана по требованию пользователя)
+                        // Своё зеркало вручную
                         Text(
                             text = "СВОЙ АДРЕС ЗЕРКАЛА",
                             fontSize = 11.sp,
@@ -479,41 +510,11 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        TextField(
-                            value = customMirrorInput,
-                            onValueChange = { customMirrorInput = it },
-                            placeholder = { Text("https://зеркало.com", color = CinemaMuted, fontSize = 14.sp) },
-                            singleLine = true,
-                            shape = RoundedCornerShape(10.dp),
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = CinemaCard,
-                                unfocusedContainerColor = CinemaCard,
-                                focusedTextColor = CinemaTextWhite,
-                                unfocusedTextColor = CinemaTextWhite,
-                                focusedIndicatorColor = CinemaPrimary,
-                                unfocusedIndicatorColor = Color.Transparent
-                            ),
-                            trailingIcon = {
-                                if (customMirrorInput.isNotEmpty()) {
-                                    IconButton(onClick = { customMirrorInput = "" }) {
-                                        Icon(Icons.Default.Clear, contentDescription = "Очистить", tint = CinemaMuted)
-                                    }
-                                }
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("custom_mirror_input")
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Button(
-                            onClick = {
-                                val input = customMirrorInput.trim()
-                                if (input.isBlank()) {
-                                    Toast.makeText(context, "Введите адрес зеркала", Toast.LENGTH_SHORT).show()
-                                    return@Button
-                                }
+                        val applyCustomMirror = {
+                            val input = customMirrorInput.trim()
+                            if (input.isBlank()) {
+                                Toast.makeText(context, "Введите адрес зеркала", Toast.LENGTH_SHORT).show()
+                            } else {
                                 val success = viewModel.setMirror(input)
                                 if (success) {
                                     pingResult = null
@@ -521,11 +522,34 @@ fun SettingsScreen(
                                 } else {
                                     Toast.makeText(context, "Некорректный адрес URL зеркала", Toast.LENGTH_SHORT).show()
                                 }
-                            },
+                            }
+                        }
+
+                        TvRemoteInputField(
+                            value = customMirrorInput,
+                            onValueChange = { customMirrorInput = it },
+                            placeholder = "https://зеркало.com",
+                            onCommit = applyCustomMirror,
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            containerColor = CinemaCard,
+                            testTag = "custom_mirror_input",
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Button(
+                            onClick = applyCustomMirror,
                             colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .tvFocusableItem(
+                                    onClick = applyCustomMirror,
+                                    shape = RoundedCornerShape(10.dp),
+                                    scaleFactor = 1.02f
+                                )
                                 .testTag("apply_mirror_button")
                         ) {
                             Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -555,9 +579,13 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .clickable { isPlaybackExpanded = !isPlaybackExpanded }
+                        .tvFocusableItem(
+                            onClick = { isPlaybackExpanded = !isPlaybackExpanded },
+                            shape = RoundedCornerShape(16.dp),
+                            scaleFactor = 1.01f
+                        )
                         .padding(16.dp)
+                        .testTag("settings_accordion_playback")
                 ) {
                     Box(
                         modifier = Modifier
@@ -580,17 +608,14 @@ fun SettingsScreen(
                         color = CinemaTextWhite,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(
-                        onClick = { isPlaybackExpanded = !isPlaybackExpanded },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = if (isPlaybackExpanded) "Свернуть" else "Развернуть",
-                            tint = CinemaTextGray,
-                            modifier = Modifier.rotate(playbackArrowRotation)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (isPlaybackExpanded) "Свернуть" else "Развернуть",
+                        tint = CinemaTextGray,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .rotate(playbackArrowRotation)
+                    )
                 }
 
                 // Тело аккордеона Воспроизведение
@@ -645,10 +670,14 @@ fun SettingsScreen(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(CinemaCard)
-                                    .clickable {
-                                        viewModel.loadInstalledPlayers()
-                                        playerDropdownExpanded = true
-                                    }
+                                    .tvFocusableItem(
+                                        onClick = {
+                                            viewModel.loadInstalledPlayers()
+                                            playerDropdownExpanded = true
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.02f
+                                    )
                                     .padding(horizontal = 14.dp, vertical = 12.dp)
                                     .testTag("player_dropdown_trigger"),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -877,7 +906,11 @@ fun SettingsScreen(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(CinemaCard)
-                                    .clickable { qualityDropdownExpanded = true }
+                                    .tvFocusableItem(
+                                        onClick = { qualityDropdownExpanded = true },
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.02f
+                                    )
                                     .padding(horizontal = 14.dp, vertical = 12.dp)
                                     .testTag("quality_dropdown_trigger"),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -960,7 +993,11 @@ fun SettingsScreen(
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(CinemaCard)
-                                .clickable { viewModel.setAutoNextEpisode(!autoNextEpisode) }
+                                .tvFocusableItem(
+                                    onClick = { viewModel.setAutoNextEpisode(!autoNextEpisode) },
+                                    shape = RoundedCornerShape(10.dp),
+                                    scaleFactor = 1.02f
+                                )
                                 .padding(horizontal = 14.dp, vertical = 12.dp)
                                 .testTag("auto_next_episode_row"),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1023,15 +1060,20 @@ fun SettingsScreen(
                         ) {
                             resizeOptions.forEach { (mode, label) ->
                                 val isSelected = defaultResizeMode == mode
+                                val triggerResize = {
+                                    viewModel.setDefaultResizeMode(mode)
+                                    Toast.makeText(context, "Режим экрана: $label", Toast.LENGTH_SHORT).show()
+                                }
                                 Surface(
                                     color = if (isSelected) CinemaPrimary else CinemaCard,
                                     shape = RoundedCornerShape(8.dp),
                                     modifier = Modifier
                                         .weight(1f)
-                                        .clickable {
-                                            viewModel.setDefaultResizeMode(mode)
-                                            Toast.makeText(context, "Режим экрана: $label", Toast.LENGTH_SHORT).show()
-                                        }
+                                        .tvFocusableItem(
+                                            onClick = triggerResize,
+                                            shape = RoundedCornerShape(8.dp),
+                                            scaleFactor = 1.05f
+                                        )
                                 ) {
                                     Text(
                                         text = label,
@@ -1064,8 +1106,13 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { isTvExpanded = !isTvExpanded }
+                        .tvFocusableItem(
+                            onClick = { isTvExpanded = !isTvExpanded },
+                            shape = RoundedCornerShape(16.dp),
+                            scaleFactor = 1.01f
+                        )
                         .padding(16.dp)
+                        .testTag("settings_accordion_interface")
                 ) {
                     Box(
                         modifier = Modifier
@@ -1089,17 +1136,14 @@ fun SettingsScreen(
                             color = CinemaTextWhite
                         )
                     }
-                    IconButton(
-                        onClick = { isTvExpanded = !isTvExpanded },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = if (isTvExpanded) "Свернуть" else "Развернуть",
-                            tint = CinemaTextGray,
-                            modifier = Modifier.rotate(tvArrowRotation)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (isTvExpanded) "Свернуть" else "Развернуть",
+                        tint = CinemaTextGray,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .rotate(tvArrowRotation)
+                    )
                 }
 
                 AnimatedVisibility(
@@ -1434,11 +1478,14 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(14.dp))
 
                         // Кнопка ручной проверки прямо сейчас
-                        Button(
-                            onClick = {
+                        val triggerCheckUpdates = {
+                            if (!isCheckingSeriesUpdates) {
                                 viewModel.triggerManualSeriesCheck(context)
                                 Toast.makeText(context, "Проверка обновлений запущена...", Toast.LENGTH_SHORT).show()
-                            },
+                            }
+                        }
+                        Button(
+                            onClick = triggerCheckUpdates,
                             enabled = !isCheckingSeriesUpdates,
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(
@@ -1450,6 +1497,11 @@ fun SettingsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(44.dp)
+                                .tvFocusableItem(
+                                    onClick = triggerCheckUpdates,
+                                    shape = RoundedCornerShape(10.dp),
+                                    scaleFactor = 1.02f
+                                )
                                 .testTag("check_series_updates_button")
                         ) {
                             if (isCheckingSeriesUpdates) {
@@ -1583,9 +1635,16 @@ fun SettingsScreen(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(2.dp)
                                             ) {
-                                                IconButton(
-                                                    onClick = { viewModel.removeSubscription(sub.id) },
-                                                    modifier = Modifier.size(36.dp)
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(36.dp)
+                                                        .clip(CircleShape)
+                                                        .tvFocusableItem(
+                                                            onClick = { viewModel.removeSubscription(sub.id) },
+                                                            shape = CircleShape,
+                                                            scaleFactor = 1.1f
+                                                        ),
+                                                    contentAlignment = Alignment.Center
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Default.DeleteOutline,
