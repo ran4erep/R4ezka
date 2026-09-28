@@ -1817,5 +1817,18 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
     }
+
+    override fun onCleared() {
+        super.onCleared()
+        FirebaseSyncManager.searchHistoryProvider = null
+        FirebaseSyncManager.onSearchHistorySynced = null
+        catalogJob?.cancel()
+        paginationJob?.cancel()
+        searchJob?.cancel()
+        auditJob?.cancel()
+        countryPrefetchJob?.cancel()
+        checkHistoryJob?.cancel()
+        commentsJob?.cancel()
+    }
 }
 

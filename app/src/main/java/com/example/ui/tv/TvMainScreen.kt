@@ -710,8 +710,30 @@ private fun TvCatalogContent(
                                         items = cState.items,
                                         key = { _, item -> item.id }
                                     ) { index, collectionItem ->
+                                        val navigateToItem: (Int) -> Unit = { targetIndex ->
+                                            val total = cState.items.size
+                                            if (total > 0) {
+                                                val clampedIndex = targetIndex.coerceIn(0, total - 1)
+                                                coroutineScope.launch {
+                                                    try {
+                                                        val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
+                                                        if (!isVisible) {
+                                                            gridState.scrollToItem(clampedIndex)
+                                                        }
+                                                    } catch (_: Exception) {}
+                                                    getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
+                                                }
+                                            }
+                                        }
+
                                         CollectionCard(
                                             item = collectionItem,
+                                            index = index,
+                                            totalItems = cState.items.size,
+                                            columnCount = 3,
+                                            onNavigateIndex = navigateToItem,
+                                            onUp = { categoryDropdownFocusRequester.requestFocusSafe() },
+                                            onLeft = { sidebarFocusRequester.requestFocusSafe() },
                                             onClick = {
                                                 viewModel.commitSearchQuery(searchInput)
                                                 onNavigateToThematic(collectionItem.title, collectionItem.url)

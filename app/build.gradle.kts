@@ -14,11 +14,11 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.ran4erep.r4ezka.test"
+    applicationId = "com.ran4erep.r4ezka.test2"
     minSdk = 24
     targetSdk = 36
     versionCode = 4
-    versionName = "1.2.0"
+    versionName = "1.0.4"
   }
 
   signingConfigs {

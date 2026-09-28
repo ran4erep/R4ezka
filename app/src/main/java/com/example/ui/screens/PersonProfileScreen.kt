@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -837,9 +838,15 @@ private fun TvPersonProfileContent(
                     )
                 }
             } else {
+                val coroutineScope = rememberCoroutineScope()
                 val tvGridState = rememberSavedLazyGridState("person_${url}", viewModel)
+                val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+                fun getFocusRequesterForIndex(index: Int): FocusRequester {
+                    return itemFocusRequesters.getOrPut(index) { FocusRequester() }
+                }
+
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 130.dp),
+                    columns = GridCells.Fixed(5),
                     state = tvGridState,
                     contentPadding = PaddingValues(top = 10.dp, bottom = 24.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -849,9 +856,30 @@ private fun TvPersonProfileContent(
                         .dpadScrollable(tvGridState)
                         .testTag("person_tv_grid")
                 ) {
-                    items(displayedItems, key = { "${it.id}_${selectedSectionIndex}" }) { item ->
+                    itemsIndexed(displayedItems, key = { _, item -> "${item.id}_${selectedSectionIndex}" }) { index, item ->
+                        val navigateToItem: (Int) -> Unit = { targetIndex ->
+                            val total = displayedItems.size
+                            if (total > 0) {
+                                val clampedIndex = targetIndex.coerceIn(0, total - 1)
+                                coroutineScope.launch {
+                                    try {
+                                        val isVisible = tvGridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
+                                        if (!isVisible) {
+                                            tvGridState.scrollToItem(clampedIndex)
+                                        }
+                                    } catch (_: Exception) {}
+                                    getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
+                                }
+                            }
+                        }
+
                         RezkaItemCard(
                             item = item,
+                            index = index,
+                            totalItems = displayedItems.size,
+                            columnsCount = 5,
+                            onNavigateIndex = navigateToItem,
+                            focusRequester = getFocusRequesterForIndex(index),
                             onClick = { onNavigateToDetail(item) }
                         )
                     }
