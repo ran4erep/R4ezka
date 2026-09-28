@@ -401,14 +401,33 @@ fun SettingsScreen(
 
                         AnimatedVisibility(visible = pingResult != null) {
                             pingResult?.let { text ->
-                                Spacer(modifier = Modifier.height(8.dp))
                                 val isOk = text.startsWith("Отклик:")
-                                Text(
-                                    text = text,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = if (isOk) CinemaGreen else CinemaPrimary
-                                )
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp)
+                                        .background(
+                                            if (isOk) CinemaGreen.copy(alpha = 0.12f) else CinemaPrimary.copy(alpha = 0.12f),
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        text = text,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (isOk) CinemaGreen else CinemaPrimary
+                                    )
+                                    if (!isOk) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Совет: воспользуйтесь кнопкой «Провести аудит» выше — приложение проверит резервные зеркала через защищенный DoH и переключится на рабочее.",
+                                            fontSize = 11.sp,
+                                            color = CinemaTextGray,
+                                            lineHeight = 15.sp
+                                        )
+                                    }
+                                }
                             }
                         }
 
