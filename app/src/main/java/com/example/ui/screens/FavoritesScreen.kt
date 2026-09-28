@@ -148,7 +148,7 @@ fun FavoritesScreen(
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(columnsCount),
                         state = gridState,
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
+                        contentPadding = PaddingValues(top = 12.dp, start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
                         horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
                         verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
                         modifier = Modifier
@@ -196,7 +196,7 @@ fun FavoritesScreen(
                                         .height(buttonHeight)
                                         .tvFocusableItem(
                                             onClick = { viewModel.removeFavorite(fav.id) },
-                                            scaleFactor = 1.04f,
+                                            scaleFactor = 1.0f,
                                             focusedBorderColor = CinemaPrimary,
                                             shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp)
                                         )

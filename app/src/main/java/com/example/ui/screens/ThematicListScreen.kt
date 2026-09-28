@@ -364,7 +364,7 @@ fun ThematicListScreen(
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(columnsCount),
                                 state = gridState,
-                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
+                                contentPadding = PaddingValues(top = 10.dp, start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
                                 horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
                                 verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
                                 modifier = Modifier

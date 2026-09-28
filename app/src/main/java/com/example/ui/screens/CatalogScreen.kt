@@ -839,7 +839,7 @@ fun CatalogScreen(
                                 LazyVerticalGrid(
                                     columns = GridCells.Fixed(columnsCount),
                                     state = gridState,
-                                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
+                                    contentPadding = PaddingValues(top = 10.dp, start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
                                     horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
                                     verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
                                     modifier = Modifier
@@ -913,7 +913,7 @@ fun RezkaItemCard(
         modifier = modifier
             .fillMaxWidth()
             .then(if (cardHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.height(cardHeight) else Modifier)
-            .tvFocusableItem(onClick = onClick, scaleFactor = 1.05f, shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp))
+            .tvFocusableItem(onClick = onClick, scaleFactor = 1.0f, shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp))
             .testTag("movie_card_${item.id}"),
         colors = CardDefaults.cardColors(containerColor = CinemaDark),
         shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp)

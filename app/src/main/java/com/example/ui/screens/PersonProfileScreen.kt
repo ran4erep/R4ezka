@@ -841,7 +841,7 @@ private fun TvPersonProfileContent(
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 130.dp),
                     state = tvGridState,
-                    contentPadding = PaddingValues(bottom = 24.dp),
+                    contentPadding = PaddingValues(top = 10.dp, bottom = 24.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier

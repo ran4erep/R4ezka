@@ -100,6 +100,7 @@ fun TvDetailContent(
     val favoriteButtonFocusRequester = remember { FocusRequester() }
     val shareButtonFocusRequester = remember { FocusRequester() }
     val mainActionFocusRequester = remember { FocusRequester() }
+    val movieDownloadButtonFocusRequester = remember { FocusRequester() }
     val rightScrollState = scrollState ?: rememberLazyListState()
     var isActorsExpanded by remember { mutableStateOf(false) }
 
@@ -343,7 +344,7 @@ fun TvDetailContent(
                         }
                         .tvFocusableItem(
                             onClick = onLaunchTrailer,
-                            scaleFactor = 1.05f,
+                            scaleFactor = 1.0f,
                             shape = RoundedCornerShape(10.dp),
                             focusRequester = trailerButtonFocusRequester
                         )
@@ -747,6 +748,7 @@ fun TvDetailContent(
                                         }
                                         .tvFocusableItem(
                                             onClick = { isActorsExpanded = !isActorsExpanded },
+                                            scaleFactor = 1.0f,
                                             shape = RoundedCornerShape(6.dp),
                                             lazyListState = rightScrollState
                                         )
@@ -798,22 +800,20 @@ fun TvDetailContent(
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     displayActors.forEach { actorLink ->
                                         val isClickable = actorLink.url.isNotBlank()
-                                        Surface(
-                                            color = Color.Transparent,
-                                            shape = RoundedCornerShape(6.dp),
+                                        Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .then(
                                                     if (isClickable) {
                                                         Modifier.tvFocusableItem(
                                                             onClick = { onNavigateToThematic(actorLink.name, actorLink.url) },
-                                                            scaleFactor = 1.02f,
+                                                            scaleFactor = 1.0f,
                                                             shape = RoundedCornerShape(6.dp),
                                                             lazyListState = rightScrollState
                                                         )
                                                     } else Modifier
                                                 )
-                                                .padding(vertical = 2.dp, horizontal = 4.dp)
+                                                .padding(vertical = 4.dp, horizontal = 6.dp)
                                         ) {
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
@@ -1024,7 +1024,9 @@ fun TvDetailContent(
                                         .height(48.dp)
                                         .focusProperties {
                                             left = trailerButtonFocusRequester
-                                            if (displayComments.isEmpty()) {
+                                            if (onDownloadClick != null && isPlayEnabled) {
+                                                down = movieDownloadButtonFocusRequester
+                                            } else if (displayComments.isEmpty()) {
                                                 down = FocusRequester.Cancel
                                             }
                                         }
@@ -1036,7 +1038,10 @@ fun TvDetailContent(
                                                         true
                                                     }
                                                     AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                                        if (displayComments.isEmpty()) {
+                                                        if (onDownloadClick != null && isPlayEnabled) {
+                                                            movieDownloadButtonFocusRequester.requestFocusSafe()
+                                                            true
+                                                        } else if (displayComments.isEmpty()) {
                                                             true
                                                         } else false
                                                     }
@@ -1048,7 +1053,7 @@ fun TvDetailContent(
                                             if (isPlayEnabled) {
                                                 it.tvFocusableItem(
                                                     onClick = onPlayMovie,
-                                                    scaleFactor = 1.03f,
+                                                    scaleFactor = 1.0f,
                                                     focusedBorderColor = Color.White,
                                                     shape = RoundedCornerShape(10.dp),
                                                     focusRequester = mainActionFocusRequester,
@@ -1085,10 +1090,39 @@ fun TvDetailContent(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(48.dp)
+                                        .focusProperties {
+                                            up = mainActionFocusRequester
+                                            left = trailerButtonFocusRequester
+                                            if (displayComments.isEmpty()) {
+                                                down = FocusRequester.Cancel
+                                            }
+                                        }
+                                        .onKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown) {
+                                                when (event.nativeKeyEvent.keyCode) {
+                                                    AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                        mainActionFocusRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                        trailerButtonFocusRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                        if (displayComments.isEmpty()) {
+                                                            true
+                                                        } else false
+                                                    }
+                                                    else -> false
+                                                }
+                                            } else false
+                                        }
                                         .tvFocusableItem(
                                             onClick = onDownloadClick,
-                                            scaleFactor = 1.03f,
+                                            scaleFactor = 1.0f,
+                                            focusedBorderColor = CinemaPrimary,
                                             shape = RoundedCornerShape(10.dp),
+                                            focusRequester = movieDownloadButtonFocusRequester,
                                             lazyListState = rightScrollState
                                         )
                                         .testTag("tv_movie_download_button")
@@ -1258,7 +1292,7 @@ fun TvDetailContent(
                                         }
                                         .tvFocusableItem(
                                             onClick = onDownloadClick,
-                                            scaleFactor = 1.05f,
+                                            scaleFactor = 1.0f,
                                             shape = RoundedCornerShape(8.dp),
                                             lazyListState = rightScrollState
                                         )
