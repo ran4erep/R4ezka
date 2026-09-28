@@ -28,6 +28,9 @@ import com.example.data.RezkaType
 import com.example.data.SectionType
 import com.example.ui.theme.*
 import com.example.ui.tv.dpadScrollable
+import com.example.ui.haptics.bounceOverscroll
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusableItem
 import com.example.ui.util.rememberSavedLazyGridState
@@ -218,7 +221,10 @@ fun ThematicListScreen(
                         }
                     }
                 } else {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = {
+                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                        onBack()
+                    }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Назад",
@@ -408,6 +414,7 @@ fun ThematicListScreen(
                                 verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                                     .dpadScrollable(gridState)
                                     .testTag("thematic_items_grid")
                             ) {

@@ -17,6 +17,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.*
+import com.example.ui.haptics.hapticClickable
+import com.example.ui.haptics.HapticType
 
 /**
  * Единая шапка приложения R4ezka:
@@ -62,7 +64,7 @@ fun AppHeader(
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(50.dp))
                     .background(CinemaCard)
-                    .clickable(onClick = onAuthClick)
+                    .hapticClickable(hapticType = HapticType.GENTLE_TICK, onClick = onAuthClick)
                     .padding(horizontal = if (isLoggedIn) 10.dp else 14.dp, vertical = 6.dp)
                     .testTag("header_account_button"),
                 contentAlignment = Alignment.Center
@@ -100,7 +102,7 @@ fun AppHeader(
                     .aspectRatio(1f)
                     .clip(RoundedCornerShape(50.dp))
                     .background(CinemaCard)
-                    .clickable(onClick = onSettingsClick)
+                    .hapticClickable(hapticType = HapticType.GENTLE_TICK, onClick = onSettingsClick)
                     .testTag("header_settings_button"),
                 contentAlignment = Alignment.Center
             ) {

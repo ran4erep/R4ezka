@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import com.example.ui.util.rememberSavedLazyListState
+import com.example.ui.haptics.bounceOverscroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -147,6 +148,7 @@ fun HistoryScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier
                         .fillMaxSize()
+                        .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                         .dpadScrollable(listState)
                         .testTag("history_list")
                 ) {

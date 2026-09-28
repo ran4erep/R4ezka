@@ -36,6 +36,9 @@ import com.example.ui.CatalogState
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
 import com.example.ui.tv.*
+import com.example.ui.haptics.bounceOverscroll
+import com.example.ui.haptics.LocalHapticEngine
+import com.example.ui.haptics.HapticType
 
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -225,6 +228,8 @@ fun CatalogScreen(
 
                 Surface(
                     onClick = {
+                        val haptic = com.example.ui.haptics.HapticEngine.get()
+                        haptic.perform(com.example.ui.haptics.HapticType.GENTLE_TICK)
                         val activeJob = singleClickJob
                         if (activeJob != null && activeJob.isActive) {
                             // Второе нажатие пришло в пределах таймаута: отменяем одиночный клик и выполняем сброс!
@@ -689,6 +694,7 @@ fun CatalogScreen(
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                                     .testTag("collections_grid")
                             ) {
                                 items(
@@ -851,6 +857,7 @@ fun CatalogScreen(
                                     verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
                                     modifier = Modifier
                                         .fillMaxSize()
+                                        .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                                         .dpadScrollable(gridState)
                                         .testTag("catalog_items_grid")
                                 ) {
@@ -1105,6 +1112,7 @@ fun <T> RezkaDropdown(
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val haptic = LocalHapticEngine.current
 
     Box(modifier = modifier) {
         Row(
@@ -1112,7 +1120,10 @@ fun <T> RezkaDropdown(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
                 .background(CinemaDark)
-                .clickable { expanded = true }
+                .clickable {
+                    haptic.perform(HapticType.SELECTION)
+                    expanded = true
+                }
                 .padding(horizontal = 8.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -1153,6 +1164,7 @@ fun <T> RezkaDropdown(
                         )
                     },
                     onClick = {
+                        haptic.perform(HapticType.SELECTION)
                         onOptionSelected(option)
                         expanded = false
                     },

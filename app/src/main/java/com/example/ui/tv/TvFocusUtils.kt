@@ -214,6 +214,8 @@ fun Modifier.tvFocusableItem(
         label = "tv_focus_scale"
     )
 
+    val haptic = remember { com.example.ui.haptics.HapticEngine.get() }
+
     this
         .zIndex(if (isFocused) 5f else 1f)
         .graphicsLayer {
@@ -230,6 +232,7 @@ fun Modifier.tvFocusableItem(
             isFocused = hasFocus
             onFocusChanged?.invoke(hasFocus)
             if (hasFocus) {
+                haptic.perform(com.example.ui.haptics.HapticType.SELECTION)
                 onFocused?.invoke()
                 scrollJob?.cancel()
                 scrollJob = coroutineScope.launch {
@@ -261,7 +264,10 @@ fun Modifier.tvFocusableItem(
         .clickable(
             interactionSource = remember { MutableInteractionSource() },
             indication = null,
-            onClick = onClick
+            onClick = {
+                haptic.perform(com.example.ui.haptics.HapticType.SOFT_CLICK)
+                onClick()
+            }
         )
         .onKeyEvent { keyEvent ->
             when (keyEvent.nativeKeyEvent.keyCode) {
@@ -273,6 +279,7 @@ fun Modifier.tvFocusableItem(
                         true
                     } else if (keyEvent.type == KeyEventType.KeyUp) {
                         isPressed = false
+                        haptic.perform(com.example.ui.haptics.HapticType.SOFT_CLICK)
                         onClick()
                         true
                     } else false

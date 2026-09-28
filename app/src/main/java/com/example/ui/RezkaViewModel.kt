@@ -358,6 +358,11 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val _isPlayerActive = MutableStateFlow(false)
     val isPlayerActive: StateFlow<Boolean> = _isPlayerActive.asStateFlow()
 
+    private val _installedPlayers = MutableStateFlow<List<ExternalPlayerApp>>(
+        ExternalPlayerManager.getCachedPlayers() ?: emptyList()
+    )
+    val installedPlayers: StateFlow<List<ExternalPlayerApp>> = _installedPlayers.asStateFlow()
+
     fun setPlayerActive(active: Boolean) {
         _isPlayerActive.value = active
     }
@@ -1552,10 +1557,9 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         RezkaService.setSelectedPlayer(playerKey)
     }
 
-    private val _installedPlayers = MutableStateFlow<List<ExternalPlayerApp>>(emptyList())
-    val installedPlayers: StateFlow<List<ExternalPlayerApp>> = _installedPlayers.asStateFlow()
-
     fun loadInstalledPlayers(forceRefresh: Boolean = false) {
+        val current = _installedPlayers.value
+        if (!forceRefresh && current.isNotEmpty()) return
         viewModelScope.launch {
             val list = ExternalPlayerManager.getInstalledVideoPlayers(getApplication(), forceRefresh)
             _installedPlayers.value = list

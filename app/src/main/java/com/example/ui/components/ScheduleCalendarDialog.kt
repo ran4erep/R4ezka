@@ -41,6 +41,7 @@ import com.example.data.ScheduleDateParser
 import com.example.data.ScheduleItem
 import com.example.ui.theme.*
 import com.example.ui.tv.tvFocusableItem
+import com.example.ui.haptics.bounceOverscroll
 import java.util.Calendar
 
 /**
@@ -431,6 +432,7 @@ fun ScheduleCalendarDialog(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .weight(1f)
+                                    .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                                     .testTag("calendar_episodes_list"),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
@@ -745,7 +747,8 @@ fun ScheduleCalendarDialog(
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1f),
+                                .weight(1f)
+                                .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             itemsIndexed(

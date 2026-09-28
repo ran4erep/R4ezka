@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.lazy.items
+import com.example.ui.haptics.bounceOverscroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -704,6 +705,7 @@ private fun TvCatalogContent(
                                     verticalArrangement = Arrangement.spacedBy(12.dp),
                                     modifier = Modifier
                                         .fillMaxSize()
+                                        .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                                         .testTag("tv_collections_grid")
                                 ) {
                                     itemsIndexed(
@@ -790,6 +792,7 @@ private fun TvCatalogContent(
                                 verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                                     .testTag("tv_catalog_grid")
                             ) {
                                 itemsIndexed(
