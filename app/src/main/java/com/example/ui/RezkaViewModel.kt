@@ -1492,93 +1492,151 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private var checkHistoryJob: Job? = null
+    private data class HistorySeriesCandidate(
+        val itemId: String,
+        val title: String,
+        val url: String,
+        val translatorId: String,
+        val latest: WatchHistoryEntity,
+        val allItems: List<WatchHistoryEntity>,
+        val calculatedAbsoluteEpisodeIndex: Int,
+        val calculatedWatchedEpisodesCount: Int,
+        val currentTotalEpisodes: Int,
+        val isFullyWatched: Boolean
+    )
+
     private val lastHistoryCheckTimestamps = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /**
-     * Проверяет появление новых серий у всех сериалов в истории просмотров.
-     * При обнаружении новых серий мгновенно обновляет totalEpisodes в базе данных для пересчёта прогресса,
-     * а также сбрасывает статус "просмотрено", если вышли новые серии.
+     * Высокопроизводительный движок проверки и пересчёта количества серий и прогресса для всех сериалов в истории.
+     * Запускается при каждом входе в окно истории:
+     * 1. Считывает историю напрямую из локальной базы данных SQLite без задержек StateFlow.
+     * 2. Выполняет легковесные точечные AJAX-запросы к HDRezka с ограничением параллелизма (Semaphore=2).
+     * 3. При обнаружении новых серий мгновенно сохраняет точное число серий в базе,
+     *    сбрасывает статус "полностью просмотрено", если вышли новые серии,
+     *    что автоматически и реактивно обновляет счётчик (например, "32 из 33 серий") и процент прогресса (например, "97%").
      */
-    fun checkHistorySeriesUpdates() {
-        val seriesItems = aggregatedWatchHistory.value.filter { it.isSeries && it.url.isNotBlank() }
-        if (seriesItems.isEmpty()) return
-
+    fun checkHistorySeriesUpdates(force: Boolean = false) {
         checkHistoryJob?.cancel()
         checkHistoryJob = viewModelScope.launch(Dispatchers.IO) {
+            val allHistory = repository.getAllHistoryList()
+            if (allHistory.isEmpty()) return@launch
+
             val now = System.currentTimeMillis()
-            val semaphore = Semaphore(2)
+            val grouped = allHistory.groupBy { it.itemId }
+            val seriesCandidates = grouped.mapNotNull { (itemId, items) ->
+                val latest = items.maxByOrNull { it.timestamp } ?: items.first()
+                val isSeries = latest.season > 0 ||
+                               latest.episode.isNotBlank() ||
+                               items.any { it.season > 0 || it.episode.isNotBlank() } ||
+                               latest.url.contains("/series/") ||
+                               latest.url.contains("/animation/")
+                if (!isSeries) return@mapNotNull null
 
-            seriesItems.map { historyItem ->
-                async {
-                    val lastCheck = lastHistoryCheckTimestamps[historyItem.itemId] ?: 0L
-                    if (now - lastCheck < 3_000L) return@async // Защита от спама чаще 3 сек при быстрой перекомпозиции
+                val bestUrl = items.firstOrNull { it.url.isNotBlank() }?.url ?: latest.url
+                val bestTranslatorId = items.firstOrNull { it.translatorId.isNotBlank() }?.translatorId ?: latest.translatorId
+                val calc = calculateSeriesProgress(latest, items, now)
 
-                    semaphore.withPermit {
-                        try {
-                            lastHistoryCheckTimestamps[historyItem.itemId] = now
+                HistorySeriesCandidate(
+                    itemId = itemId,
+                    title = latest.title,
+                    url = bestUrl,
+                    translatorId = bestTranslatorId,
+                    latest = latest,
+                    allItems = items,
+                    calculatedAbsoluteEpisodeIndex = calc.absoluteEpisodeIndex,
+                    calculatedWatchedEpisodesCount = calc.watchedEpisodesCount,
+                    currentTotalEpisodes = calc.totalEpisodesCount,
+                    isFullyWatched = latest.isFullyWatched || calc.isFullyWatched
+                )
+            }
 
-                            val targetUrl = RezkaService.adjustUrlToCurrentMirror(historyItem.url, RezkaType.SERIES, historyItem.itemId)
-                            val numericPostId = RezkaService.extractNumericId(historyItem.url).ifEmpty { RezkaService.extractNumericId(historyItem.itemId) }
-                            val lastHist = repository.getWatchHistoryForMovie(historyItem.itemId)
-                            val transId = lastHist?.translatorId ?: ""
+            if (seriesCandidates.isEmpty()) return@launch
 
-                            var newTotalEpisodes = 0
-                            var newTotalSeasons = 0
+            _isCheckingSeriesUpdates.value = true
+            try {
+                val semaphore = Semaphore(2)
+                seriesCandidates.map { candidate ->
+                    async {
+                        val lastCheck = lastHistoryCheckTimestamps[candidate.itemId] ?: 0L
+                        // Защита от спама: если force = false, то 10 секунд; если force = true, то 3 секунды
+                        val minInterval = if (force) 3_000L else 10_000L
+                        if (now - lastCheck < minInterval) return@async
 
-                            // 1. Сверхбыстрый точечный AJAX-запрос к API HDRezka
-                            if (numericPostId.isNotBlank()) {
-                                try {
-                                    val ajaxRes = SeriesUpdateEngine.fetchSeriesLatestEpisodeAjax(numericPostId, transId)
-                                    if (ajaxRes.isSuccess && ajaxRes.totalEpisodes > 0) {
-                                        newTotalEpisodes = ajaxRes.totalEpisodes
-                                        newTotalSeasons = ajaxRes.totalSeasons
-                                    }
-                                } catch (_: Exception) {}
-                            }
+                        semaphore.withPermit {
+                            try {
+                                lastHistoryCheckTimestamps[candidate.itemId] = now
 
-                            // 2. Сканирование страницы если AJAX не дал результата
-                            if (newTotalEpisodes == 0) {
-                                try {
-                                    val scanRes = SeriesUpdateEngine.fetchSeriesLatestEpisode(targetUrl)
-                                    if (scanRes.isSuccess && scanRes.totalEpisodes > 0) {
-                                        newTotalEpisodes = scanRes.totalEpisodes
-                                        newTotalSeasons = scanRes.totalSeasons
-                                    }
-                                } catch (_: Exception) {}
-                            }
+                                val targetUrl = RezkaService.adjustUrlToCurrentMirror(candidate.url, RezkaType.SERIES, candidate.itemId)
+                                val numericPostId = RezkaService.extractNumericId(targetUrl).ifEmpty { RezkaService.extractNumericId(candidate.itemId) }
+                                val transId = candidate.translatorId
 
-                            // 3. Fallback: RezkaService.getDetail
-                            if (newTotalEpisodes == 0) {
-                                try {
-                                    val detail = RezkaService.getDetail(targetUrl)
-                                    if (detail.seasons.isNotEmpty()) {
-                                        newTotalEpisodes = detail.seasons.sumOf { it.episodes.size }
-                                        newTotalSeasons = detail.seasons.maxOfOrNull { it.id } ?: detail.seasons.size
-                                    }
-                                } catch (_: Exception) {}
-                            }
+                                var newTotalEpisodes = 0
+                                var newTotalSeasons = 0
 
-                            if (newTotalEpisodes > 0) {
-                                val finalSeasons = maxOf(newTotalSeasons, 1)
-                                repository.updateExactTotalEpisodes(historyItem.itemId, newTotalEpisodes, finalSeasons)
+                                // 1. Сверхбыстрый точечный AJAX-запрос к API HDRezka
+                                if (numericPostId.isNotBlank()) {
+                                    try {
+                                        val ajaxRes = SeriesUpdateEngine.fetchSeriesLatestEpisodeAjax(numericPostId, transId)
+                                        if (ajaxRes.isSuccess && ajaxRes.totalEpisodes > 0) {
+                                            newTotalEpisodes = ajaxRes.totalEpisodes
+                                            newTotalSeasons = ajaxRes.totalSeasons
+                                        }
+                                    } catch (_: Exception) {}
+                                }
 
-                                // Если появились новые серии, а сериал числился полностью просмотренным:
-                                if (newTotalEpisodes > historyItem.watchedEpisodesCount && historyItem.isFullyWatched) {
-                                    autoWatchedPersistedSet.remove(historyItem.itemId)
-                                    repository.setHistoryWatched(historyItem.itemId, false)
-                                    val updated = lastHist?.copy(isFullyWatched = false, totalEpisodes = newTotalEpisodes, totalSeasons = finalSeasons)
-                                    if (updated != null) {
+                                // 2. Сканирование страницы если AJAX не дал результата
+                                if (newTotalEpisodes == 0) {
+                                    try {
+                                        val scanRes = SeriesUpdateEngine.fetchSeriesLatestEpisode(targetUrl)
+                                        if (scanRes.isSuccess && scanRes.totalEpisodes > 0) {
+                                            newTotalEpisodes = scanRes.totalEpisodes
+                                            newTotalSeasons = scanRes.totalSeasons
+                                        }
+                                    } catch (_: Exception) {}
+                                }
+
+                                // 3. Fallback: RezkaService.getDetail
+                                if (newTotalEpisodes == 0) {
+                                    try {
+                                        val detail = RezkaService.getDetail(targetUrl)
+                                        if (detail.seasons.isNotEmpty()) {
+                                            newTotalEpisodes = detail.seasons.sumOf { it.episodes.size }
+                                            newTotalSeasons = detail.seasons.maxOfOrNull { it.id } ?: detail.seasons.size
+                                        }
+                                    } catch (_: Exception) {}
+                                }
+
+                                if (newTotalEpisodes > 0) {
+                                    val finalSeasons = maxOf(newTotalSeasons, 1)
+                                    val absIndex = candidate.calculatedAbsoluteEpisodeIndex
+
+                                    // Обновляем точное количество серий во всей истории сериала в базе данных
+                                    repository.updateExactTotalEpisodes(candidate.itemId, newTotalEpisodes, finalSeasons)
+
+                                    // Если вышли новые серии (общее число серий превышает номер последней просмотренной серии):
+                                    // сериал больше не может считаться полностью завершенным!
+                                    if (newTotalEpisodes > absIndex) {
+                                        autoWatchedPersistedSet.remove(candidate.itemId)
+                                        repository.setHistoryWatched(candidate.itemId, false)
+                                        val updated = candidate.latest.copy(
+                                            isFullyWatched = false,
+                                            totalEpisodes = newTotalEpisodes,
+                                            totalSeasons = finalSeasons
+                                        )
                                         FirebaseSyncManager.onWatchProgress(updated)
                                         FirebaseSyncManager.flushWatchProgress()
                                     }
                                 }
+                            } catch (e: Exception) {
+                                if (e is kotlinx.coroutines.CancellationException) throw e
                             }
-                        } catch (e: Exception) {
-                            if (e is kotlinx.coroutines.CancellationException) throw e
                         }
                     }
-                }
-            }.awaitAll()
+                }.awaitAll()
+            } finally {
+                _isCheckingSeriesUpdates.value = false
+            }
         }
     }
 

@@ -47,9 +47,10 @@ fun HistoryScreen(
     modifier: Modifier = Modifier
 ) {
     val historyList by viewModel.aggregatedWatchHistory.collectAsStateWithLifecycle()
+    val isCheckingUpdates by viewModel.isCheckingSeriesUpdates.collectAsStateWithLifecycle()
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        viewModel.checkHistorySeriesUpdates()
+        viewModel.checkHistorySeriesUpdates(force = true)
     }
 
     Column(
@@ -66,16 +67,26 @@ fun HistoryScreen(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "ИСТОРИЯ",
+                        color = CinemaPrimary,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 1.5.sp
+                    )
+                    if (isCheckingUpdates) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        CircularProgressIndicator(
+                            color = CinemaPrimary,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                }
                 Text(
-                    text = "ИСТОРИЯ",
-                    color = CinemaPrimary,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 1.5.sp
-                )
-                Text(
-                    text = "Прогресс ваших просмотров",
-                    color = CinemaTextGray,
+                    text = if (isCheckingUpdates) "Синхронизация серий..." else "Прогресс ваших просмотров",
+                    color = if (isCheckingUpdates) CinemaPrimary.copy(alpha = 0.85f) else CinemaTextGray,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium
                 )
