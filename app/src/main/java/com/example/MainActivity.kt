@@ -149,6 +149,12 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
         UpdateManager.checkForUpdates(BuildConfig.VERSION_NAME)
     }
 
+    LaunchedEffect(currentTab, navigationStack.size) {
+        if (currentTab == NavTab.HISTORY && navigationStack.isEmpty()) {
+            viewModel.checkHistorySeriesUpdates(force = true)
+        }
+    }
+
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
     val isOnline by viewModel.isOnline.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()

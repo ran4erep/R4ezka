@@ -89,6 +89,12 @@ fun TvMainScreen(
     var selectedDestination by remember { mutableStateOf(TvNavDestination.CATALOG) }
     var isSidebarFocused by remember { mutableStateOf(false) }
 
+    LaunchedEffect(selectedDestination, isTopScreen) {
+        if (selectedDestination == TvNavDestination.HISTORY && isTopScreen) {
+            viewModel.checkHistorySeriesUpdates(force = true)
+        }
+    }
+
     val isOnline by viewModel.isOnline.collectAsState()
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()

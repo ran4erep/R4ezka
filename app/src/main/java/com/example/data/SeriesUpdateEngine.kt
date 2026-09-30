@@ -65,6 +65,16 @@ object SeriesUpdateEngine {
         RegexOption.DOT_MATCHES_ALL
     )
 
+    private val SEASON_CONTAINER_REGEX = Regex(
+        """<(?:ul|div)[^>]*?data-season_id=["'](\d+)["'][^>]*?>(.*?)</(?:ul|div)>""",
+        RegexOption.DOT_MATCHES_ALL
+    )
+
+    private val EPISODE_IN_CONTAINER_REGEX = Regex(
+        """<li[^>]*?data-episode_id=["'](\d+)["'][^>]*?>(.*?)</li>""",
+        RegexOption.DOT_MATCHES_ALL
+    )
+
     private val GENERIC_DATA_REGEX = Regex(
         """data-season_id=["'](\d+)["'][^>]*?data-episode_id=["'](\d+)["']"""
     )
@@ -98,8 +108,28 @@ object SeriesUpdateEngine {
         var episodeName = ""
         val allEpisodesSet = HashSet<Long>()
 
-        // 1. Поиск элементов <li class="b-simple_episode__item" data-season_id="..." data-episode_id="...">
+        // 0. Поиск контейнеров сезонов с сериями внутри (<ul data-season_id="X">...<li data-episode_id="Y">)
         var matchesFound = false
+        for (seasonMatch in SEASON_CONTAINER_REGEX.findAll(html)) {
+            val season = seasonMatch.groupValues[1].toIntOrNull() ?: continue
+            val containerContent = seasonMatch.groupValues[2]
+            for (epMatch in EPISODE_IN_CONTAINER_REGEX.findAll(containerContent)) {
+                val episode = epMatch.groupValues[1].toIntOrNull() ?: continue
+                val rawText = epMatch.groupValues[2]
+                matchesFound = true
+                if (season > 0 && episode > 0) {
+                    allEpisodesSet.add((season.toLong() shl 32) or (episode.toLong() and 0xFFFFFFFFL))
+                }
+                if (season > maxSeason || (season == maxSeason && episode > maxEpisode)) {
+                    maxSeason = season
+                    maxEpisode = episode
+                    val cleanText = HTML_TAG_STRIP_REGEX.replace(rawText, "").trim()
+                    episodeName = if (cleanText.isNotEmpty()) cleanText else "Серия $episode"
+                }
+            }
+        }
+
+        // 1. Поиск элементов <li class="b-simple_episode__item" data-season_id="..." data-episode_id="...">
         for (match in EPISODE_TAG_REGEX.findAll(html)) {
             val season = match.groupValues[1].toIntOrNull() ?: continue
             val episode = match.groupValues[2].toIntOrNull() ?: continue
@@ -324,12 +354,14 @@ object SeriesUpdateEngine {
                     return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "AJAX success=false")
                 }
 
+                val seasonsHtml = json.optString("seasons", "")
                 val episodesHtml = json.optString("episodes", "")
-                if (episodesHtml.isBlank()) {
-                    return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "Пустой блок episodes")
+                if (episodesHtml.isBlank() && seasonsHtml.isBlank()) {
+                    return@withContext SeriesScanResult(0, 0, "", false, errorMessage = "Пустой блок серий")
                 }
 
-                return@withContext parseLatestEpisodeFromHtml(episodesHtml)
+                val combinedHtml = if (seasonsHtml.isNotBlank()) "$seasonsHtml\n$episodesHtml" else episodesHtml
+                return@withContext parseLatestEpisodeFromHtml(combinedHtml)
             }
         } catch (e: Exception) {
             Log.w(TAG, "Сбой точечного AJAX запроса для $cleanPostId: ${e.message}")
