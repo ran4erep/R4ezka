@@ -2,8 +2,10 @@ package com.example.data
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -11,6 +13,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import org.jsoup.Jsoup
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
@@ -24,9 +27,13 @@ sealed interface UpdateState {
 }
 
 object UpdateManager {
+    private const val TAG = "UpdateManager"
+
     private val client = OkHttpClient.Builder()
+        .dns(SafeDns)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        .followRedirects(true)
         .build()
 
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
@@ -50,64 +57,125 @@ object UpdateManager {
         return false
     }
 
+    private fun extractChangelogFromHtml(html: String): String {
+        return try {
+            val doc = Jsoup.parse(html)
+            val markdownEl = doc.selectFirst(".markdown-body")
+            if (markdownEl != null) {
+                val listItems = markdownEl.select("li")
+                if (listItems.isNotEmpty()) {
+                    listItems.joinToString("\n") { "• " + it.text().trim() }
+                } else {
+                    markdownEl.wholeText().trim()
+                }
+            } else {
+                ""
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse changelog HTML", e)
+            ""
+        }
+    }
+
     suspend fun checkForUpdates(currentVersion: String) {
         withContext(Dispatchers.IO) {
-            try {
-                val current = _updateState.value
-                if (current is UpdateState.ReadyToInstall) {
-                    if (!current.apkFile.exists()) {
-                        _updateState.value = UpdateState.Idle
+            val current = _updateState.value
+            if (current is UpdateState.ReadyToInstall && current.apkFile.exists()) {
+                return@withContext
+            }
+            if (current is UpdateState.Downloading) {
+                return@withContext
+            }
+
+            var attempt = 0
+            val maxAttempts = 3
+            while (attempt < maxAttempts) {
+                attempt++
+                // Стратегия 1: GitHub API (api.github.com)
+                try {
+                    val request = Request.Builder()
+                        .url("https://api.github.com/repos/ran4erep/R4ezka/releases/latest")
+                        .header("User-Agent", "R4ezka-App-Updater")
+                        .header("Accept", "application/vnd.github.v3+json")
+                        .build()
+
+                    val (bodyString, isSuccess) = client.newCall(request).execute().use { response ->
+                        Pair(response.body?.string(), response.isSuccessful)
                     }
-                } else if (current is UpdateState.Error) {
-                    _updateState.value = UpdateState.Idle
+
+                    if (isSuccess && !bodyString.isNullOrBlank()) {
+                        val json = JSONObject(bodyString)
+                        val tagName = json.optString("tag_name", "").trim()
+                        val changelog = json.optString("body", "")
+
+                        if (tagName.isNotEmpty()) {
+                            if (isNewerVersion(currentVersion, tagName)) {
+                                val assetsArray = json.optJSONArray("assets")
+                                var downloadUrl: String? = null
+                                if (assetsArray != null) {
+                                    for (i in 0 until assetsArray.length()) {
+                                        val asset = assetsArray.getJSONObject(i)
+                                        val assetName = asset.optString("name", "")
+                                        if (assetName.endsWith(".apk", ignoreCase = true)) {
+                                            downloadUrl = asset.optString("browser_download_url", "")
+                                            break
+                                        }
+                                    }
+                                }
+                                if (downloadUrl.isNullOrBlank()) {
+                                    downloadUrl = "https://github.com/ran4erep/R4ezka/releases/download/$tagName/r4ezka.apk"
+                                }
+                                _updateState.value = UpdateState.UpdateAvailable(
+                                    latestVersion = tagName,
+                                    downloadUrl = downloadUrl,
+                                    changelog = changelog
+                                )
+                                return@withContext
+                            } else {
+                                // Версия актуальна или новее
+                                return@withContext
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "GitHub API update check attempt $attempt error: ${e.message}")
                 }
 
-                val request = Request.Builder()
-                    .url("https://api.github.com/repos/ran4erep/R4ezka/releases/latest")
-                    .header("User-Agent", "R4ezka-App-Updater")
-                    .header("Accept", "application/vnd.github.v3+json")
-                    .build()
+                // Стратегия 2 (Резервная): Прямой переход по ссылке /releases/latest без ограничений API
+                try {
+                    val webRequest = Request.Builder()
+                        .url("https://github.com/ran4erep/R4ezka/releases/latest")
+                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36")
+                        .build()
 
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        // Silent fail or idle, we don't block user if GitHub rate limit exceeded or offline
-                        _updateState.value = UpdateState.Idle
-                        return@withContext
-                    }
-                    val bodyString = response.body?.string() ?: return@withContext
-                    val json = JSONObject(bodyString)
-                    val tagName = json.getString("tag_name")
-                    val changelog = json.optString("body", "")
-
-                    if (isNewerVersion(currentVersion, tagName)) {
-                        val assetsArray = json.optJSONArray("assets")
-                        var downloadUrl: String? = null
-                        if (assetsArray != null) {
-                            for (i in 0 until assetsArray.length()) {
-                                val asset = assetsArray.getJSONObject(i)
-                                val assetName = asset.getString("name")
-                                if (assetName.endsWith(".apk")) {
-                                    downloadUrl = asset.getString("browser_download_url")
-                                    break
+                    client.newCall(webRequest).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val finalUrl = response.request.url.toString()
+                            val tagName = finalUrl.substringAfterLast("/tag/").substringAfterLast("/").trim()
+                            if (tagName.isNotEmpty() && tagName != "latest") {
+                                if (isNewerVersion(currentVersion, tagName)) {
+                                    val html = response.body?.string().orEmpty()
+                                    val changelog = extractChangelogFromHtml(html)
+                                    val downloadUrl = "https://github.com/ran4erep/R4ezka/releases/download/$tagName/r4ezka.apk"
+                                    _updateState.value = UpdateState.UpdateAvailable(
+                                        latestVersion = tagName,
+                                        downloadUrl = downloadUrl,
+                                        changelog = changelog.ifBlank { null }
+                                    )
+                                    return@withContext
+                                } else {
+                                    return@withContext
                                 }
                             }
                         }
-                        if (downloadUrl != null) {
-                            _updateState.value = UpdateState.UpdateAvailable(
-                                latestVersion = tagName,
-                                downloadUrl = downloadUrl,
-                                changelog = changelog
-                            )
-                        } else {
-                            _updateState.value = UpdateState.Idle
-                        }
-                    } else {
-                        _updateState.value = UpdateState.Idle
                     }
+                } catch (e: Exception) {
+                    Log.w(TAG, "GitHub Web fallback attempt $attempt error: ${e.message}")
                 }
-            } catch (e: Exception) {
-                // Handle silently or logs to avoid crashing on poor connection
-                _updateState.value = UpdateState.Idle
+
+                if (attempt < maxAttempts) {
+                    delay(1200)
+                }
             }
         }
     }

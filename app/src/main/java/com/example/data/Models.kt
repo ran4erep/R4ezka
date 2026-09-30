@@ -423,3 +423,11 @@ data class RezkaPerson(
     val filmography: List<RezkaItem> = emptyList(),
     val careerSections: List<RezkaCareerSection> = emptyList()
 ) : Serializable
+
+data class MirrorAuditCheckResult(
+    val mirror: String,
+    val catalogSuccess: Boolean,
+    val streamSuccess: Boolean,
+    val catalogItems: List<RezkaItem>? = null,
+    val errorMessage: String? = null
+) : Serializable
