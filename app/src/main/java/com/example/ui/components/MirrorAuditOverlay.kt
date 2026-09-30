@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudOff
@@ -12,11 +13,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.MirrorAuditUiState
@@ -56,7 +60,7 @@ fun MirrorAuditOverlay(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(CinemaBlack.copy(alpha = 0.35f))
+            .background(CinemaBlack.copy(alpha = 0.65f))
             .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -64,15 +68,18 @@ fun MirrorAuditOverlay(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = CinemaDark),
             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+            border = CardDefaults.outlinedCardBorder().copy(
+                brush = androidx.compose.ui.graphics.SolidColor(CinemaPrimary.copy(alpha = 0.35f))
+            ),
             modifier = Modifier
-                .fillMaxWidth(0.9f)
+                .fillMaxWidth(0.92f)
                 .widthIn(max = 440.dp)
                 .testTag("mirror_audit_card")
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 28.dp),
+                    .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -80,18 +87,88 @@ fun MirrorAuditOverlay(
                     is MirrorAuditUiState.Checking -> {
                         CircularProgressIndicator(
                             color = CinemaPrimary,
-                            strokeWidth = 3.5.dp,
-                            modifier = Modifier.size(48.dp)
+                            strokeWidth = 3.dp,
+                            modifier = Modifier.size(46.dp)
                         )
-                        Spacer(modifier = Modifier.height(24.dp))
+
+                        Spacer(modifier = Modifier.height(18.dp))
+
                         Text(
-                            text = "Проверяем доступные зеркала...",
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            text = "Аудит доступных зеркал",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
                             color = CinemaTextWhite,
                             textAlign = TextAlign.Center
                         )
-                        Spacer(modifier = Modifier.height(24.dp))
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Индикатор сколько из скольки (например: 1/31, 5/31)
+                        val counterText = if (state.totalCount > 0) {
+                            "${state.checkedCount}/${state.totalCount}"
+                        } else {
+                            ""
+                        }
+
+                        if (counterText.isNotEmpty()) {
+                            Text(
+                                text = "Проверка: $counterText",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = CinemaPrimary,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
+
+                        val progressFraction = if (state.totalCount > 0) {
+                            (state.checkedCount.toFloat() / state.totalCount.toFloat()).coerceIn(0f, 1f)
+                        } else 0f
+
+                        LinearProgressIndicator(
+                            progress = { progressFraction },
+                            color = CinemaPrimary,
+                            trackColor = CinemaMuted.copy(alpha = 0.3f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(5.dp)
+                                .clip(CircleShape)
+                        )
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Статус проверяемого зеркала (успешно / сбой)
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = CinemaBlack.copy(alpha = 0.4f),
+                            border = CardDefaults.outlinedCardBorder().copy(
+                                brush = androidx.compose.ui.graphics.SolidColor(CinemaCard)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            val statusColor = when (state.lastCheckedSuccess) {
+                                true -> Color(0xFF4CAF50)
+                                false -> CinemaTextGray
+                                null -> CinemaPrimary
+                            }
+                            val displayStatus = state.lastCheckedStatus.ifEmpty { "Проверка доступности и видеопотока..." }
+
+                            Text(
+                                text = displayStatus,
+                                fontSize = 12.sp,
+                                fontWeight = if (state.lastCheckedSuccess == true) FontWeight.Bold else FontWeight.Normal,
+                                color = statusColor,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
                         Button(
                             onClick = {
                                 HapticEngine.get().perform(HapticType.GENTLE_TICK)
@@ -107,7 +184,7 @@ fun MirrorAuditOverlay(
                             Text(
                                 text = "Отмена",
                                 color = CinemaTextWhite,
-                                fontSize = 15.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium
                             )
                         }

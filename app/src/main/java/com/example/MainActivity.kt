@@ -58,6 +58,14 @@ import com.example.ui.tv.LocalTvShowCursor
 import com.example.BuildConfig
 import com.example.data.UpdateManager
 import com.example.data.UpdateState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.clip
+import com.example.ui.theme.CinemaMuted
+import com.example.ui.theme.CinemaCard
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -145,8 +153,21 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
         viewModel.consumePendingDeepLink()
     }
 
+    val isLoggedIn by viewModel.isLoggedIn.collectAsState()
+    val isOnline by viewModel.isOnline.collectAsState()
+    val currentUser by viewModel.currentUser.collectAsState()
+    val currentUserAvatar by viewModel.currentUserAvatar.collectAsState()
+    val mirrorAuditState by viewModel.mirrorAuditState.collectAsState()
+    var showAuthDialog by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         UpdateManager.checkForUpdates(BuildConfig.VERSION_NAME)
+    }
+
+    LaunchedEffect(isOnline) {
+        if (isOnline) {
+            UpdateManager.checkForUpdates(BuildConfig.VERSION_NAME)
+        }
     }
 
     LaunchedEffect(currentTab, navigationStack.size) {
@@ -154,13 +175,6 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
             viewModel.checkHistorySeriesUpdates(force = true)
         }
     }
-
-    val isLoggedIn by viewModel.isLoggedIn.collectAsState()
-    val isOnline by viewModel.isOnline.collectAsState()
-    val currentUser by viewModel.currentUser.collectAsState()
-    val currentUserAvatar by viewModel.currentUserAvatar.collectAsState()
-    val mirrorAuditState by viewModel.mirrorAuditState.collectAsState()
-    var showAuthDialog by remember { mutableStateOf(false) }
 
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -738,21 +752,69 @@ fun UpdateBanner(
                 if (isExpanded && updateState is UpdateState.UpdateAvailable) {
                     val changelog = (updateState as UpdateState.UpdateAvailable).changelog
                     if (!changelog.isNullOrBlank()) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        androidx.compose.foundation.lazy.LazyColumn(
+                        val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+                        val halfScreenHeight = (configuration.screenHeightDp * 0.5f).dp
+                        val scrollState = rememberScrollState()
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = 120.dp)
-                                .background(CinemaBlack.copy(alpha = 0.3f), MaterialTheme.shapes.small)
-                                .padding(8.dp)
+                                .heightIn(min = 180.dp, max = halfScreenHeight)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(CinemaBlack.copy(alpha = 0.5f))
+                                .border(1.dp, CinemaCard.copy(alpha = 0.8f), RoundedCornerShape(10.dp))
+                                .padding(4.dp)
                         ) {
-                            item {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .verticalScroll(scrollState)
+                                    .padding(start = 10.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)
+                            ) {
                                 Text(
                                     text = changelog,
-                                    color = CinemaTextGray,
-                                    fontSize = 11.sp,
-                                    lineHeight = 15.sp
+                                    color = CinemaTextWhite.copy(alpha = 0.9f),
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.sp
                                 )
+                            }
+
+                            // Видимый индикатор прокрутки (Scrollbar)
+                            val isScrollable = scrollState.maxValue > 0
+                            if (isScrollable) {
+                                val viewPortHeightPx = scrollState.viewportSize.toFloat()
+                                val totalHeightPx = (scrollState.maxValue + scrollState.viewportSize).toFloat()
+                                val thumbFraction = if (totalHeightPx > 0f) (viewPortHeightPx / totalHeightPx).coerceIn(0.12f, 0.9f) else 1f
+                                val scrollFraction = if (scrollState.maxValue > 0) scrollState.value.toFloat() / scrollState.maxValue.toFloat() else 0f
+
+                                Box(
+                                    modifier = Modifier
+                                        .align(androidx.compose.ui.Alignment.CenterEnd)
+                                        .matchParentSize()
+                                        .padding(vertical = 4.dp, horizontal = 2.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(androidx.compose.ui.Alignment.CenterEnd)
+                                            .fillMaxHeight()
+                                            .width(4.dp)
+                                            .background(CinemaMuted.copy(alpha = 0.25f), CircleShape)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .fillMaxHeight(thumbFraction)
+                                                .align(
+                                                    androidx.compose.ui.BiasAlignment(
+                                                        horizontalBias = 0f,
+                                                        verticalBias = (scrollFraction * 2f) - 1f
+                                                    )
+                                                )
+                                                .background(CinemaPrimary, CircleShape)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

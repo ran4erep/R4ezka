@@ -18,25 +18,28 @@ object NetworkMonitor {
     val isOnline: StateFlow<Boolean> = _isOnline.asStateFlow()
 
     private var isInitialized = false
+    private var connectivityManager: ConnectivityManager? = null
+
+    fun checkCurrentConnectivity(): Boolean {
+        val cm = connectivityManager ?: return true
+        return try {
+            val activeNetwork = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(activeNetwork) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        } catch (_: Exception) {
+            true
+        }
+    }
 
     fun init(context: Context) {
         if (isInitialized) return
         isInitialized = true
 
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        connectivityManager = cm
         if (cm == null) {
             _isOnline.value = true
             return
-        }
-
-        fun checkCurrentConnectivity(): Boolean {
-            return try {
-                val activeNetwork = cm.activeNetwork ?: return false
-                val caps = cm.getNetworkCapabilities(activeNetwork) ?: return false
-                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            } catch (_: Exception) {
-                false
-            }
         }
 
         _isOnline.value = checkCurrentConnectivity()
@@ -67,8 +70,9 @@ object NetworkMonitor {
     }
 
     /**
-     * Позволяет отметить невозможность сетевого взаимодействия при исключениях типа UnknownHostException,
-     * ConnectException или SocketTimeoutException.
+     * Позволяет отметить невозможность сетевого взаимодействия при исключениях,
+     * только если само устройство действительно потеряло подключение к сети.
+     * Ошибка отдельного заблокированного зеркала НЕ переводит всё приложение в оффлайн.
      */
     fun handleNetworkException(throwable: Throwable) {
         if (throwable is UnknownHostException ||
@@ -76,7 +80,9 @@ object NetworkMonitor {
             throwable is SocketTimeoutException ||
             (throwable is IOException && throwable.message?.contains("DNS", ignoreCase = true) == true)
         ) {
-            _isOnline.value = false
+            if (!checkCurrentConnectivity()) {
+                _isOnline.value = false
+            }
         }
     }
 

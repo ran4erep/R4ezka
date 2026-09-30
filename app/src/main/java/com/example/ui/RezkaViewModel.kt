@@ -37,7 +37,14 @@ sealed interface DetailState {
 
 sealed interface MirrorAuditUiState {
     object Idle : MirrorAuditUiState
-    object Checking : MirrorAuditUiState
+    data class Checking(
+        val checkedCount: Int = 0,
+        val totalCount: Int = 0,
+        val currentMirrorHost: String = "",
+        val lastCheckedMirrorHost: String = "",
+        val lastCheckedStatus: String = "",
+        val lastCheckedSuccess: Boolean? = null
+    ) : MirrorAuditUiState
     data class Failed(val message: String) : MirrorAuditUiState
 }
 
@@ -2067,44 +2074,116 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Аудит доступности встроенных зеркал.
-     * Проверяет встроенные зеркала только до того момента, как не найдёт доступное зеркало,
-     * с которым каталог успешно загрузился.
+     * Высокопроизводительный асинхронный аудит зеркал с проверкой видеопотока.
+     * 1. Проверяет зеркала по порядку как в настройках, начиная с основного (PRIMARY_MIRROR).
+     * 2. Проверяет зеркала асинхронно пачками по 5 штук.
+     * 3. Для каждого зеркала проверяет каталог и отклик видеопотока.
+     * 4. Если поток успешен — сразу выбирает это зеркало и прерывает аудит.
+     * 5. Если ни у одного зеркала поток не грузится — выбирает первое зеркало с рабочим каталогом.
      */
     fun startMirrorAudit(isFirstLaunch: Boolean = false) {
         auditJob?.cancel()
         isFirstLaunchAuditSession = isFirstLaunch
-        _mirrorAuditState.value = MirrorAuditUiState.Checking
+
+        val mirrors = buildList {
+            add(RezkaService.PRIMARY_MIRROR)
+            for (m in RezkaService.PRESET_MIRRORS) {
+                if (!contains(m)) add(m)
+            }
+        }
+        val totalCount = mirrors.size
+        var checkedCount = 0
+
+        val primaryHost = RezkaService.PRIMARY_MIRROR.removePrefix("https://").removePrefix("http://").trimEnd('/')
+        _mirrorAuditState.value = MirrorAuditUiState.Checking(
+            checkedCount = 0,
+            totalCount = totalCount,
+            currentMirrorHost = primaryHost,
+            lastCheckedStatus = "Подготовка к проверке..."
+        )
 
         auditJob = viewModelScope.launch(Dispatchers.IO) {
-            val mirrors = RezkaService.PRESET_MIRRORS
-            var foundWorkingMirror: String? = null
-            var firstPageItems: List<RezkaItem>? = null
+            val chunks = mirrors.chunked(5)
+            var selectedWorkingMirror: String? = null
+            var selectedCatalogItems: List<RezkaItem>? = null
+            var firstCatalogOnlyMirror: String? = null
+            var firstCatalogOnlyItems: List<RezkaItem>? = null
 
-            for (mirror in mirrors) {
+            for (chunk in chunks) {
                 if (!isActive) break
 
-                val testRes = RezkaService.testMirrorWithCatalog(mirror)
-                if (testRes.isSuccess) {
-                    val items = testRes.getOrNull()
-                    if (!items.isNullOrEmpty()) {
-                        foundWorkingMirror = mirror
-                        firstPageItems = items
+                val firstHostInChunk = chunk.firstOrNull()?.removePrefix("https://")?.removePrefix("http://")?.trimEnd('/').orEmpty()
+                withContext(Dispatchers.Main) {
+                    _mirrorAuditState.value = MirrorAuditUiState.Checking(
+                        checkedCount = checkedCount,
+                        totalCount = totalCount,
+                        currentMirrorHost = firstHostInChunk,
+                        lastCheckedStatus = "Проверка доступности..."
+                    )
+                }
+
+                // Параллельно асинхронно проверяем пачку из 5 зеркал
+                val chunkDeferreds = chunk.map { mirrorUrl ->
+                    async(Dispatchers.IO) {
+                        val checkRes = RezkaService.testMirrorWithStreamCheck(mirrorUrl)
+                        val host = mirrorUrl.removePrefix("https://").removePrefix("http://").trimEnd('/')
+                        withContext(Dispatchers.Main) {
+                            checkedCount++
+                            val statusMsg = when {
+                                checkRes.streamSuccess -> "$host: успешно (поток работает)"
+                                checkRes.catalogSuccess -> "$host: каталог OK (поток недоступен)"
+                                else -> "$host: недоступно"
+                            }
+                            _mirrorAuditState.value = MirrorAuditUiState.Checking(
+                                checkedCount = checkedCount,
+                                totalCount = totalCount,
+                                currentMirrorHost = host,
+                                lastCheckedMirrorHost = host,
+                                lastCheckedStatus = statusMsg,
+                                lastCheckedSuccess = checkRes.streamSuccess || checkRes.catalogSuccess
+                            )
+                        }
+                        Pair(mirrorUrl, checkRes)
+                    }
+                }
+
+                val chunkResults = chunkDeferreds.awaitAll()
+                if (!isActive) return@launch
+
+                // Анализируем результаты пачки в строгом порядке следования в списке (начиная с основного)
+                for (m in chunk) {
+                    val result = chunkResults.firstOrNull { it.first == m }?.second ?: continue
+                    if (result.streamSuccess && selectedWorkingMirror == null) {
+                        selectedWorkingMirror = m
+                        selectedCatalogItems = result.catalogItems
                         break
                     }
+                    if (result.catalogSuccess && firstCatalogOnlyMirror == null) {
+                        firstCatalogOnlyMirror = m
+                        firstCatalogOnlyItems = result.catalogItems
+                    }
+                }
+
+                // Если найдено приоритетное зеркало с работающим потоком — завершаем поиск
+                if (selectedWorkingMirror != null) {
+                    break
                 }
             }
 
             if (!isActive) return@launch
 
-            if (foundWorkingMirror != null && firstPageItems != null) {
+            val targetMirror = selectedWorkingMirror ?: firstCatalogOnlyMirror
+            val targetItems = selectedCatalogItems ?: firstCatalogOnlyItems
+
+            if (targetMirror != null && targetItems != null) {
+                delay(300)
                 withContext(Dispatchers.Main) {
-                    RezkaService.setMirror(foundWorkingMirror)
+                    RezkaService.setMirror(targetMirror)
                     RezkaService.markFirstLaunchAuditDone()
-                    FirebaseSyncManager.onSettingsUpdated(mirror = foundWorkingMirror)
+                    FirebaseSyncManager.onSettingsUpdated(mirror = targetMirror)
 
                     loadedMap.clear()
-                    firstPageItems.forEach { loadedMap[it.id] = it }
+                    targetItems.forEach { loadedMap[it.id] = it }
                     _catalogState.value = CatalogState.Success(loadedMap.values.toList())
 
                     val dynamicGenres = RezkaService.getGenresForCategory(_currentType.value)

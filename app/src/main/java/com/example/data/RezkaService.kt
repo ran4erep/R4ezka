@@ -602,13 +602,13 @@ object RezkaService {
     }
 
     /**
-     * Высокопроизводительный движок коррекции URL на актуальное зеркало.
-     * Заменяет домен в абсолютных URL на текущий активный зеркальный домен,
+     * Высокопроизводительный движок коррекции URL на зеркало.
+     * Заменяет домен в абсолютных URL на целевой домен зеркала,
      * а также собирает валидный URL по ID и категории в случае отсутствия ссылки.
      */
-    fun adjustUrlToCurrentMirror(url: String, type: RezkaType? = null, id: String? = null): String {
+    fun adjustUrlToMirror(url: String, mirrorBase: String, type: RezkaType? = null, id: String? = null): String {
         val clean = url.trim()
-        val currentBase = currentBaseUrl.trimEnd('/')
+        val base = mirrorBase.trimEnd('/')
 
         if (clean.isEmpty()) {
             if (id != null && type != null) {
@@ -619,26 +619,25 @@ object RezkaService {
                     RezkaType.CARTOON -> "cartoons"
                     RezkaType.COLLECTIONS -> "collections"
                 }
-                return "$currentBase/$categoryPath/$id.html"
+                return "$base/$categoryPath/$id.html"
             }
             return ""
         }
 
         // Если URL относительный (начинается с /)
         if (clean.startsWith("/")) {
-            return "$currentBase$clean"
+            return "$base$clean"
         }
 
         // Если URL абсолютный (начинается с http:// или https://)
         if (clean.startsWith("http://") || clean.startsWith("https://")) {
-            // Заменяем протокол и хост на currentBase
             val schemeEnd = clean.indexOf("://")
             if (schemeEnd != -1) {
                 val pathStart = clean.indexOf('/', schemeEnd + 3)
                 return if (pathStart != -1) {
-                    currentBase + clean.substring(pathStart)
+                    base + clean.substring(pathStart)
                 } else {
-                    currentBase
+                    base
                 }
             }
         }
@@ -652,10 +651,14 @@ object RezkaService {
                 RezkaType.CARTOON -> "cartoons"
                 RezkaType.COLLECTIONS -> "collections"
             }
-            return "$currentBase/$categoryPath/$id.html"
+            return "$base/$categoryPath/$id.html"
         }
 
-        return "$currentBase/$clean"
+        return "$base/$clean"
+    }
+
+    fun adjustUrlToCurrentMirror(url: String, type: RezkaType? = null, id: String? = null): String {
+        return adjustUrlToMirror(url, currentBaseUrl, type, id)
     }
 
     private val URL_IN_TEXT_REGEX = Regex("""https?://[^\s<>"]+""")
@@ -1431,6 +1434,219 @@ object RezkaService {
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /**
+     * Комплексный аудит зеркала с проверкой каталога и реальной отдачи видеопотока (стрима).
+     * 1. Проверяет отклик хоста.
+     * 2. Загружает и парсит каталог фильмов с тестируемого зеркала.
+     * 3. Если каталог получен — берет первое видео из каталога и проверяет получение потока через CDN и ответ видеофайла.
+     */
+    suspend fun testMirrorWithStreamCheck(mirrorUrl: String): MirrorAuditCheckResult = withContext(Dispatchers.IO) {
+        val pingRes = testMirror(mirrorUrl)
+        if (pingRes.isFailure) {
+            return@withContext MirrorAuditCheckResult(
+                mirror = mirrorUrl,
+                catalogSuccess = false,
+                streamSuccess = false,
+                errorMessage = pingRes.exceptionOrNull()?.message ?: "Недоступно"
+            )
+        }
+
+        val normalized = normalizeMirrorUrl(mirrorUrl)
+        val catalogUrl = buildCatalogUrl(RezkaType.MOVIE, SectionType.LATEST, "", page = 1, baseUrl = normalized)
+        val catalogItems: List<RezkaItem>
+        try {
+            val request = Request.Builder()
+                .url(catalogUrl)
+                .header("User-Agent", USER_AGENT)
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+                .header("Referer", "$normalized/")
+                .build()
+
+            val (html, isSuccess) = client.newCall(request).execute().use { response ->
+                Pair(response.body?.string().orEmpty(), response.isSuccessful)
+            }
+
+            if (!isSuccess || html.isBlank()) {
+                return@withContext MirrorAuditCheckResult(
+                    mirror = mirrorUrl,
+                    catalogSuccess = false,
+                    streamSuccess = false,
+                    errorMessage = "Каталог не вернул данные"
+                )
+            }
+
+            val doc = Jsoup.parse(html)
+            if (isAntiBotPage(html, doc)) {
+                return@withContext MirrorAuditCheckResult(
+                    mirror = mirrorUrl,
+                    catalogSuccess = false,
+                    streamSuccess = false,
+                    errorMessage = "Защита от ботов"
+                )
+            }
+
+            parseGenresFromHtml(doc, RezkaType.MOVIE)
+            val items = parseCatalogHtml(html, RezkaType.MOVIE)
+            if (items.isEmpty()) {
+                return@withContext MirrorAuditCheckResult(
+                    mirror = mirrorUrl,
+                    catalogSuccess = false,
+                    streamSuccess = false,
+                    errorMessage = "Список фильмов пуст"
+                )
+            }
+            catalogItems = items
+        } catch (e: Exception) {
+            return@withContext MirrorAuditCheckResult(
+                mirror = mirrorUrl,
+                catalogSuccess = false,
+                streamSuccess = false,
+                errorMessage = e.message ?: "Сбой при загрузке каталога"
+            )
+        }
+
+        // Каталог успешно загружен. Проверяем видеопоток:
+        var streamWorking = false
+        var streamErrMsg: String? = null
+
+        for (candidate in catalogItems.take(2)) {
+            try {
+                val candidateUrl = adjustUrlToMirror(candidate.url, normalized)
+                val detailReq = Request.Builder()
+                    .url(candidateUrl)
+                    .header("User-Agent", USER_AGENT)
+                    .header("Referer", "$normalized/")
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+                    .build()
+
+                val (detailHtml, detailOk) = client.newCall(detailReq).execute().use { response ->
+                    Pair(response.body?.string().orEmpty(), response.isSuccessful)
+                }
+                if (!detailOk || detailHtml.isBlank()) continue
+
+                val detailDoc = Jsoup.parse(detailHtml)
+                var numericId = extractNumericId(candidate.id).ifEmpty { extractNumericId(candidateUrl) }
+                val jsMatch = Regex("""sof\.tv\.initCDN(?:Movies|Series)Events\s*\(\s*['"]?(\d+)['"]?\s*,\s*['"]?(\d+)['"]?""", RegexOption.IGNORE_CASE).find(detailHtml)
+                    ?: Regex("""initCDN(?:Movies|Series)Events\s*\(\s*['"]?(\d+)['"]?\s*,\s*['"]?(\d+)['"]?""", RegexOption.IGNORE_CASE).find(detailHtml)
+
+                var translatorId = ""
+                if (jsMatch != null) {
+                    if (numericId.isEmpty()) numericId = jsMatch.groupValues[1]
+                    translatorId = jsMatch.groupValues[2]
+                } else {
+                    val activeTranslatorEl = detailDoc.selectFirst(".b-translator__item.active, .b-translator__item.current, .b-translator__item")
+                    translatorId = activeTranslatorEl?.let { el ->
+                        el.attr("data-translator_id").ifEmpty { el.attr("data-id") }
+                    }.orEmpty()
+                }
+
+                val isSeries = candidateUrl.contains("/series/") ||
+                    detailDoc.selectFirst(".b-simple_episodes__list, .b-post__schedule_table") != null ||
+                    detailHtml.contains("initCDNSeriesEvents", ignoreCase = true)
+
+                val endpoint = "$normalized/ajax/get_cdn_series/"
+                val actionsToTry = if (isSeries) listOf("get_stream", "get_movie") else listOf("get_movie", "get_stream")
+                var resolvedStreams: List<StreamUrl> = emptyList()
+
+                for (act in actionsToTry) {
+                    val formBuilder = FormBody.Builder()
+                        .add("id", numericId)
+                        .add("action", act)
+                        .add("favs", "0")
+                        .add("is_cam", "0")
+                        .add("is_ads", "0")
+                        .add("is_director", "0")
+
+                    if (translatorId.isNotEmpty() && translatorId != "0") {
+                        formBuilder.add("translator_id", translatorId)
+                    }
+                    if (act == "get_stream" || isSeries) {
+                        formBuilder.add("season", "1")
+                        formBuilder.add("episode", "1")
+                    }
+
+                    val cdnReq = Request.Builder()
+                        .url("$endpoint?t=${System.currentTimeMillis()}")
+                        .post(formBuilder.build())
+                        .header("User-Agent", USER_AGENT)
+                        .header("X-Requested-With", "XMLHttpRequest")
+                        .header("Referer", candidateUrl)
+                        .header("Origin", normalized)
+                        .header("Accept", "application/json, text/javascript, */*; q=0.01")
+                        .build()
+
+                    val cdnBody = client.newCall(cdnReq).execute().use { resp ->
+                        if (resp.isSuccessful) resp.body?.string().orEmpty() else null
+                    }
+
+                    if (!cdnBody.isNullOrBlank()) {
+                        var rawUrl = ""
+                        try {
+                            val json = JSONObject(cdnBody)
+                            rawUrl = json.optString("url", "")
+                        } catch (_: Exception) {
+                            val urlMatch = Regex(""""url"\s*:\s*"([^"]+)"""").find(cdnBody)
+                            if (urlMatch != null) rawUrl = urlMatch.groupValues[1]
+                        }
+
+                        if (rawUrl.isNotEmpty() && rawUrl != "false" && rawUrl != "null") {
+                            val cleanEncrypted = unescapeRaw(rawUrl).replace("\\/", "/")
+                            val decrypted = RezkaDecryptor.decrypt(cleanEncrypted)
+                            val streams = RezkaDecryptor.parseStreams(decrypted)
+                            if (streams.isNotEmpty()) {
+                                resolvedStreams = streams
+                                break
+                            }
+                        }
+                    }
+                }
+
+                if (resolvedStreams.isNotEmpty()) {
+                    val testVideoUrl = resolvedStreams.first().url
+                    val videoProbeReq = Request.Builder()
+                        .url(testVideoUrl)
+                        .header("User-Agent", USER_AGENT)
+                        .header("Range", "bytes=0-1024")
+                        .header("Referer", "$normalized/")
+                        .build()
+
+                    val videoOk = try {
+                        client.newBuilder()
+                            .connectTimeout(5, TimeUnit.SECONDS)
+                            .readTimeout(5, TimeUnit.SECONDS)
+                            .build()
+                            .newCall(videoProbeReq).execute().use { vResp ->
+                                vResp.isSuccessful || vResp.code in 200..308
+                            }
+                    } catch (_: Exception) {
+                        false
+                    }
+
+                    if (videoOk) {
+                        streamWorking = true
+                        break
+                    } else {
+                        streamErrMsg = "CDN поток недоступен"
+                    }
+                } else {
+                    streamErrMsg = "Плеер не отдал ссылки на видео"
+                }
+            } catch (e: Exception) {
+                streamErrMsg = e.message
+            }
+        }
+
+        return@withContext MirrorAuditCheckResult(
+            mirror = mirrorUrl,
+            catalogSuccess = true,
+            streamSuccess = streamWorking,
+            catalogItems = catalogItems,
+            errorMessage = if (!streamWorking) (streamErrMsg ?: "Поток не загрузился") else null
+        )
     }
 
     /**
