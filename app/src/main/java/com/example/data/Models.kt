@@ -89,72 +89,9 @@ object CountryFilterList {
 }
 
 fun RezkaItem.matchesCountry(countryQuery: String): Boolean {
-    if (countryQuery.isBlank()) return true
-    val cleanQuery = countryQuery.trim()
-    val sub = subtitle
-    if (sub.isEmpty()) return false
-
-    if (sub.contains(cleanQuery, ignoreCase = true)) return true
-    val strippedSub = CountryFlags.stripFlags(sub)
-    if (strippedSub.contains(cleanQuery, ignoreCase = true)) return true
-
-    // Проверка специальных кинематографических псевдонимов
-    when {
-        cleanQuery.contains("США", ignoreCase = true) -> {
-            if (strippedSub.contains("США", ignoreCase = true) ||
-                strippedSub.contains("USA", ignoreCase = true) ||
-                strippedSub.contains("Соединенные Штаты", ignoreCase = true)
-            ) return true
-        }
-        cleanQuery.contains("Корея", ignoreCase = true) -> {
-            if (cleanQuery.contains("Северная", ignoreCase = true) || cleanQuery.contains("КНДР", ignoreCase = true)) {
-                if (strippedSub.contains("КНДР", ignoreCase = true) || strippedSub.contains("Северная Корея", ignoreCase = true)) return true
-            } else {
-                if (strippedSub.contains("Корея", ignoreCase = true) || strippedSub.contains("Korea", ignoreCase = true)) return true
-            }
-        }
-        cleanQuery.contains("Великобритания", ignoreCase = true) ||
-        cleanQuery.contains("Англия", ignoreCase = true) ||
-        cleanQuery.contains("Шотландия", ignoreCase = true) ||
-        cleanQuery.contains("Уэльс", ignoreCase = true) -> {
-            if (strippedSub.contains("Великобритания", ignoreCase = true) ||
-                strippedSub.contains("Англия", ignoreCase = true) ||
-                strippedSub.contains("Шотландия", ignoreCase = true) ||
-                strippedSub.contains("Уэльс", ignoreCase = true) ||
-                strippedSub.contains("UK", ignoreCase = true) ||
-                strippedSub.contains("Britain", ignoreCase = true)
-            ) return true
-        }
-        cleanQuery.contains("Германия", ignoreCase = true) || cleanQuery.contains("ГДР", ignoreCase = true) -> {
-            if (strippedSub.contains("Германия", ignoreCase = true) ||
-                strippedSub.contains("ФРГ", ignoreCase = true) ||
-                strippedSub.contains("ГДР", ignoreCase = true) ||
-                strippedSub.contains("Germany", ignoreCase = true)
-            ) return true
-        }
-        cleanQuery.contains("СССР", ignoreCase = true) -> {
-            if (strippedSub.contains("СССР", ignoreCase = true) ||
-                strippedSub.contains("USSR", ignoreCase = true) ||
-                strippedSub.contains("Советский Союз", ignoreCase = true)
-            ) return true
-        }
-        cleanQuery.contains("Гонконг", ignoreCase = true) -> {
-            if (strippedSub.contains("Гонконг", ignoreCase = true) ||
-                strippedSub.contains("Hong Kong", ignoreCase = true)
-            ) return true
-        }
-    }
-
-    // Сопоставление по корню слова (например, "Франция" -> "франци" матчит "Франции")
-    if (cleanQuery.length >= 4) {
-        val stem = cleanQuery.lowercase().take(cleanQuery.length.coerceAtMost(5))
-        if (strippedSub.lowercase().contains(stem)) {
-            return true
-        }
-    }
-
-    return false
+    return CountryFlags.matchesCountry(subtitle, countryQuery)
 }
+
 
 data class RezkaItem(
     val id: String,
@@ -364,7 +301,8 @@ data class OfflineMediaEntity(
     val downloadId: Long = -1L,
     val downloadStatus: Int = 0, // 0 = downloading/pending, 1 = completed, 2 = failed
     val createdAt: Long = System.currentTimeMillis(),
-    val description: String = ""
+    val description: String = "",
+    val detailJson: String = ""
 ) : Serializable
 
 fun SeriesSubscriptionEntity.isMovie(): Boolean {
@@ -391,7 +329,8 @@ data class AggregatedHistoryItem(
     val totalEpisodesCount: Int,
     val latestHistoryId: String,
     val timestamp: Long,
-    val isFullyWatched: Boolean = false
+    val isFullyWatched: Boolean = false,
+    val currentEpisodeIndex: Int = 0
 ) : Serializable
 
 sealed interface ScreenState : Serializable {

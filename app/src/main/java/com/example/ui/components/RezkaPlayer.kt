@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -400,9 +401,22 @@ fun RezkaPlayer(
     // High-performance hardware-accelerated ExoPlayer instance
     val exoPlayer = remember {
         try {
-            val renderersFactory = DefaultRenderersFactory(context)
-                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
-                .setEnableDecoderFallback(true)
+            val renderersFactory = object : DefaultRenderersFactory(context) {
+                override fun buildAudioSink(
+                    context: Context,
+                    enableFloatOutput: Boolean,
+                    enableAudioTrackPlaybackParams: Boolean
+                ): androidx.media3.exoplayer.audio.AudioSink {
+                    return androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(context)
+                        .setAudioCapabilities(androidx.media3.exoplayer.audio.AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES)
+                        .setEnableFloatOutput(enableFloatOutput)
+                        .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                        .build()
+                }
+            }.apply {
+                setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
+                setEnableDecoderFallback(true)
+            }
 
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
@@ -439,6 +453,8 @@ fun RezkaPlayer(
             val audioAttributes = AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_ALL)
+                .setSpatializationBehavior(C.SPATIALIZATION_BEHAVIOR_NEVER)
                 .build()
 
             ExoPlayer.Builder(context, renderersFactory)
@@ -883,7 +899,7 @@ fun RezkaPlayer(
                 val isCompleted = hasPlaybackEnded || playbackState == Player.STATE_ENDED || (dur > 0L && (dur - pos <= 20_000L || pos.toDouble() / dur.toDouble() >= 0.98))
                 if (isCompleted && dur > 0L) {
                     onProgressUpdate(dur, dur)
-                } else if (pos > 0L) {
+                } else if (pos >= 0L) {
                     onProgressUpdate(pos, dur)
                 }
                 exoPlayer.stop()
@@ -1175,6 +1191,8 @@ fun RezkaPlayer(
                             playerView.player = exoPlayer
                         }
                         playerView.resizeMode = currentResizeMode.mode
+                        playerView.scaleX = customZoomScale
+                        playerView.scaleY = customZoomScale
                         playerView.subtitleView?.setFractionalTextSize(subtitleTextScale)
                     } catch (e: Exception) {
                         Log.e("RezkaPlayer", "Error updating PiP PlayerView", e)
@@ -1240,6 +1258,8 @@ fun RezkaPlayer(
                                 playerView.player = exoPlayer
                             }
                             playerView.resizeMode = currentResizeMode.mode
+                            playerView.scaleX = customZoomScale
+                            playerView.scaleY = customZoomScale
                             playerView.subtitleView?.setFractionalTextSize(subtitleTextScale)
                         } catch (e: Exception) {
                             Log.e("RezkaPlayer", "Error updating Floating PlayerView", e)
@@ -1945,6 +1965,13 @@ fun RezkaPlayer(
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_BACK -> {
+                                    try {
+                                        val pos = exoPlayer.currentPosition
+                                        val dur = exoPlayer.duration
+                                        if (pos >= 0L) {
+                                            onProgressUpdate(pos, dur)
+                                        }
+                                    } catch (_: Exception) {}
                                     onBack()
                                     true
                                 }
@@ -2006,6 +2033,13 @@ fun RezkaPlayer(
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_BACK -> {
+                                    try {
+                                        val pos = exoPlayer.currentPosition
+                                        val dur = exoPlayer.duration
+                                        if (pos >= 0L) {
+                                            onProgressUpdate(pos, dur)
+                                        }
+                                    } catch (_: Exception) {}
                                     onBack()
                                     true
                                 }
@@ -2028,6 +2062,8 @@ fun RezkaPlayer(
                             playerView.player = exoPlayer
                         }
                         playerView.resizeMode = currentResizeMode.mode
+                        playerView.scaleX = customZoomScale
+                        playerView.scaleY = customZoomScale
                         playerView.subtitleView?.setFractionalTextSize(subtitleTextScale)
                     } catch (e: Exception) {
                         Log.e("RezkaPlayer", "Error updating Fullscreen PlayerView", e)
@@ -2038,13 +2074,7 @@ fun RezkaPlayer(
                         playerView.player = null
                     } catch (_: Exception) {}
                 },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = customZoomScale
-                        scaleY = customZoomScale
-                        clip = true
-                    }
+                modifier = Modifier.fillMaxSize()
             )
 
             // ZOOM SCALE PERCENTAGE INDICATOR (e.g. "104%") ABOVE PLAY BUTTON
@@ -3340,6 +3370,7 @@ fun RezkaPlayer(
     if (showQualityDialog) {
         AlertDialog(
             onDismissRequest = { showQualityDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
             title = { Text("Качество видео", color = CinemaTextWhite) },
             containerColor = CinemaDark,
             text = {
@@ -3391,6 +3422,7 @@ fun RezkaPlayer(
         val availableSpeeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
         AlertDialog(
             onDismissRequest = { showSpeedDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
@@ -3472,6 +3504,7 @@ fun RezkaPlayer(
     if (showSubtitlesDialog) {
         AlertDialog(
             onDismissRequest = { showSubtitlesDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
             title = {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -3673,6 +3706,7 @@ fun RezkaPlayer(
     if (showTranslatorDialog) {
         AlertDialog(
             onDismissRequest = { showTranslatorDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
             containerColor = CinemaDark,
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {

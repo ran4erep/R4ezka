@@ -269,7 +269,6 @@ fun DetailScreen(
     var isActorsExpanded by remember { mutableStateOf(false) }
 
     val startMediaDownload: (Translator, Int, String, String, Boolean) -> Unit = { trans, seasonId, epId, quality, isOfflineLibrary ->
-        showSeriesDownloadDialog = false
         val currentDetail = (detailState as? DetailState.Success)?.detail
         if (currentDetail != null && !isDownloadExecuting) {
             isDownloadExecuting = true
@@ -334,6 +333,7 @@ fun DetailScreen(
         activePlayerStreams = null
         isDecryptingStreams = false
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        FirebaseSyncManager.flushPendingProgress()
     }
 
     // Handle manual back button on movie detail screen
@@ -400,8 +400,21 @@ fun DetailScreen(
                     ?: viewModel.getSavedProgressForEpisode(item.id, effectiveSeason, displayEpNumber)
                     ?: viewModel.getSavedProgress(item.id)
 
+                val isOfflinePlayback = !NetworkMonitor.isOnline.value ||
+                    (item.url.isBlank() && item.rating == "Оффлайн") ||
+                    currentDetail?.rating == "Оффлайн" ||
+                    viewModel.hasOfflineMedia(item.id)
+
                 val startPos = if (customStartPos != null) {
                     customStartPos
+                } else if (isOfflinePlayback) {
+                    com.example.data.OfflineProgressManager.getOfflineEpisodeProgress(
+                        context = context,
+                        itemId = item.id,
+                        season = effectiveSeason,
+                        episode = effectiveEpisode,
+                        title = item.title
+                    )
                 } else if (savedHistory != null && 
                     (savedHistory.season == effectiveSeason || !isSeries) && 
                     (savedHistory.episode == effectiveEpisode || savedHistory.episode == displayEpNumber || !isSeries)) {
@@ -414,33 +427,52 @@ fun DetailScreen(
                     0L
                 }
 
-                // Immediately update history so active episode is saved as the latest entry
-                if (isSeries) {
-                    val priorEpCount = if (curSeason != null) {
-                        effectiveSeasons.filter { it.id < curSeason.id }.sumOf { it.episodes.size }
-                    } else 0
-                    val epNum = curEpisode?.id?.let { id -> Regex("""\d+""").findAll(id).mapNotNull { it.value.toIntOrNull() }.maxOrNull() }
-                        ?: Regex("""\d+""").findAll(displayEpNumber).mapNotNull { it.value.toIntOrNull() }.maxOrNull()
-                        ?: (if (curEpisodeIndex >= 0) curEpisodeIndex + 1 else 1)
-                    val calculatedEpIndex = (priorEpCount + epNum).coerceAtLeast(1)
-                    val totalEpCount = effectiveSeasons.sumOf { it.episodes.size }.coerceAtLeast(1)
+                // Immediately update history so active episode is saved as the latest entry (only when online and not offline library)
+                if (!isOfflinePlayback) {
+                    if (isSeries) {
+                        val priorEpCount = if (curSeason != null) {
+                            effectiveSeasons.filter { it.id < curSeason.id }.sumOf { it.episodes.size }
+                        } else 0
+                        val resolvedEpisode = curEpisode ?: curEpisodes.firstOrNull()
+                        val curIndex = if (curEpisodeIndex >= 0) curEpisodeIndex else curEpisodes.indexOfFirst { it.id == (resolvedEpisode?.id ?: displayEpNumber) }
+                        val fileIndexInSeason = if (curIndex >= 0) curIndex + 1 else 1
+                        val calculatedEpIndex = (priorEpCount + fileIndexInSeason).coerceAtLeast(1)
+                        val totalEpCount = effectiveSeasons.sumOf { it.episodes.size }.coerceAtLeast(1)
 
-                    viewModel.saveWatchProgress(
-                        itemId = item.id,
-                        title = item.title,
-                        imageUrl = item.imageUrl,
-                        subtitle = "Сезон ${curSeason?.id ?: effectiveSeason}, Серия $displayEpNumber",
-                        url = item.url,
-                        translatorId = translator.id,
-                        translatorName = translator.name,
-                        season = curSeason?.id ?: effectiveSeason,
-                        episode = displayEpNumber,
-                        progressMs = startPos,
-                        durationMs = savedHistory?.durationMs ?: 0L,
-                        totalEpisodes = totalEpCount,
-                        episodeIndex = calculatedEpIndex,
-                        totalSeasons = effectiveSeasons.size.coerceAtLeast(1)
-                    )
+                        viewModel.saveWatchProgress(
+                            itemId = item.id,
+                            title = item.title,
+                            imageUrl = item.imageUrl,
+                            subtitle = "Сезон ${curSeason?.id ?: effectiveSeason}, Серия $displayEpNumber",
+                            url = item.url,
+                            translatorId = translator.id,
+                            translatorName = translator.name,
+                            season = curSeason?.id ?: effectiveSeason,
+                            episode = displayEpNumber,
+                            progressMs = startPos,
+                            durationMs = savedHistory?.durationMs ?: 0L,
+                            totalEpisodes = totalEpCount,
+                            episodeIndex = calculatedEpIndex,
+                            totalSeasons = effectiveSeasons.size.coerceAtLeast(1)
+                        )
+                    } else {
+                        viewModel.saveWatchProgress(
+                            itemId = item.id,
+                            title = item.title,
+                            imageUrl = item.imageUrl,
+                            subtitle = "Фильм",
+                            url = item.url,
+                            translatorId = translator.id,
+                            translatorName = translator.name,
+                            season = 0,
+                            episode = "",
+                            progressMs = startPos,
+                            durationMs = savedHistory?.durationMs ?: 0L,
+                            totalEpisodes = 1,
+                            episodeIndex = 1,
+                            totalSeasons = 1
+                        )
+                    }
                 }
 
                 val streams = viewModel.getStreamUrls(
@@ -586,6 +618,38 @@ fun DetailScreen(
 
                 // Automatically restore user's saved selection (translator, season, episode) or deep linked translator
                 LaunchedEffect(detail) {
+                    val isOfflineContext = !NetworkMonitor.isOnline.value ||
+                        (item.url.isBlank() && item.rating == "Оффлайн") ||
+                        detail.rating == "Оффлайн" ||
+                        viewModel.hasOfflineMedia(item.id)
+
+                    if (isOfflineContext) {
+                        dynamicSeasons = emptyList()
+                        val offlineProg = com.example.data.OfflineProgressManager.getOfflineProgress(context, item.id, item.title)
+                        if (offlineProg != null) {
+                            val restoredTrans = if (offlineProg.lastTranslatorId.isNotEmpty()) {
+                                detail.translators.find { it.id == offlineProg.lastTranslatorId }
+                            } else if (offlineProg.lastTranslatorName.isNotEmpty()) {
+                                detail.translators.find { it.name.equals(offlineProg.lastTranslatorName, ignoreCase = true) }
+                            } else null
+                            selectedTranslator = restoredTrans ?: detail.translators.firstOrNull()
+
+                            if (detail.type == RezkaType.SERIES && detail.seasons.isNotEmpty()) {
+                                val matchedSeason = detail.seasons.find { it.id == offlineProg.lastSeason } ?: detail.seasons.first()
+                                selectedSeasonId = matchedSeason.id
+                                val matchedEp = matchedSeason.episodes.find { it.id == offlineProg.lastEpisode } ?: matchedSeason.episodes.firstOrNull()
+                                selectedEpisodeId = matchedEp?.id
+                            }
+                        } else {
+                            selectedTranslator = detail.translators.firstOrNull()
+                            if (detail.type == RezkaType.SERIES && detail.seasons.isNotEmpty()) {
+                                selectedSeasonId = detail.seasons.first().id
+                                selectedEpisodeId = detail.seasons.first().episodes.firstOrNull()?.id
+                            }
+                        }
+                        return@LaunchedEffect
+                    }
+
                     if (selectedTranslator == null) {
                         // 1. Наивысший приоритет — озвучка из входящей ссылки (deep link / share)
                         val deepLinkedTranslator = if (!initialTranslatorId.isNullOrEmpty()) {
@@ -692,7 +756,11 @@ fun DetailScreen(
                         selectedTranslator = selectedTranslator,
                         onSelectTranslator = { trans ->
                             selectedTranslator = trans
-                            if (detail.type == RezkaType.SERIES) {
+                            val isOffline = !NetworkMonitor.isOnline.value ||
+                                (item.url.isBlank() && item.rating == "Оффлайн") ||
+                                detail.rating == "Оффлайн" ||
+                                viewModel.hasOfflineMedia(item.id)
+                            if (detail.type == RezkaType.SERIES && !isOffline) {
                                 scope.launch {
                                     val eps = viewModel.getEpisodesForTranslator(detail.numericPostId, trans.id, trans.url)
                                     if (eps.isNotEmpty()) {
@@ -1387,7 +1455,11 @@ fun DetailScreen(
                                                     translatorDropdownExpanded = false
                                                     if (!isSelected) {
                                                         selectedTranslator = trans
-                                                        if (detail.type == RezkaType.SERIES) {
+                                                        val isOffline = !NetworkMonitor.isOnline.value ||
+                                                            (item.url.isBlank() && item.rating == "Оффлайн") ||
+                                                            detail.rating == "Оффлайн" ||
+                                                            viewModel.hasOfflineMedia(item.id)
+                                                        if (detail.type == RezkaType.SERIES && !isOffline) {
                                                             scope.launch {
                                                                 val eps = viewModel.getEpisodesForTranslator(detail.numericPostId, trans.id, trans.url)
                                                                 if (eps.isNotEmpty()) {
@@ -2669,7 +2741,7 @@ fun DetailScreen(
                 },
                 onProgressUpdate = { pos, duration ->
                     // Auto save progress to DB periodically (when pos > 0)
-                    if (pos > 1000) {
+                    if (pos >= 0L) {
                         val effectiveSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else (currentDetail?.seasons ?: emptyList())
                         val totalEpCount = if (isSeries) {
                             val count = effectiveSeasons.sumOf { it.episodes.size }
@@ -2688,12 +2760,10 @@ fun DetailScreen(
 
                         val displayEpNumber = curEpisode?.id ?: selectedEpisodeId?.ifEmpty { "1" } ?: "1"
 
-                        val epNum = curEpisode?.id?.let { id -> Regex("""\d+""").findAll(id).mapNotNull { it.value.toIntOrNull() }.maxOrNull() }
-                            ?: Regex("""\d+""").findAll(displayEpNumber).mapNotNull { it.value.toIntOrNull() }.maxOrNull()
-                            ?: (if (curEpisodeIndex >= 0) curEpisodeIndex + 1 else 1)
+                        val fileIndexInSeason = if (curEpisodeIndex >= 0) curEpisodeIndex + 1 else 1
 
                         val calculatedEpisodeIndex = if (isSeries) {
-                            (priorEpCount + epNum).coerceAtLeast(1)
+                            (priorEpCount + fileIndexInSeason).coerceAtLeast(1)
                         } else 1
 
                         val totalSeasonsCount = if (isSeries) effectiveSeasons.size else 1
@@ -2703,23 +2773,43 @@ fun DetailScreen(
                         val isFinishedMovie = !isSeries && isEpisodeFinishedToEnd
                         val isFullyDone = isFinishedLastEpisode || isFinishedMovie
 
-                        viewModel.saveWatchProgress(
-                            itemId = item.id,
-                            title = item.title,
-                            imageUrl = item.imageUrl,
-                            subtitle = if (isSeries) "Сезон ${curSeason?.id ?: selectedSeasonId ?: 1}, Серия $displayEpNumber" else "Фильм",
-                            url = item.url,
-                            translatorId = selectedTranslator?.id ?: "",
-                            translatorName = selectedTranslator?.name ?: "Дубляж",
-                            season = if (isSeries) (curSeason?.id ?: selectedSeasonId ?: 1) else 0,
-                            episode = if (isSeries) displayEpNumber else "",
-                            progressMs = if (isEpisodeFinishedToEnd && duration > 0L) duration else pos,
-                            durationMs = duration,
-                            totalEpisodes = totalEpCount,
-                            episodeIndex = calculatedEpisodeIndex,
-                            totalSeasons = totalSeasonsCount,
-                            isFullyWatched = isFullyDone
-                        )
+                        val isCurrentStreamOffline = !NetworkMonitor.isOnline.value ||
+                            activePlayerStreams?.firstOrNull()?.url?.startsWith("file://") == true ||
+                            (item.url.isBlank() && item.rating == "Оффлайн") ||
+                            currentDetail?.rating == "Оффлайн" ||
+                            viewModel.hasOfflineMedia(item.id)
+
+                        if (!isCurrentStreamOffline) {
+                            viewModel.saveWatchProgress(
+                                itemId = item.id,
+                                title = item.title,
+                                imageUrl = item.imageUrl,
+                                subtitle = if (isSeries) "Сезон ${curSeason?.id ?: selectedSeasonId ?: 1}, Серия $displayEpNumber" else "Фильм",
+                                url = item.url,
+                                translatorId = selectedTranslator?.id ?: "",
+                                translatorName = selectedTranslator?.name ?: "Дубляж",
+                                season = if (isSeries) (curSeason?.id ?: selectedSeasonId ?: 1) else 0,
+                                episode = if (isSeries) displayEpNumber else "",
+                                progressMs = if (isEpisodeFinishedToEnd && duration > 0L) duration else pos,
+                                durationMs = duration,
+                                totalEpisodes = totalEpCount,
+                                episodeIndex = calculatedEpisodeIndex,
+                                totalSeasons = totalSeasonsCount,
+                                isFullyWatched = isFullyDone
+                            )
+                        } else {
+                            com.example.data.OfflineProgressManager.saveOfflineProgress(
+                                context = context,
+                                itemId = item.id,
+                                title = item.title,
+                                season = if (isSeries) (curSeason?.id ?: selectedSeasonId ?: 1) else 0,
+                                episode = if (isSeries) displayEpNumber else "",
+                                translatorId = selectedTranslator?.id ?: "",
+                                translatorName = selectedTranslator?.name ?: "Оффлайн",
+                                progressMs = if (isEpisodeFinishedToEnd && duration > 0L) duration else pos,
+                                durationMs = duration
+                            )
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxSize()

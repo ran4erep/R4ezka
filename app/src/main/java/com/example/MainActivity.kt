@@ -293,6 +293,10 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                     SettingsScreen(
                         viewModel = viewModel,
                         onBack = { isSettingsOpen = false },
+                        onNavigateToDetail = { item ->
+                            isSettingsOpen = false
+                            pushToStack(ScreenState.Detail(item))
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -462,7 +466,11 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
             ) {
                 SettingsScreen(
                     viewModel = viewModel,
-                    onBack = { isSettingsOpen = false }
+                    onBack = { isSettingsOpen = false },
+                    onNavigateToDetail = { item ->
+                        isSettingsOpen = false
+                        pushToStack(ScreenState.Detail(item))
+                    }
                 )
             }
 

@@ -618,7 +618,7 @@ object CountryFlags {
 
         // Проверяем исторические страны без официального Unicode эмодзи
         if (COUNTRIES_WITHOUT_EMOJI.contains(clean)) {
-            return FALLBACK_FLAG
+            return if (fallbackToDefault) FALLBACK_FLAG else ""
         }
 
         // Проверяем кэш быстрого поиска
@@ -656,6 +656,172 @@ object CountryFlags {
         // Запоминаем промах в кэше
         flagLookupCache[clean] = ""
         return if (fallbackToDefault) FALLBACK_FLAG else ""
+    }
+
+    // Каноническая карта кодов стран для 100% точной фильтрации
+    private val countryCodeMap: Map<String, String> by lazy {
+        val map = HashMap<String, String>(2500)
+        val ruLocale = Locale.forLanguageTag("ru")
+        val enLocale = Locale.ENGLISH
+
+        for (code in Locale.getISOCountries()) {
+            val loc = Locale.Builder().setRegion(code).build()
+            val ruName = loc.getDisplayCountry(ruLocale)
+            val enName = loc.getDisplayCountry(enLocale)
+            val nativeName = loc.getDisplayCountry(loc)
+
+            putSafe(map, code, code)
+            putSafe(map, ruName, code)
+            putSafe(map, enName, code)
+            putSafe(map, nativeName, code)
+
+            try {
+                val iso3 = loc.isO3Country
+                if (iso3.isNotEmpty()) {
+                    putSafe(map, iso3, code)
+                }
+            } catch (_: Exception) {}
+        }
+
+        // Явные исторические государства и кинематографические сопоставления
+        val customCodes = mapOf(
+            "ссср" to "USSR",
+            "советский союз" to "USSR",
+            "ussr" to "USSR",
+            "югославия" to "YUGOSLAVIA",
+            "yugoslavia" to "YUGOSLAVIA",
+            "чехословакия" to "CZECHOSLOVAKIA",
+            "czechoslovakia" to "CZECHOSLOVAKIA",
+            "российская империя" to "RUSSIAN_EMPIRE",
+            "russian empire" to "RUSSIAN_EMPIRE",
+            "османская империя" to "OTTOMAN_EMPIRE",
+            "римская империя" to "ROMAN_EMPIRE",
+            "древний рим" to "ROMAN_EMPIRE",
+
+            "сша" to "US",
+            "usa" to "US",
+            "united states" to "US",
+            "америка" to "US",
+            "америки" to "US",
+            "соединенные штаты" to "US",
+            "соединенные штаты америки" to "US",
+
+            "германия" to "DE",
+            "германии" to "DE",
+            "германию" to "DE",
+            "германия гдр" to "DE",
+            "германии гдр" to "DE",
+            "гдр" to "DE",
+            "германия фрг" to "DE",
+            "германии фрг" to "DE",
+            "фрг" to "DE",
+            "germany" to "DE",
+
+            "корея" to "KR",
+            "кореи" to "KR",
+            "корея южная" to "KR",
+            "южная корея" to "KR",
+            "республика корея" to "KR",
+            "korea" to "KR",
+            "south korea" to "KR",
+
+            "корея северная" to "KP",
+            "северная корея" to "KP",
+            "кндр" to "KP",
+            "north korea" to "KP",
+
+            "великобритания" to "GB",
+            "великобритании" to "GB",
+            "united kingdom" to "GB",
+            "uk" to "GB",
+            "британия" to "GB",
+            "соединенное королевство" to "GB",
+            "англия" to "GB-ENG",
+            "англии" to "GB-ENG",
+            "england" to "GB-ENG",
+            "шотландия" to "GB-SCT",
+            "шотландии" to "GB-SCT",
+            "scotland" to "GB-SCT",
+            "уэльс" to "GB-WLS",
+            "уэльса" to "GB-WLS",
+            "wales" to "GB-WLS",
+
+            "россия" to "RU",
+            "россии" to "RU",
+            "рф" to "RU",
+            "russia" to "RU",
+            "беларусь" to "BY",
+            "беларуси" to "BY",
+            "белоруссия" to "BY",
+            "украина" to "UA",
+            "украины" to "UA",
+            "казахстан" to "KZ",
+            "казахстана" to "KZ",
+            "рк" to "KZ",
+            "узбекистан" to "UZ",
+            "киргизия" to "KG",
+            "кыргызстан" to "KG",
+            "таджикистан" to "TJ",
+            "туркменистан" to "TM",
+
+            "япония" to "JP",
+            "японии" to "JP",
+            "китай" to "CN",
+            "китая" to "CN",
+            "кнр" to "CN",
+            "гонконг" to "HK",
+            "тайвань" to "TW",
+            "индия" to "IN",
+            "индии" to "IN",
+            "пакистан" to "PK",
+            "таиланд" to "TH",
+            "вьетнам" to "VN",
+            "индонезия" to "ID",
+            "малайзия" to "MY",
+            "филиппины" to "PH",
+            "сингапур" to "SG",
+
+            "австралия" to "AU",
+            "австралии" to "AU",
+            "австрия" to "AT",
+            "австрии" to "AT",
+            "нигерия" to "NG",
+            "нигерии" to "NG",
+            "нигер" to "NE",
+            "доминика" to "DM",
+            "доминиканская республика" to "DO"
+        )
+
+        for ((name, code) in customCodes) {
+            putSafe(map, name, code)
+        }
+
+        map
+    }
+
+    /**
+     * Возвращает уникальный канонический ISO-код или ID страны (например, "USSR", "US", "DE", "AU", "AT").
+     */
+    fun getCanonicalCountryCode(countryName: String): String {
+        val pureName = stripFlags(countryName)
+        val clean = cleanCountryName(pureName)
+        if (clean.isEmpty()) return ""
+
+        val direct = countryCodeMap[clean]
+        if (direct != null) return direct
+
+        val stemmed = normalizeRussianStem(clean)
+        val stemMatch = countryCodeMap[stemmed]
+        if (stemMatch != null) return stemMatch
+
+        if (clean.contains(' ')) {
+            val words = clean.split(' ').map { normalizeRussianStem(it) }
+            val joined = words.joinToString(" ")
+            val multiWordMatch = countryCodeMap[joined]
+            if (multiWordMatch != null) return multiWordMatch
+        }
+
+        return clean.uppercase()
     }
 
     /**
@@ -730,7 +896,7 @@ object CountryFlags {
         return result
     }
 
-    private fun cleanCountryName(name: String): String {
+    fun cleanCountryName(name: String): String {
         var s = name.trim().lowercase()
         // Очищаем скобки (например "Корея (Южная)" -> "корея южная", "Германия (ГДР)" -> "германия гдр")
         s = s.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ")
@@ -798,4 +964,57 @@ object CountryFlags {
         }
         return result
     }
+
+    /**
+     * Высокопроизводительная, каноническая и точная проверка соответствия подзаголовка фильма выбранной стране.
+     * Полностью исключает совпадения пересекающихся названий (СССР vs Чехословакия, Австралия vs Австрия, Нигерия vs Нигер).
+     */
+    fun matchesCountry(subtitle: String, countryQuery: String): Boolean {
+        if (countryQuery.isBlank()) return true
+        if (subtitle.isBlank()) return false
+
+        val filterCode = getCanonicalCountryCode(countryQuery)
+        if (filterCode.isEmpty()) return true
+
+        // 1. Извлекаем распознанные страны из подзаголовка карточки
+        val extracted = extractCountries(subtitle)
+        if (extracted.isNotEmpty()) {
+            for (itemCountry in extracted) {
+                val itemCode = getCanonicalCountryCode(itemCountry)
+                if (isMatchingCode(itemCode, filterCode)) {
+                    return true
+                }
+            }
+            return false
+        }
+
+        // 2. Резервный фолбэк для нестандартных подзаголовков
+        val pureSubParts = stripFlags(subtitle).split(",", "/", ";")
+        for (part in pureSubParts) {
+            val cleanPart = cleanCountryName(part)
+            if (cleanPart.isNotEmpty()) {
+                val partCode = getCanonicalCountryCode(cleanPart)
+                if (isMatchingCode(partCode, filterCode)) {
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+
+    private fun isMatchingCode(itemCode: String, filterCode: String): Boolean {
+        if (itemCode.isEmpty() || filterCode.isEmpty()) return false
+        if (itemCode == filterCode) return true
+
+        // Совместимость Великобритании и её регионов (Англия, Шотландия, Уэльс)
+        if ((filterCode == "GB" && (itemCode == "GB-ENG" || itemCode == "GB-SCT" || itemCode == "GB-WLS")) ||
+            (itemCode == "GB" && (filterCode == "GB-ENG" || filterCode == "GB-SCT" || filterCode == "GB-WLS"))) {
+            return true
+        }
+
+        return false
+    }
 }
+
+
