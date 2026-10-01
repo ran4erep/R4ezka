@@ -1049,6 +1049,15 @@ object RezkaService {
     private val _cardGridMode = MutableStateFlow(GRID_MODE_AUTO)
     val cardGridMode: StateFlow<String> = _cardGridMode.asStateFlow()
 
+    const val KEY_DEFAULT_CATALOG_TYPE = "default_catalog_type"
+    const val KEY_DEFAULT_CATALOG_SECTION = "default_catalog_section"
+
+    private val _defaultCatalogType = MutableStateFlow(RezkaType.MOVIE)
+    val defaultCatalogType: StateFlow<RezkaType> = _defaultCatalogType.asStateFlow()
+
+    private val _defaultCatalogSection = MutableStateFlow(SectionType.LATEST)
+    val defaultCatalogSection: StateFlow<SectionType> = _defaultCatalogSection.asStateFlow()
+
     private var prefs: SharedPreferences? = null
 
     fun init(context: Context) {
@@ -1092,6 +1101,23 @@ object RezkaService {
 
         val savedGridMode = prefs?.getString("card_grid_mode", GRID_MODE_AUTO) ?: GRID_MODE_AUTO
         _cardGridMode.value = if (savedGridMode == GRID_MODE_AUTO || parseCardGrid(savedGridMode) != null) savedGridMode else GRID_MODE_AUTO
+
+        val savedTypeStr = prefs?.getString(KEY_DEFAULT_CATALOG_TYPE, RezkaType.MOVIE.name) ?: RezkaType.MOVIE.name
+        val parsedType = try {
+            val t = RezkaType.valueOf(savedTypeStr)
+            if (t == RezkaType.COLLECTIONS) RezkaType.MOVIE else t
+        } catch (_: Exception) {
+            RezkaType.MOVIE
+        }
+        _defaultCatalogType.value = parsedType
+
+        val savedSectionStr = prefs?.getString(KEY_DEFAULT_CATALOG_SECTION, SectionType.LATEST.name) ?: SectionType.LATEST.name
+        val parsedSection = try {
+            SectionType.valueOf(savedSectionStr)
+        } catch (_: Exception) {
+            SectionType.LATEST
+        }
+        _defaultCatalogSection.value = parsedSection
     }
 
     fun setSelectedPlayer(playerKey: String) {
@@ -1174,6 +1200,17 @@ object RezkaService {
         val validMode = if (clean == GRID_MODE_AUTO || parseCardGrid(clean) != null) clean else GRID_MODE_AUTO
         _cardGridMode.value = validMode
         prefs?.edit()?.putString("card_grid_mode", validMode)?.apply()
+    }
+
+    fun setDefaultCatalogType(type: RezkaType) {
+        val valid = if (type == RezkaType.COLLECTIONS) RezkaType.MOVIE else type
+        _defaultCatalogType.value = valid
+        prefs?.edit()?.putString(KEY_DEFAULT_CATALOG_TYPE, valid.name)?.apply()
+    }
+
+    fun setDefaultCatalogSection(section: SectionType) {
+        _defaultCatalogSection.value = section
+        prefs?.edit()?.putString(KEY_DEFAULT_CATALOG_SECTION, section.name)?.apply()
     }
 
     /**

@@ -157,8 +157,14 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     val aggregatedWatchHistory: StateFlow<List<AggregatedHistoryItem>> = repository.watchHistory
         .map { list ->
             val now = System.currentTimeMillis()
-            list.groupBy { it.itemId }.map { (itemId, items) ->
-                val latest = items.maxByOrNull { it.timestamp } ?: items.first()
+            val filtered = list.filter {
+                !it.id.startsWith("offline_") &&
+                !it.itemId.startsWith("offline_") &&
+                it.url.isNotBlank() &&
+                !it.url.startsWith("file://")
+            }
+            filtered.groupBy { it.itemId }.map { (itemId, items) ->
+                val latest = resolveLatestWatchHistory(items)
                 val isSeries = latest.season > 0 || items.any { it.season > 0 }
                 val isManualWatched = latest.isFullyWatched
 
@@ -166,6 +172,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 val watchedEpisodesCount: Int
                 val totalEpisodesCount: Int
                 val isFullyWatched: Boolean
+                val currentEpisodeIndex: Int
 
                 if (!isSeries) {
                     val isCompletedToEnd = latest.durationMs > 0L && (
@@ -175,6 +182,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     val isAutoWatched = isAutoWatchedRuleMet(latest.progressMs, latest.durationMs, latest.timestamp, now)
                     isFullyWatched = isManualWatched || isCompletedToEnd || isAutoWatched
+                    currentEpisodeIndex = 0
 
                     if (isFullyWatched) {
                         totalProgressFraction = 1.0f
@@ -197,6 +205,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     watchedEpisodesCount = calc.watchedEpisodesCount
                     totalEpisodesCount = calc.totalEpisodesCount
                     isFullyWatched = calc.isFullyWatched
+                    currentEpisodeIndex = calc.absoluteEpisodeIndex
                     if (isFullyWatched && !latest.isFullyWatched) {
                         markItemAutoWatchedIfNeeded(itemId, latest)
                     }
@@ -219,7 +228,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     totalEpisodesCount = totalEpisodesCount,
                     latestHistoryId = latest.id,
                     timestamp = latest.timestamp,
-                    isFullyWatched = isFullyWatched
+                    isFullyWatched = isFullyWatched,
+                    currentEpisodeIndex = currentEpisodeIndex
                 )
             }.sortedByDescending { it.timestamp }
         }
@@ -243,11 +253,15 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     val commentsState: StateFlow<MovieCommentsState> = _commentsState.asStateFlow()
     private var commentsJob: Job? = null
 
+    // Default catalog settings
+    val defaultCatalogType: StateFlow<RezkaType> = RezkaService.defaultCatalogType
+    val defaultCatalogSection: StateFlow<SectionType> = RezkaService.defaultCatalogSection
+
     // Current filter selections
-    private val _currentType = MutableStateFlow(RezkaType.MOVIE)
+    private val _currentType = MutableStateFlow(RezkaService.defaultCatalogType.value)
     val currentType: StateFlow<RezkaType> = _currentType.asStateFlow()
 
-    private val _currentSection = MutableStateFlow(SectionType.LATEST)
+    private val _currentSection = MutableStateFlow(RezkaService.defaultCatalogSection.value)
     val currentSection: StateFlow<SectionType> = _currentSection.asStateFlow()
 
     private val _currentGenre = MutableStateFlow("")
@@ -331,13 +345,17 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     fun updateDynamicCountries(parsedCountries: Set<String>) {
         if (parsedCountries.isEmpty()) return
         val currentList = _countriesList.value
-        val existingQueries = currentList.map { it.query.lowercase() }.toSet()
+        val existingCleanQueries = currentList.map { CountryFlags.cleanCountryName(it.query) }.toSet()
         val newItems = ArrayList<CountryItem>()
         for (country in parsedCountries) {
             val q = country.trim()
-            if (q.isNotEmpty() && !existingQueries.contains(q.lowercase())) {
-                val flag = CountryFlags.getFlag(q, fallbackToDefault = true)
-                newItems.add(CountryItem("$flag $q", q))
+            val clean = CountryFlags.cleanCountryName(q)
+            if (clean.isNotEmpty() && !existingCleanQueries.contains(clean)) {
+                val flag = CountryFlags.getFlag(q, fallbackToDefault = false)
+                if (flag.isNotEmpty()) {
+                    val capitalized = q.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+                    newItems.add(CountryItem("$flag $capitalized", capitalized))
+                }
             }
         }
         if (newItems.isNotEmpty()) {
@@ -346,7 +364,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 strength = Collator.PRIMARY
             }
             val rest = (currentList.drop(1) + newItems)
-                .distinctBy { it.query.lowercase() }
+                .distinctBy { CountryFlags.cleanCountryName(it.query) }
                 .sortedWith { a, b ->
                     collator.compare(
                         CountryFlags.stripFlags(a.name).trim(),
@@ -356,6 +374,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             _countriesList.value = listOf(currentList.first()) + rest
         }
     }
+
 
     private val _collectionsState = MutableStateFlow<CollectionsState>(CollectionsState.Loading)
     val collectionsState: StateFlow<CollectionsState> = _collectionsState.asStateFlow()
@@ -440,8 +459,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         } else if (!RezkaService.isFirstLaunchAuditDone()) {
             startMirrorAudit(isFirstLaunch = true)
         } else {
-            // Load default catalog (Movies) on startup
-            loadCatalog(RezkaType.MOVIE, SectionType.LATEST, "", forceRefresh = true)
+            // Load default catalog on startup
+            loadCatalog(RezkaService.defaultCatalogType.value, RezkaService.defaultCatalogSection.value, "", forceRefresh = true)
         }
     }
 
@@ -504,8 +523,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     fun resetCatalogFilters() {
         _currentCountry.value = ""
         loadCatalog(
-            type = _currentType.value,
-            section = SectionType.LATEST,
+            type = RezkaService.defaultCatalogType.value,
+            section = RezkaService.defaultCatalogSection.value,
             genre = "",
             year = "",
             forceRefresh = true
@@ -952,6 +971,15 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun hasOfflineMedia(itemId: String): Boolean {
+        if (itemId.isBlank()) return false
+        val cleanNum = itemId.filter { it.isDigit() }
+        val list = offlineMedia.value
+        return list.any {
+            it.itemId == itemId || (cleanNum.isNotEmpty() && (it.itemId == cleanNum || it.itemId.startsWith("$cleanNum-") || it.itemId.filter { c -> c.isDigit() } == cleanNum))
+        }
+    }
+
     // Кэш страниц комментариев для текущего фильма (O(1) доступ в памяти без лишних запросов и нагрузки на CPU)
     private val commentsPageCache = HashMap<Int, CommentsResult>()
 
@@ -966,10 +994,19 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val offlineItemId = fallbackItem?.id ?: extractIdFromUrl(url)
             val offlineEntities = if (offlineItemId.isNotEmpty()) {
-                repository.getOfflineMediaByItemId(offlineItemId)
+                val direct = repository.getOfflineMediaByItemId(offlineItemId)
+                if (direct.isNotEmpty()) {
+                    direct
+                } else {
+                    val cleanNum = offlineItemId.filter { it.isDigit() }
+                    repository.getAllOfflineMediaList().filter {
+                        it.itemId == offlineItemId || (cleanNum.isNotEmpty() && (it.itemId == cleanNum || it.itemId.startsWith("$cleanNum-") || it.itemId.filter { c -> c.isDigit() } == cleanNum))
+                    }
+                }
             } else emptyList()
 
-            if (!NetworkMonitor.isOnline.value || url.isBlank()) {
+            val isOfflineRequest = !NetworkMonitor.isOnline.value || url.isBlank() || fallbackItem?.rating == "Оффлайн" || fallbackItem?.url.isNullOrBlank()
+            if (isOfflineRequest) {
                 if (offlineEntities.isNotEmpty()) {
                     val offlineDetail = buildOfflineDetail(offlineEntities, fallbackItem)
                     _detailState.value = DetailState.Success(offlineDetail)
@@ -1057,7 +1094,80 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         fallbackItem: RezkaItem?
     ): RezkaDetail {
         val first = entities.first()
-        val isSeries = first.type == "SERIES"
+        val isSeries = first.type.equals("SERIES", ignoreCase = true) || entities.size > 1 || first.season > 0
+
+        // 1. Пытаемся восстановить полную информацию о фильме/сериале из сохранённого JSON
+        var savedDetail: RezkaDetail? = null
+        val jsonSource = first.detailJson.ifBlank {
+            try {
+                val offlineDir = DownloadHelper.getOfflineDirectory(getApplication())
+                val metaFile = java.io.File(offlineDir, "metadata_${DownloadHelper.sanitizeFilename(first.itemId)}.json")
+                if (metaFile.exists()) metaFile.readText() else ""
+            } catch (_: Exception) {
+                ""
+            }
+        }
+        if (jsonSource.isNotBlank()) {
+            savedDetail = RezkaDetailJsonEngine.fromJson(jsonSource)
+        }
+
+        val posterUrl = if (first.localPosterPath.isNotEmpty() && java.io.File(first.localPosterPath).exists()) {
+            "file://${first.localPosterPath}"
+        } else {
+            savedDetail?.imageUrl?.ifEmpty { null } ?: first.imageUrl.ifEmpty { fallbackItem?.imageUrl ?: "" }
+        }
+
+        if (savedDetail != null) {
+            // Восстанавливаем озвучки с сохранением флагов и настроек
+            val translators = if (savedDetail.translators.isNotEmpty()) {
+                savedDetail.translators
+            } else {
+                entities.map { it.translatorName }
+                    .distinct()
+                    .filter { it.isNotBlank() }
+                    .mapIndexed { idx, name ->
+                        val transId = entities.firstOrNull { it.translatorName == name }?.translatorId?.ifEmpty { idx.toString() } ?: idx.toString()
+                        Translator(id = transId, name = name, isDefault = idx == 0)
+                    }.ifEmpty {
+                        listOf(Translator("0", "Оффлайн", isDefault = true))
+                    }
+            }
+
+            // Сезоны для сериала — ТОЛЬКО реально скачанные серии из оффлайн библиотеки
+            val seasons = if (isSeries) {
+                val downloadedGroup = entities.groupBy { it.season }
+                downloadedGroup.map { (sNum, eps) ->
+                    val origSeason = savedDetail.seasons.find { it.id == sNum }
+                    val seasonName = origSeason?.name?.ifEmpty { null } ?: "Сезон $sNum"
+                    val episodeList = eps.map { epEntity ->
+                        val origEp = origSeason?.episodes?.find { it.id == epEntity.episode }
+                        val epName = origEp?.name?.ifEmpty { null } ?: "Серия ${epEntity.episode}"
+                        Episode(
+                            id = epEntity.episode,
+                            name = epName,
+                            seasonId = sNum,
+                            translatorId = epEntity.translatorId
+                        )
+                    }.sortedBy { it.id.toIntOrNull() ?: 0 }
+
+                    Season(
+                        id = sNum,
+                        name = seasonName,
+                        episodes = episodeList
+                    )
+                }.sortedBy { it.id }
+            } else emptyList()
+
+            return savedDetail.copy(
+                imageUrl = posterUrl,
+                translators = translators,
+                seasons = seasons,
+                rating = "Оффлайн",
+                isReleased = true
+            )
+        }
+
+        // Резервный фоллбек для старых записей без JSON метаданных
         val genresList = if (first.genres.isNotBlank()) first.genres.split(", ").map { it.trim() } else emptyList()
         val translators = entities.map { it.translatorName }
             .distinct()
@@ -1086,12 +1196,6 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             }.sortedBy { it.id }
         } else emptyList()
 
-        val posterUrl = if (first.localPosterPath.isNotEmpty()) {
-            "file://${first.localPosterPath}"
-        } else {
-            first.imageUrl.ifEmpty { fallbackItem?.imageUrl ?: "" }
-        }
-
         val rezkaType = try {
             RezkaType.valueOf(first.type)
         } catch (_: Exception) {
@@ -1107,7 +1211,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             year = first.year,
             releaseDate = first.year,
             country = first.country,
-            countryFlag = "",
+            countryFlag = CountryFlags.getFlag(first.country),
             genres = genresList,
             rating = "Оффлайн",
             ratingInfo = RatingInfo(),
@@ -1532,7 +1636,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             val now = System.currentTimeMillis()
             val grouped = allHistory.groupBy { it.itemId }
             val seriesCandidates = grouped.mapNotNull { (itemId, items) ->
-                val latest = items.maxByOrNull { it.timestamp } ?: items.first()
+                val latest = resolveLatestWatchHistory(items)
                 val isSeries = latest.season > 0 ||
                                latest.episode.isNotBlank() ||
                                items.any { it.season > 0 || it.episode.isNotBlank() } ||
@@ -1616,14 +1720,16 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
                                 if (newTotalEpisodes > 0) {
                                     val finalSeasons = maxOf(newTotalSeasons, 1)
-                                    val absIndex = candidate.calculatedAbsoluteEpisodeIndex
+                                    val currentKnownTotal = candidate.currentTotalEpisodes
 
-                                    // Обновляем точное количество серий во всей истории сериала в базе данных
-                                    repository.updateExactTotalEpisodes(candidate.itemId, newTotalEpisodes, finalSeasons)
+                                    // Обновляем точное количество серий во всей истории сериала в базе данных,
+                                    // только если реально найдены новые серии или если общее количество серий не было известно
+                                    if (newTotalEpisodes > currentKnownTotal || currentKnownTotal <= 0) {
+                                        repository.updateExactTotalEpisodes(candidate.itemId, newTotalEpisodes, finalSeasons)
+                                    }
 
-                                    // Если вышли новые серии (общее число серий превышает номер последней просмотренной серии):
-                                    // сериал больше не может считаться полностью завершенным!
-                                    if (newTotalEpisodes > absIndex) {
+                                    // Если вышли новые серии, которых не было раньше, сбрасываем статус "полностью просмотрено":
+                                    if (newTotalEpisodes > currentKnownTotal && currentKnownTotal > 0) {
                                         autoWatchedPersistedSet.remove(candidate.itemId)
                                         repository.setHistoryWatched(candidate.itemId, false)
                                         val updated = candidate.latest.copy(
@@ -1761,8 +1867,13 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         totalEpisodes: Int = 0,
         episodeIndex: Int = 0,
         totalSeasons: Int = 0,
-        isFullyWatched: Boolean = false
+        isFullyWatched: Boolean = false,
+        isOfflineStream: Boolean = false
     ) {
+        // Просмотр в оффлайн режиме из оффлайн библиотеки никак не должен отмечаться в истории
+        if (isOfflineStream || !NetworkMonitor.isOnline.value || url.isBlank() || url.startsWith("file://") || itemId.startsWith("offline_")) {
+            return
+        }
         val id = "${itemId}_${season}_${episode}"
         val entity = WatchHistoryEntity(
             id = id,
@@ -1786,6 +1897,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (isFullyWatched) {
                 repository.setHistoryWatched(itemId, true)
+            } else {
+                repository.setHistoryWatched(itemId, false)
             }
             repository.insertHistoryEntity(entity)
             FirebaseSyncManager.onWatchProgress(entity)
@@ -1825,40 +1938,57 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         season: Int = 0,
         episode: String = ""
     ): List<StreamUrl> {
-        val offlineList = repository.getOfflineMediaByItemId(itemId)
-        val matchingOffline = if (isSeries) {
-            offlineList.find { it.season == season && it.episode == episode && java.io.File(it.videoPath).exists() }
-                ?: offlineList.find { it.season == season && java.io.File(it.videoPath).exists() }
-                ?: offlineList.firstOrNull { java.io.File(it.videoPath).exists() }
-        } else {
-            offlineList.find { java.io.File(it.videoPath).exists() }
+        val cleanNum = itemId.filter { it.isDigit() }
+        val offlineList = repository.getOfflineMediaByItemId(itemId).ifEmpty {
+            repository.getAllOfflineMediaList().filter {
+                it.itemId == itemId || (cleanNum.isNotEmpty() && (it.itemId == cleanNum || it.itemId.startsWith("$cleanNum-") || it.itemId.filter { c -> c.isDigit() } == cleanNum))
+            }
         }
 
-        if (matchingOffline != null && (!NetworkMonitor.isOnline.value || itemId.startsWith("offline_"))) {
-            return listOf(
-                StreamUrl(
-                    quality = matchingOffline.quality.ifEmpty { "1080p" },
-                    url = "file://${matchingOffline.videoPath}",
-                    directMp4Url = "file://${matchingOffline.videoPath}"
-                )
-            )
+        val matchingOffline = if (isSeries) {
+            val cleanEp = episode.filter { it.isDigit() }
+            offlineList.find {
+                it.season == season && (it.episode == episode || (cleanEp.isNotEmpty() && it.episode.filter { c -> c.isDigit() } == cleanEp)) &&
+                DownloadHelper.resolveOfflineVideoFile(it, getApplication()) != null
+            }
+                ?: offlineList.find { it.season == season && DownloadHelper.resolveOfflineVideoFile(it, getApplication()) != null }
+                ?: offlineList.firstOrNull { DownloadHelper.resolveOfflineVideoFile(it, getApplication()) != null }
+        } else {
+            offlineList.find { DownloadHelper.resolveOfflineVideoFile(it, getApplication()) != null }
+        }
+
+        if (matchingOffline != null) {
+            val resolvedFile = DownloadHelper.resolveOfflineVideoFile(matchingOffline, getApplication())
+            if (resolvedFile != null && resolvedFile.exists()) {
+                if (!NetworkMonitor.isOnline.value || itemId.startsWith("offline_") || offlineList.isNotEmpty()) {
+                    return listOf(
+                        StreamUrl(
+                            quality = matchingOffline.quality.ifEmpty { "1080p" },
+                            url = "file://${resolvedFile.absolutePath}",
+                            directMp4Url = "file://${resolvedFile.absolutePath}"
+                        )
+                    )
+                }
+            }
         }
 
         return try {
             RezkaService.getStreamUrls(itemId, translatorId, isSeries, season, episode)
         } catch (e: Exception) {
             if (matchingOffline != null) {
-                listOf(
-                    StreamUrl(
-                        quality = matchingOffline.quality.ifEmpty { "1080p" },
-                        url = "file://${matchingOffline.videoPath}",
-                        directMp4Url = "file://${matchingOffline.videoPath}"
+                val resolvedFile = DownloadHelper.resolveOfflineVideoFile(matchingOffline, getApplication())
+                if (resolvedFile != null && resolvedFile.exists()) {
+                    return listOf(
+                        StreamUrl(
+                            quality = matchingOffline.quality.ifEmpty { "1080p" },
+                            url = "file://${resolvedFile.absolutePath}",
+                            directMp4Url = "file://${resolvedFile.absolutePath}"
+                        )
                     )
-                )
-            } else {
-                NetworkMonitor.handleNetworkException(e)
-                throw e
+                }
             }
+            NetworkMonitor.handleNetworkException(e)
+            throw e
         }
     }
 
@@ -1867,10 +1997,18 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         translatorId: String,
         translatorUrl: String = ""
     ): List<Season> {
-        if (!NetworkMonitor.isOnline.value) {
-            val offlineList = repository.getOfflineMediaByItemId(numericId)
+        val cleanNum = numericId.filter { it.isDigit() }
+        val offlineList = repository.getOfflineMediaByItemId(numericId).ifEmpty {
+            repository.getAllOfflineMediaList().filter {
+                it.itemId == numericId || (cleanNum.isNotEmpty() && (it.itemId == cleanNum || it.itemId.startsWith("$cleanNum-") || it.itemId.filter { c -> c.isDigit() } == cleanNum))
+            }
+        }
+
+        if (!NetworkMonitor.isOnline.value || offlineList.isNotEmpty()) {
             if (offlineList.isNotEmpty()) {
-                return offlineList.groupBy { it.season }.map { (sNum, eps) ->
+                val filtered = offlineList.filter { it.translatorId == translatorId || translatorId.isBlank() }
+                    .ifEmpty { offlineList }
+                return filtered.groupBy { it.season }.map { (sNum, eps) ->
                     Season(
                         id = sNum,
                         name = "Сезон $sNum",
@@ -1881,7 +2019,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                                 seasonId = sNum,
                                 translatorId = epEntity.translatorId
                             )
-                        }
+                        }.sortedBy { it.id.toIntOrNull() ?: 0 }
                     )
                 }.sortedBy { it.id }
             }
@@ -1914,7 +2052,9 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     suspend fun getSavedProgress(itemId: String): WatchHistoryEntity? {
-        return repository.getWatchHistoryForMovie(itemId)
+        val allItems = repository.getAllWatchHistoryForMovie(itemId)
+        if (allItems.isEmpty()) return repository.getWatchHistoryForMovie(itemId)
+        return resolveLatestWatchHistory(allItems)
     }
 
     suspend fun getSavedProgressForEpisode(itemId: String, season: Int, episode: String): WatchHistoryEntity? {
@@ -2051,6 +2191,25 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     fun setCardGridMode(mode: String) {
         RezkaService.setCardGridMode(mode)
         FirebaseSyncManager.onSettingsUpdated(cardGridMode = mode)
+    }
+
+    fun setDefaultCatalogType(type: RezkaType) {
+        if (type == RezkaType.COLLECTIONS) return
+        val previous = RezkaService.defaultCatalogType.value
+        RezkaService.setDefaultCatalogType(type)
+        if (_currentType.value == previous && _currentGenre.value.isEmpty() && _currentYear.value.isEmpty() && _currentCountry.value.isEmpty() && searchQuery.isEmpty()) {
+            loadCatalog(type = type, section = _currentSection.value, forceRefresh = true)
+        }
+        FirebaseSyncManager.onSettingsUpdated(defaultCatalogType = type.name)
+    }
+
+    fun setDefaultCatalogSection(section: SectionType) {
+        val previous = RezkaService.defaultCatalogSection.value
+        RezkaService.setDefaultCatalogSection(section)
+        if (_currentSection.value == previous && _currentGenre.value.isEmpty() && _currentYear.value.isEmpty() && _currentCountry.value.isEmpty() && searchQuery.isEmpty()) {
+            loadCatalog(type = _currentType.value, section = section, forceRefresh = true)
+        }
+        FirebaseSyncManager.onSettingsUpdated(defaultCatalogSection = section.name)
     }
 
     fun setMirror(newUrl: String): Boolean {
@@ -2218,7 +2377,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         if (wasFirstLaunch) {
             RezkaService.markFirstLaunchAuditDone()
             RezkaService.resetMirrorToDefault()
-            loadCatalog(RezkaType.MOVIE, SectionType.LATEST, "", forceRefresh = true)
+            loadCatalog(RezkaService.defaultCatalogType.value, RezkaService.defaultCatalogSection.value, "", forceRefresh = true)
         }
     }
 
@@ -2228,8 +2387,29 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
-        private fun parseEpisodeNumber(epStr: String): Int {
-            return Regex("""\d+""").findAll(epStr).mapNotNull { it.value.toIntOrNull() }.maxOrNull() ?: 1
+        fun parseEpisodeNumber(epStr: String): Int {
+            return Regex("""\d+""").find(epStr)?.value?.toIntOrNull() ?: 1
+        }
+
+        fun getSeriesOrderWeight(item: WatchHistoryEntity): Long {
+            val s = item.season.coerceAtLeast(1)
+            val epNum = parseEpisodeNumber(item.episode).coerceAtLeast(1)
+            return s.toLong() * 100_000L + epNum.toLong()
+        }
+
+        /**
+         * Высокопроизводительный движок вычисления наиболее актуальной серии просмотра.
+         * Честно и динамически отражает то, что пользователь смотрел в последний раз (last-watched).
+         * Если пользователь ушёл смотреть прошлые серии — последняя просмотренная серия мгновенно становится актуальной.
+         */
+        fun resolveLatestWatchHistory(items: List<WatchHistoryEntity>): WatchHistoryEntity {
+            if (items.isEmpty()) throw NoSuchElementException("History items list is empty")
+            if (items.size == 1) return items[0]
+
+            return items.maxWithOrNull(
+                compareBy<WatchHistoryEntity> { it.timestamp }
+                    .thenBy { it.progressMs }
+            ) ?: items.first()
         }
 
         /**
@@ -2259,46 +2439,26 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             items: List<WatchHistoryEntity>,
             now: Long = System.currentTimeMillis()
         ): SeriesProgressCalculation {
-            val isManualWatched = latest.isFullyWatched
             val latestSeason = latest.season.coerceAtLeast(1)
             val rawEpNum = parseEpisodeNumber(latest.episode)
             val latestEpNumber = if (rawEpNum in 1..2500) rawEpNum else 1
 
             val rawStoredTotalEpisodes = items.mapNotNull { it.totalEpisodes.takeIf { ep -> ep in 1..2500 } }.maxOrNull() ?: 0
             val storedTotalEpisodes = if (rawStoredTotalEpisodes > 2500) 0 else rawStoredTotalEpisodes
-            val storedTotalSeasons = items.mapNotNull { it.totalSeasons.takeIf { s -> s in 1..100 } }.maxOrNull() ?: 0
 
-            // 1. Точный подсчёт количества серий во всех предшествующих сезонах (s < latestSeason)
-            val priorEpisodesFromHistory = if (latestSeason > 1) {
-                (1 until latestSeason).sumOf { s ->
-                    val seasonEntries = items.filter { it.season == s }
-                    val maxEpInSeason = seasonEntries.mapNotNull { parseEpisodeNumber(it.episode).takeIf { e -> e in 1..2500 } }.maxOrNull() ?: 0
-                    val distinctEpCount = seasonEntries.map { it.episode }.distinct().size
-                    maxOf(maxEpInSeason, distinctEpCount)
-                }
-            } else 0
-
-            // Если в истории предшествующих сезонов нет (например, пользователь начал смотреть сразу со 2-го сезона),
-            // но известно общее число серий и сезонов:
-            val priorEpisodes = when {
-                priorEpisodesFromHistory > 0 -> priorEpisodesFromHistory
-                storedTotalEpisodes > 0 && storedTotalSeasons > 0 && latestSeason == storedTotalSeasons ->
-                    (storedTotalEpisodes - latestEpNumber).coerceAtLeast(0)
-                storedTotalEpisodes > 0 && storedTotalSeasons > 0 ->
-                    (((latestSeason - 1).toDouble() * storedTotalEpisodes.toDouble()) / storedTotalSeasons.toDouble()).toInt().coerceAtLeast(0)
-                else -> 0
-            }
-
-            val rawEpIndex = if (latest.episodeIndex in 1..2500) latest.episodeIndex else 0
-            val absoluteEpisodeIndex = when {
-                rawEpIndex > 0 -> maxOf(rawEpIndex, priorEpisodes + latestEpNumber, latestEpNumber)
-                priorEpisodes > 0 -> priorEpisodes + latestEpNumber
-                else -> latestEpNumber
+            // Точный сквозной порядковый номер серии (файла)
+            val absoluteEpisodeIndex = if (latest.episodeIndex > 0) {
+                latest.episodeIndex
+            } else {
+                val priorEpisodesFromHistory = if (latestSeason > 1) {
+                    (1 until latestSeason).sumOf { s ->
+                        items.filter { it.season == s }.map { it.episode }.distinct().size
+                    }
+                } else 0
+                (priorEpisodesFromHistory + latestEpNumber).coerceAtLeast(1)
             }.coerceAtLeast(1)
 
-            val distinctEpisodesCount = items.map { "${it.season}_${it.episode}" }.distinct().size
-            val totalEpisodesCount = maxOf(storedTotalEpisodes, absoluteEpisodeIndex, distinctEpisodesCount, 1)
-
+            val totalEpisodesCount = maxOf(storedTotalEpisodes, latest.totalEpisodes, absoluteEpisodeIndex, 1)
             val isLastEpisode = absoluteEpisodeIndex >= totalEpisodesCount
 
             // Завершена ли серия до конца (окончание видео / последние 20 секунд / >= 98%):
@@ -2311,7 +2471,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             // Правило автозавершения: осталось менее 5% и прошло не менее 24 часов:
             val isLatestEpAutoWatched = isAutoWatchedRuleMet(latest.progressMs, latest.durationMs, latest.timestamp, now)
 
-            val isFullyWatched = isManualWatched || (isLastEpisode && (isCompletedToEnd || isLatestEpAutoWatched))
+            // Полностью завершенным сериал считается при ручной отметке "Просмотрено" или если последняя серия завершена
+            val isFullyWatched = latest.isFullyWatched || (isLastEpisode && (isCompletedToEnd || isLatestEpAutoWatched))
 
             val watchedEpisodesCount: Int
             val totalProgressFraction: Float
@@ -2326,8 +2487,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
                 val isCurrentEpFinished = currentEpProgress >= 0.95 || isCompletedToEnd
 
-                watchedEpisodesCount = if (!isLastEpisode && isCurrentEpFinished) {
-                    absoluteEpisodeIndex.coerceIn(0, totalEpisodesCount - 1)
+                watchedEpisodesCount = if (isCurrentEpFinished) {
+                    absoluteEpisodeIndex.coerceIn(0, totalEpisodesCount)
                 } else {
                     (absoluteEpisodeIndex - 1).coerceIn(0, totalEpisodesCount - 1)
                 }

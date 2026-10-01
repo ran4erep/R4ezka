@@ -474,33 +474,6 @@ fun MediaDownloadDialog(
                 // 5. Кнопки действий прямо внутри контента для идеальной вёрстки
                 Spacer(modifier = Modifier.height(6.dp))
 
-                var downloadSuccessToast by remember { mutableStateOf<String?>(null) }
-                LaunchedEffect(downloadSuccessToast) {
-                    if (downloadSuccessToast != null) {
-                        kotlinx.coroutines.delay(2500)
-                        downloadSuccessToast = null
-                    }
-                }
-
-                if (downloadSuccessToast != null) {
-                    Surface(
-                        color = CinemaPrimary.copy(alpha = 0.15f),
-                        shape = RoundedCornerShape(8.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = downloadSuccessToast!!,
-                            color = CinemaPrimary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                }
-
                 val performDownload: (Boolean) -> Unit = { isOfflineLib ->
                     HapticEngine.get().perform(HapticType.CONFIRM)
                     onDownload(
@@ -510,7 +483,6 @@ fun MediaDownloadDialog(
                         selectedQuality,
                         isOfflineLib
                     )
-                    downloadSuccessToast = if (isOfflineLib) "✓ Добавлено в оффлайн библиотеку" else "✓ Загрузка начата"
                 }
 
                 // Кнопка 1: "Скачать в оффлайн библиотеку"

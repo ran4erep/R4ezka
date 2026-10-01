@@ -41,6 +41,9 @@ interface WatchHistoryDao {
     @Query("SELECT * FROM watch_history WHERE itemId = :itemId ORDER BY timestamp DESC LIMIT 1")
     suspend fun getHistoryByItemId(itemId: String): WatchHistoryEntity?
 
+    @Query("SELECT * FROM watch_history WHERE itemId = :itemId ORDER BY timestamp DESC")
+    suspend fun getAllHistoryByItemId(itemId: String): List<WatchHistoryEntity>
+
     @Query("SELECT * FROM watch_history WHERE itemId = :itemId AND season = :season AND episode = :episode ORDER BY timestamp DESC LIMIT 1")
     suspend fun getHistoryByEpisode(itemId: String, season: Int, episode: String): WatchHistoryEntity?
 
@@ -140,6 +143,12 @@ interface OfflineMediaDao {
     @Query("UPDATE offline_media SET downloadStatus = :status, fileSizeBytes = :fileSizeBytes WHERE id = :id")
     suspend fun updateDownloadStatus(id: String, status: Int, fileSizeBytes: Long)
 
+    @Query("UPDATE offline_media SET detailJson = :detailJson WHERE itemId = :itemId")
+    suspend fun updateDetailJsonByItemId(itemId: String, detailJson: String)
+
+    @Query("UPDATE offline_media SET videoPath = :videoPath WHERE id = :id")
+    suspend fun updateVideoPath(id: String, videoPath: String)
+
     @Query("SELECT COUNT(*) FROM offline_media")
     fun getOfflineCount(): Flow<Int>
 
@@ -214,13 +223,20 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
                 `downloadId` INTEGER NOT NULL DEFAULT -1,
                 `downloadStatus` INTEGER NOT NULL DEFAULT 0,
                 `createdAt` INTEGER NOT NULL DEFAULT 0,
-                `description` TEXT NOT NULL DEFAULT ''
+                `description` TEXT NOT NULL DEFAULT '',
+                `detailJson` TEXT NOT NULL DEFAULT ''
             )
         """.trimIndent())
     }
 }
 
-@Database(entities = [FavoriteEntity::class, WatchHistoryEntity::class, SeriesSubscriptionEntity::class, OfflineMediaEntity::class], version = 8, exportSchema = false)
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE offline_media ADD COLUMN detailJson TEXT NOT NULL DEFAULT ''")
+    }
+}
+
+@Database(entities = [FavoriteEntity::class, WatchHistoryEntity::class, SeriesSubscriptionEntity::class, OfflineMediaEntity::class], version = 9, exportSchema = false)
 abstract class RezkaDatabase : RoomDatabase() {
     abstract fun favoriteDao(): FavoriteDao
     abstract fun watchHistoryDao(): WatchHistoryDao
@@ -238,7 +254,7 @@ abstract class RezkaDatabase : RoomDatabase() {
                     RezkaDatabase::class.java,
                     "rezka_database"
                 )
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                     .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
                 INSTANCE = instance
@@ -263,6 +279,8 @@ class RezkaRepository(private val db: RezkaDatabase) {
     suspend fun deleteOfflineMediaByItemId(itemId: String) = db.offlineMediaDao().deleteOfflineMediaByItemId(itemId)
     suspend fun clearAllOfflineMedia() = db.offlineMediaDao().clearAllOfflineMedia()
     suspend fun updateOfflineDownloadStatus(id: String, status: Int, fileSizeBytes: Long) = db.offlineMediaDao().updateDownloadStatus(id, status, fileSizeBytes)
+    suspend fun updateOfflineDetailJson(itemId: String, detailJson: String) = db.offlineMediaDao().updateDetailJsonByItemId(itemId, detailJson)
+    suspend fun updateOfflineVideoPath(id: String, videoPath: String) = db.offlineMediaDao().updateVideoPath(id, videoPath)
     fun getOfflineCount(): Flow<Int> = db.offlineMediaDao().getOfflineCount()
     fun getTotalOfflineSizeBytes(): Flow<Long?> = db.offlineMediaDao().getTotalSizeBytes()
 
@@ -365,6 +383,10 @@ class RezkaRepository(private val db: RezkaDatabase) {
 
     suspend fun getWatchHistoryForMovie(itemId: String): WatchHistoryEntity? {
         return db.watchHistoryDao().getHistoryByItemId(itemId)
+    }
+
+    suspend fun getAllWatchHistoryForMovie(itemId: String): List<WatchHistoryEntity> {
+        return db.watchHistoryDao().getAllHistoryByItemId(itemId)
     }
 
     suspend fun getWatchHistoryForEpisode(itemId: String, season: Int, episode: String): WatchHistoryEntity? {

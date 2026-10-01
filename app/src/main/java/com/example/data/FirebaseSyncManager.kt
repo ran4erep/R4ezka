@@ -589,7 +589,9 @@ object FirebaseSyncManager {
         subtitleTextScale: Float = RezkaService.subtitleTextScale.value,
         resizeMode: String = RezkaService.defaultResizeMode.value,
         tvMode: String = RezkaService.tvModePreference.value,
-        cardGridMode: String = RezkaService.cardGridMode.value
+        cardGridMode: String = RezkaService.cardGridMode.value,
+        defaultCatalogType: String = RezkaService.defaultCatalogType.value.name,
+        defaultCatalogSection: String = RezkaService.defaultCatalogSection.value.name
     ) {
         val key = _userKey.value ?: return
         scope.launch {
@@ -603,6 +605,8 @@ object FirebaseSyncManager {
                     put("resizeMode", resizeMode)
                     put("tvMode", tvMode)
                     put("cardGridMode", cardGridMode)
+                    put("defaultCatalogType", defaultCatalogType)
+                    put("defaultCatalogSection", defaultCatalogSection)
                     put("updatedAt", System.currentTimeMillis())
                 }
                 val request = Request.Builder()
@@ -610,7 +614,7 @@ object FirebaseSyncManager {
                     .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 httpClient.newCall(request).execute().close()
-                Log.d(TAG, "Settings synced to cloud: mirror=$mirror, quality=$quality, autoNext=$autoNextEpisode, sub=$preferredSubtitleLang, subScale=$subtitleTextScale, resize=$resizeMode, tvMode=$tvMode, cardGridMode=$cardGridMode")
+                Log.d(TAG, "Settings synced to cloud: mirror=$mirror, quality=$quality, autoNext=$autoNextEpisode, sub=$preferredSubtitleLang, subScale=$subtitleTextScale, resize=$resizeMode, tvMode=$tvMode, cardGridMode=$cardGridMode, defaultType=$defaultCatalogType, defaultSection=$defaultCatalogSection")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync settings to Firebase: ${e.message}")
             }
@@ -853,7 +857,7 @@ object FirebaseSyncManager {
                         val k = it.next()
                         val obj = histJson.optJSONObject(k)
                         if (obj != null) {
-                            remoteHistory.add(jsonToHistory(obj))
+                            remoteHistory.add(jsonToHistory(obj, k))
                         }
                     }
                 }
@@ -884,6 +888,8 @@ object FirebaseSyncManager {
                         } else {
                             histToUpdateLocally.add(remoteItem)
                         }
+                    } else if (remoteItem.progressMs > localItem.progressMs) {
+                        histToUpdateLocally.add(remoteItem)
                     }
                 }
             }
@@ -969,6 +975,28 @@ object FirebaseSyncManager {
                             withContext(Dispatchers.Main) {
                                 RezkaService.setCardGridMode(remoteGridMode)
                             }
+                        }
+                        val remoteType = setJson.optString("defaultCatalogType", "")
+                        if (remoteType.isNotBlank()) {
+                            try {
+                                val t = RezkaType.valueOf(remoteType)
+                                if (t != RezkaType.COLLECTIONS && t != RezkaService.defaultCatalogType.value) {
+                                    withContext(Dispatchers.Main) {
+                                        RezkaService.setDefaultCatalogType(t)
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        val remoteSection = setJson.optString("defaultCatalogSection", "")
+                        if (remoteSection.isNotBlank()) {
+                            try {
+                                val s = SectionType.valueOf(remoteSection)
+                                if (s != RezkaService.defaultCatalogSection.value) {
+                                    withContext(Dispatchers.Main) {
+                                        RezkaService.setDefaultCatalogSection(s)
+                                    }
+                                }
+                            } catch (_: Exception) {}
                         }
                     } else {
                         // В облаке ещё нет настроек пользователя - выгружаем текущие
@@ -1275,14 +1303,16 @@ object FirebaseSyncManager {
         }
     }
 
-    private fun jsonToHistory(json: JSONObject): WatchHistoryEntity {
+    private fun jsonToHistory(json: JSONObject, fallbackKey: String = ""): WatchHistoryEntity {
         val rawUrl = json.optString("url", "")
         val season = json.optInt("season", 0)
         val itemType = if (season > 0) RezkaType.SERIES else RezkaType.MOVIE
         val itemId = json.optString("itemId", "")
         val adjustedUrl = RezkaService.adjustUrlToCurrentMirror(rawUrl, itemType, itemId)
+        val rawId = json.optString("id", "").ifEmpty { fallbackKey }
+        val finalId = if (rawId.isNotEmpty()) rawId else "${itemId}_${season}_${json.optString("episode", "")}"
         return WatchHistoryEntity(
-            id = json.optString("id", ""),
+            id = finalId,
             itemId = itemId,
             title = json.optString("title", ""),
             imageUrl = json.optString("imageUrl", ""),

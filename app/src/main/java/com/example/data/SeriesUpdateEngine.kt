@@ -56,12 +56,12 @@ object SeriesUpdateEngine {
 
     // Регулярные выражения скомпилированы один раз для максимальной производительности O(1)
     private val EPISODE_TAG_REGEX = Regex(
-        """<li[^>]*?class=["'][^"']*?b-simple_episode__item[^"']*?["'][^>]*?data-season_id=["'](\d+)["'][^>]*?data-episode_id=["'](\d+)["'][^>]*?>(.*?)</li>""",
+        """<li[^>]*?class=["'][^"']*?b-simple_episode__item[^"']*?["'][^>]*?data-season_id=["'](\d+)["'][^>]*?data-episode_id=["']([^"']+)["'][^>]*?>(.*?)</li>""",
         RegexOption.DOT_MATCHES_ALL
     )
 
     private val EPISODE_TAG_ALT_REGEX = Regex(
-        """<li[^>]*?class=["'][^"']*?b-simple_episode__item[^"']*?["'][^>]*?data-episode_id=["'](\d+)["'][^>]*?data-season_id=["'](\d+)["'][^>]*?>(.*?)</li>""",
+        """<li[^>]*?class=["'][^"']*?b-simple_episode__item[^"']*?["'][^>]*?data-episode_id=["']([^"']+)["'][^>]*?data-season_id=["'](\d+)["'][^>]*?>(.*?)</li>""",
         RegexOption.DOT_MATCHES_ALL
     )
 
@@ -71,16 +71,16 @@ object SeriesUpdateEngine {
     )
 
     private val EPISODE_IN_CONTAINER_REGEX = Regex(
-        """<li[^>]*?data-episode_id=["'](\d+)["'][^>]*?>(.*?)</li>""",
+        """<li[^>]*?data-episode_id=["']([^"']+)["'][^>]*?>(.*?)</li>""",
         RegexOption.DOT_MATCHES_ALL
     )
 
     private val GENERIC_DATA_REGEX = Regex(
-        """data-season_id=["'](\d+)["'][^>]*?data-episode_id=["'](\d+)["']"""
+        """data-season_id=["'](\d+)["'][^>]*?data-episode_id=["']([^"']+)["']"""
     )
 
     private val GENERIC_DATA_ALT_REGEX = Regex(
-        """data-episode_id=["'](\d+)["'][^>]*?data-season_id=["'](\d+)["']"""
+        """data-episode_id=["']([^"']+)["'][^>]*?data-season_id=["'](\d+)["']"""
     )
 
     private val SEASON_HEADER_REGEX = Regex(
@@ -97,6 +97,7 @@ object SeriesUpdateEngine {
     /**
      * Сверхбыстрый разбор последнего сезона и серии из строки HTML без создания DOM-дерева.
      * Выполняется за ~0.2 - 0.5 мс.
+     * Корректно учитывает сдвоенные/склеенные серии ("1-3", "34-35"): один файл = одна серия в истории.
      */
     fun parseLatestEpisodeFromHtml(html: String): SeriesScanResult {
         if (html.isBlank()) {
@@ -106,7 +107,7 @@ object SeriesUpdateEngine {
         var maxSeason = 0
         var maxEpisode = 0
         var episodeName = ""
-        val allEpisodesSet = HashSet<Long>()
+        val allEpisodesSet = HashSet<String>()
 
         // 0. Поиск контейнеров сезонов с сериями внутри (<ul data-season_id="X">...<li data-episode_id="Y">)
         var matchesFound = false
@@ -114,17 +115,17 @@ object SeriesUpdateEngine {
             val season = seasonMatch.groupValues[1].toIntOrNull() ?: continue
             val containerContent = seasonMatch.groupValues[2]
             for (epMatch in EPISODE_IN_CONTAINER_REGEX.findAll(containerContent)) {
-                val episode = epMatch.groupValues[1].toIntOrNull() ?: continue
+                val epId = epMatch.groupValues[1].trim()
+                if (epId.isEmpty()) continue
                 val rawText = epMatch.groupValues[2]
                 matchesFound = true
-                if (season > 0 && episode > 0) {
-                    allEpisodesSet.add((season.toLong() shl 32) or (episode.toLong() and 0xFFFFFFFFL))
-                }
-                if (season > maxSeason || (season == maxSeason && episode > maxEpisode)) {
+                allEpisodesSet.add("$season#$epId")
+                val epNum = Regex("""\d+""").find(epId)?.value?.toIntOrNull() ?: 1
+                if (season > maxSeason || (season == maxSeason && epNum > maxEpisode)) {
                     maxSeason = season
-                    maxEpisode = episode
+                    maxEpisode = epNum
                     val cleanText = HTML_TAG_STRIP_REGEX.replace(rawText, "").trim()
-                    episodeName = if (cleanText.isNotEmpty()) cleanText else "Серия $episode"
+                    episodeName = if (cleanText.isNotEmpty()) cleanText else "Серия $epId"
                 }
             }
         }
@@ -132,37 +133,36 @@ object SeriesUpdateEngine {
         // 1. Поиск элементов <li class="b-simple_episode__item" data-season_id="..." data-episode_id="...">
         for (match in EPISODE_TAG_REGEX.findAll(html)) {
             val season = match.groupValues[1].toIntOrNull() ?: continue
-            val episode = match.groupValues[2].toIntOrNull() ?: continue
+            val epId = match.groupValues[2].trim()
+            if (epId.isEmpty()) continue
             val rawText = match.groupValues[3]
             matchesFound = true
-            if (season > 0 && episode > 0) {
-                allEpisodesSet.add((season.toLong() shl 32) or (episode.toLong() and 0xFFFFFFFFL))
-            }
+            allEpisodesSet.add("$season#$epId")
 
-            if (season > maxSeason || (season == maxSeason && episode > maxEpisode)) {
+            val epNum = Regex("""\d+""").find(epId)?.value?.toIntOrNull() ?: 1
+            if (season > maxSeason || (season == maxSeason && epNum > maxEpisode)) {
                 maxSeason = season
-                maxEpisode = episode
+                maxEpisode = epNum
                 val cleanText = HTML_TAG_STRIP_REGEX.replace(rawText, "").trim()
-                episodeName = if (cleanText.isNotEmpty()) cleanText else "Серия $episode"
+                episodeName = if (cleanText.isNotEmpty()) cleanText else "Серия $epId"
             }
         }
-
         // Если порядок атрибутов обратный (data-episode_id перед data-season_id)
         if (!matchesFound) {
             for (match in EPISODE_TAG_ALT_REGEX.findAll(html)) {
-                val episode = match.groupValues[1].toIntOrNull() ?: continue
+                val epId = match.groupValues[1].trim()
                 val season = match.groupValues[2].toIntOrNull() ?: continue
+                if (epId.isEmpty()) continue
                 val rawText = match.groupValues[3]
                 matchesFound = true
-                if (season > 0 && episode > 0) {
-                    allEpisodesSet.add((season.toLong() shl 32) or (episode.toLong() and 0xFFFFFFFFL))
-                }
+                allEpisodesSet.add("$season#$epId")
 
-                if (season > maxSeason || (season == maxSeason && episode > maxEpisode)) {
+                val epNum = Regex("""\d+""").find(epId)?.value?.toIntOrNull() ?: 1
+                if (season > maxSeason || (season == maxSeason && epNum > maxEpisode)) {
                     maxSeason = season
-                    maxEpisode = episode
+                    maxEpisode = epNum
                     val cleanText = HTML_TAG_STRIP_REGEX.replace(rawText, "").trim()
-                    episodeName = if (cleanText.isNotEmpty()) cleanText else "Серия $episode"
+                    episodeName = if (cleanText.isNotEmpty()) cleanText else "Серия $epId"
                 }
             }
         }
@@ -171,29 +171,29 @@ object SeriesUpdateEngine {
         if (!matchesFound) {
             for (match in GENERIC_DATA_REGEX.findAll(html)) {
                 val season = match.groupValues[1].toIntOrNull() ?: continue
-                val episode = match.groupValues[2].toIntOrNull() ?: continue
+                val epId = match.groupValues[2].trim()
+                if (epId.isEmpty()) continue
                 matchesFound = true
-                if (season > 0 && episode > 0) {
-                    allEpisodesSet.add((season.toLong() shl 32) or (episode.toLong() and 0xFFFFFFFFL))
-                }
+                allEpisodesSet.add("$season#$epId")
+                val epNum = Regex("""\d+""").find(epId)?.value?.toIntOrNull() ?: 1
 
-                if (season > maxSeason || (season == maxSeason && episode > maxEpisode)) {
+                if (season > maxSeason || (season == maxSeason && epNum > maxEpisode)) {
                     maxSeason = season
-                    maxEpisode = episode
+                    maxEpisode = epNum
                 }
             }
             if (!matchesFound) {
                 for (match in GENERIC_DATA_ALT_REGEX.findAll(html)) {
-                    val episode = match.groupValues[1].toIntOrNull() ?: continue
+                    val epId = match.groupValues[1].trim()
                     val season = match.groupValues[2].toIntOrNull() ?: continue
+                    if (epId.isEmpty()) continue
                     matchesFound = true
-                    if (season > 0 && episode > 0) {
-                        allEpisodesSet.add((season.toLong() shl 32) or (episode.toLong() and 0xFFFFFFFFL))
-                    }
+                    allEpisodesSet.add("$season#$epId")
+                    val epNum = Regex("""\d+""").find(epId)?.value?.toIntOrNull() ?: 1
 
-                    if (season > maxSeason || (season == maxSeason && episode > maxEpisode)) {
+                    if (season > maxSeason || (season == maxSeason && epNum > maxEpisode)) {
                         maxSeason = season
-                        maxEpisode = episode
+                        maxEpisode = epNum
                     }
                 }
             }
@@ -209,7 +209,7 @@ object SeriesUpdateEngine {
                 val season = statusMatch.groupValues[1].toIntOrNull() ?: 1
                 val episode = statusMatch.groupValues[2].toIntOrNull() ?: 1
                 if (season > 0 && episode > 0) {
-                    allEpisodesSet.add((season.toLong() shl 32) or (episode.toLong() and 0xFFFFFFFFL))
+                    allEpisodesSet.add("$season#$episode")
                 }
                 if (season > maxSeason || (season == maxSeason && episode > maxEpisode)) {
                     maxSeason = season
@@ -227,16 +227,17 @@ object SeriesUpdateEngine {
                 val epEls = doc.select(".b-simple_episode__item, [data-episode_id]")
                 for (el in epEls) {
                     val s = el.attr("data-season_id").toIntOrNull() ?: 1
-                    val e = el.attr("data-episode_id").toIntOrNull() ?: continue
-                    if (s > 0 && e > 0) {
-                        allEpisodesSet.add((s.toLong() shl 32) or (e.toLong() and 0xFFFFFFFFL))
-                    }
-                    if (s > maxSeason || (s == maxSeason && e > maxEpisode)) {
-                        maxSeason = s
-                        maxEpisode = e
-                        val txt = el.text().trim()
-                        episodeName = if (txt.isNotEmpty()) txt else "Серия $e"
-                        matchesFound = true
+                    val eStr = el.attr("data-episode_id").trim()
+                    if (eStr.isNotEmpty()) {
+                        allEpisodesSet.add("$s#$eStr")
+                        val epNum = Regex("""\d+""").find(eStr)?.value?.toIntOrNull() ?: 1
+                        if (s > maxSeason || (s == maxSeason && epNum > maxEpisode)) {
+                            maxSeason = s
+                            maxEpisode = epNum
+                            val txt = el.text().trim()
+                            episodeName = if (txt.isNotEmpty()) txt else "Серия $eStr"
+                            matchesFound = true
+                        }
                     }
                 }
             } catch (_: Exception) {}
@@ -244,7 +245,7 @@ object SeriesUpdateEngine {
 
         val totalEpisodes = if (allEpisodesSet.isNotEmpty()) allEpisodesSet.size else if (maxEpisode > 0) maxEpisode else 0
         val totalSeasons = if (allEpisodesSet.isNotEmpty()) {
-            allEpisodesSet.map { (it ushr 32).toInt() }.distinct().size.coerceAtLeast(maxSeason)
+            allEpisodesSet.mapNotNull { it.substringBefore("#").toIntOrNull() }.distinct().size.coerceAtLeast(maxSeason)
         } else if (maxSeason > 0) maxSeason else 1
 
         return if (matchesFound && (maxSeason > 0 || maxEpisode > 0)) {

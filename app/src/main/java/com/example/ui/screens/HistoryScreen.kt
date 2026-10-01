@@ -281,6 +281,7 @@ fun HistoryCardItem(
                     )
                     
                     if (history.isSeries) {
+                        val currentEpIdx = if (history.currentEpisodeIndex > 0) history.currentEpisodeIndex else RezkaViewModel.parseEpisodeNumber(history.latestEpisode)
                         Text(
                             text = "Сезон ${history.latestSeason}, Серия ${history.latestEpisode}",
                             color = CinemaPrimary,
@@ -288,8 +289,15 @@ fun HistoryCardItem(
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.padding(top = 2.dp)
                         )
+                        val progressText = if (history.isFullyWatched || (history.watchedEpisodesCount >= history.totalEpisodesCount && history.totalEpisodesCount > 0)) {
+                            "Все ${history.totalEpisodesCount} серий"
+                        } else if (history.totalEpisodesCount > 0 && currentEpIdx > 0) {
+                            "Серия $currentEpIdx из ${history.totalEpisodesCount}"
+                        } else {
+                            "Серия ${history.latestEpisode}"
+                        }
                         Text(
-                            text = "Просмотрено ${history.watchedEpisodesCount} из ${history.totalEpisodesCount} серий",
+                            text = progressText,
                             color = CinemaTextGray,
                             fontSize = 11.sp,
                             maxLines = 1,
@@ -331,9 +339,9 @@ fun HistoryCardItem(
 
                     Text(
                         text = if (history.isSeries) {
-                            if (isFullyWatched) "100% — Все серии просмотрены" else "$progressPercentage% общего прогресса"
+                            if (isFullyWatched) "100% — Все серии" else "$progressPercentage% общего прогресса"
                         } else {
-                            if (isFullyWatched) "100% просмотрено" else "$progressPercentage% просмотрено"
+                            if (isFullyWatched) "100%" else "$progressPercentage%"
                         },
                         color = if (isFullyWatched) CinemaGreen else CinemaTextGray,
                         fontSize = 10.sp,

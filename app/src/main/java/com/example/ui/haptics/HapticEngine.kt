@@ -98,10 +98,18 @@ class HapticEngine private constructor() {
             }
 
             vibrator = v
-            hasVibratorHardware = v?.hasVibrator() == true
-            hasAmplitudeControl = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                v?.hasAmplitudeControl() == true
-            } else {
+            hasVibratorHardware = try {
+                v != null && v.hasVibrator()
+            } catch (_: Throwable) {
+                false
+            }
+            hasAmplitudeControl = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    v?.hasAmplitudeControl() == true
+                } else {
+                    false
+                }
+            } catch (_: Throwable) {
                 false
             }
         } catch (_: Throwable) {

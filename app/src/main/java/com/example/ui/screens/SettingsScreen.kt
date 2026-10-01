@@ -54,6 +54,8 @@ import com.example.R
 import com.example.data.DownloadHelper
 import com.example.data.OfflineMediaEntity
 import com.example.data.RezkaService
+import com.example.data.RezkaType
+import com.example.data.SectionType
 import com.example.data.isMovie
 import com.example.ui.RezkaViewModel
 import com.example.ui.theme.*
@@ -75,6 +77,7 @@ private data class QualityOption(
 fun SettingsScreen(
     viewModel: RezkaViewModel,
     onBack: (() -> Unit)? = null,
+    onNavigateToDetail: ((com.example.data.RezkaItem) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -88,6 +91,8 @@ fun SettingsScreen(
     val defaultResizeMode by viewModel.defaultResizeMode.collectAsState()
     val tvModePreference by viewModel.tvModePreference.collectAsState()
     val cardGridMode by viewModel.cardGridMode.collectAsState()
+    val defaultCatalogType by viewModel.defaultCatalogType.collectAsState()
+    val defaultCatalogSection by viewModel.defaultCatalogSection.collectAsState()
     val presetMirrors = viewModel.presetMirrors
 
     var customMirrorInput by remember(currentMirror) { mutableStateOf(currentMirror) }
@@ -1425,6 +1430,178 @@ fun SettingsScreen(
                                 )
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+                        HorizontalDivider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // 3. НАСТРОЙКА: КАТЕГОРИЯ ПО УМОЛЧАНИЮ
+                        Text(
+                            text = "КАТЕГОРИЯ ПО УМОЛЧАНИЮ",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = CinemaTextGray,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Фильтры, активные по умолчанию при входе в каталог",
+                            fontSize = 11.sp,
+                            color = CinemaTextGray.copy(alpha = 0.8f)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Подраздел: Тип контента
+                        Text(
+                            text = "Тип контента",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = CinemaTextWhite
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        val contentTypes = remember {
+                            listOf(
+                                listOf(RezkaType.MOVIE to "Фильмы", RezkaType.SERIES to "Сериалы"),
+                                listOf(RezkaType.ANIME to "Аниме", RezkaType.CARTOON to "Мультики")
+                            )
+                        }
+
+                        contentTypes.forEachIndexed { rowIndex, rowItems ->
+                            if (rowIndex > 0) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                rowItems.forEach { (type, label) ->
+                                    val isSelected = defaultCatalogType == type
+                                    val triggerType: () -> Unit = {
+                                        HapticEngine.get().perform(HapticType.SELECTION)
+                                        viewModel.setDefaultCatalogType(type)
+                                        Toast.makeText(context, "Категория по умолчанию: $label", Toast.LENGTH_SHORT).show()
+                                    }
+                                    Surface(
+                                        color = if (isSelected) CinemaPrimary else CinemaCard,
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (isSelected) CinemaPrimary else CinemaMuted.copy(alpha = 0.25f)
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .tvFocusableItem(
+                                                onClick = triggerType,
+                                                shape = RoundedCornerShape(10.dp),
+                                                scaleFactor = 1.02f
+                                            )
+                                            .testTag("default_type_${type.name.lowercase()}")
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 11.dp)
+                                        ) {
+                                            if (isSelected) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    tint = CinemaBlack,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                            }
+                                            Text(
+                                                text = label,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isSelected) CinemaBlack else CinemaTextWhite,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Подраздел: Раздел каталога
+                        Text(
+                            text = "Раздел каталога",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = CinemaTextWhite
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        val sectionsList = remember {
+                            listOf(
+                                listOf(SectionType.LATEST to "Новые поступления", SectionType.POPULAR to "Популярные"),
+                                listOf(SectionType.WATCHING to "Сейчас смотрят", SectionType.AWAITING to "В ожидании")
+                            )
+                        }
+
+                        sectionsList.forEachIndexed { rowIndex, rowItems ->
+                            if (rowIndex > 0) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                rowItems.forEach { (section, label) ->
+                                    val isSelected = defaultCatalogSection == section
+                                    val triggerSection: () -> Unit = {
+                                        HapticEngine.get().perform(HapticType.SELECTION)
+                                        viewModel.setDefaultCatalogSection(section)
+                                        Toast.makeText(context, "Раздел по умолчанию: $label", Toast.LENGTH_SHORT).show()
+                                    }
+                                    Surface(
+                                        color = if (isSelected) CinemaPrimary else CinemaCard,
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (isSelected) CinemaPrimary else CinemaMuted.copy(alpha = 0.25f)
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .tvFocusableItem(
+                                                onClick = triggerSection,
+                                                shape = RoundedCornerShape(10.dp),
+                                                scaleFactor = 1.02f
+                                            )
+                                            .testTag("default_section_${section.name.lowercase()}")
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 11.dp)
+                                        ) {
+                                            if (isSelected) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    tint = CinemaBlack,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                            }
+                                            Text(
+                                                text = label,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isSelected) CinemaBlack else CinemaTextWhite,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1901,7 +2078,45 @@ fun SettingsScreen(
                                         shape = RoundedCornerShape(10.dp),
                                         colors = CardDefaults.cardColors(containerColor = CinemaDark),
                                         border = BorderStroke(1.dp, CinemaMuted.copy(alpha = 0.25f)),
-                                        modifier = Modifier.fillMaxWidth()
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .tvFocusableItem(
+                                                onClick = {
+                                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                                    val openItem = com.example.data.RezkaItem(
+                                                        id = entity.itemId,
+                                                        title = entity.title,
+                                                        subtitle = subText,
+                                                        imageUrl = if (entity.localPosterPath.isNotEmpty()) "file://${entity.localPosterPath}" else entity.imageUrl,
+                                                        rating = "Оффлайн",
+                                                        url = "",
+                                                        type = try {
+                                                            com.example.data.RezkaType.valueOf(entity.type.uppercase())
+                                                        } catch (_: Exception) {
+                                                            if (isSeries) com.example.data.RezkaType.SERIES else com.example.data.RezkaType.MOVIE
+                                                        }
+                                                    )
+                                                    onNavigateToDetail?.invoke(openItem)
+                                                },
+                                                shape = RoundedCornerShape(10.dp)
+                                            )
+                                            .clickable {
+                                                HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                                val openItem = com.example.data.RezkaItem(
+                                                    id = entity.itemId,
+                                                    title = entity.title,
+                                                    subtitle = subText,
+                                                    imageUrl = if (entity.localPosterPath.isNotEmpty()) "file://${entity.localPosterPath}" else entity.imageUrl,
+                                                    rating = "Оффлайн",
+                                                    url = "",
+                                                    type = try {
+                                                        com.example.data.RezkaType.valueOf(entity.type.uppercase())
+                                                    } catch (_: Exception) {
+                                                        if (isSeries) com.example.data.RezkaType.SERIES else com.example.data.RezkaType.MOVIE
+                                                    }
+                                                )
+                                                onNavigateToDetail?.invoke(openItem)
+                                            }
                                     ) {
                                         Row(
                                             modifier = Modifier

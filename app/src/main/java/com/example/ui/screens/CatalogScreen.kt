@@ -99,7 +99,11 @@ fun CatalogScreen(
 
     var isFiltersExpanded by rememberSaveable { mutableStateOf(false) }
 
-    val hasActiveFilters = currentSection != SectionType.LATEST ||
+    val defaultType by viewModel.defaultCatalogType.collectAsState()
+    val defaultSection by viewModel.defaultCatalogSection.collectAsState()
+
+    val hasActiveFilters = currentType != defaultType ||
+            currentSection != defaultSection ||
             currentGenre.isNotEmpty() ||
             currentYear.isNotEmpty() ||
             currentCountry.isNotEmpty()
