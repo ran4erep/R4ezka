@@ -2145,6 +2145,10 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     // Player Selection (локальная настройка, без синхронизации с облаком)
     val selectedPlayer: StateFlow<String> = RezkaService.selectedPlayer
 
+    fun clearDnsCache() {
+        SafeDns.clearCache()
+    }
+
     fun setSelectedPlayer(playerKey: String) {
         RezkaService.setSelectedPlayer(playerKey)
     }
@@ -2358,7 +2362,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                         RezkaService.markFirstLaunchAuditDone()
                     }
                     _mirrorAuditState.value = MirrorAuditUiState.Failed(
-                        "Не найдено ни одного работающего зеркала... :(\nПопробуйте указать вручную в настройках приложения"
+                        "Не найдено ни одного работающего зеркала... :(\nПопробуйте указать работающий адрес зеркала вручную в настройках."
                     )
                 }
             }

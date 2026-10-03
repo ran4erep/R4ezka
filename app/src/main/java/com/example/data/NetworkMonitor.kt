@@ -52,15 +52,18 @@ object NetworkMonitor {
             cm.registerNetworkCallback(request, object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
                     _isOnline.value = true
+                    SafeDns.clearCache()
                 }
 
                 override fun onLost(network: Network) {
                     _isOnline.value = checkCurrentConnectivity()
+                    SafeDns.clearCache()
                 }
 
                 override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
                     val hasInternet = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                     _isOnline.value = hasInternet
+                    SafeDns.clearCache()
                 }
             })
         } catch (_: Exception) {
