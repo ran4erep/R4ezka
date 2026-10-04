@@ -40,7 +40,7 @@ class RezkaApplication : Application(), ImageLoaderFactory {
 
     /**
      * Высокопроизводительный загрузчик изображений Coil с кэшированием в памяти и на диске,
-     * а также поддержкой заголовков User-Agent/Referer и обхода защиты HDRezka.
+     * аппаратными битмапами для GPU (allowHardware) и обходом блокировок.
      */
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
@@ -51,16 +51,25 @@ class RezkaApplication : Application(), ImageLoaderFactory {
             .memoryCache {
                 MemoryCache.Builder(this)
                     .maxSizePercent(0.25)
+                    .strongReferencesEnabled(true)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("image_cache"))
-                    .maxSizeBytes(100L * 1024 * 1024) // 100 MB
+                    .maxSizeBytes(250L * 1024 * 1024) // 250 MB расширенный кэш
                     .build()
             }
-            .crossfade(true)
+            .crossfade(150)
+            .allowHardware(true)
             .respectCacheHeaders(false)
             .build()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_MODERATE) {
+            com.example.data.ImagePreloaderEngine.clearCache()
+        }
     }
 }
