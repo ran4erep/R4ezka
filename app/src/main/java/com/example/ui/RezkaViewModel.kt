@@ -2145,6 +2145,24 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     // Player Selection (локальная настройка, без синхронизации с облаком)
     val selectedPlayer: StateFlow<String> = RezkaService.selectedPlayer
 
+    // DNS Preference (локальная настройка, без синхронизации с облаком)
+    val dnsPreference: StateFlow<DnsPreference> = RezkaService.dnsPreference
+    val customDnsAddress: StateFlow<String> = RezkaService.customDnsAddress
+
+    fun setDnsPreference(preference: DnsPreference, customAddress: String = "") {
+        RezkaService.setDnsPreference(preference, customAddress)
+    }
+
+    suspend fun testDnsLookup(): SafeDns.DnsTestResult = withContext(Dispatchers.IO) {
+        val host = try {
+            val url = java.net.URL(currentMirror.value)
+            url.host
+        } catch (_: Exception) {
+            "hdrezka.ag"
+        }
+        SafeDns.testLookup(host)
+    }
+
     fun clearDnsCache() {
         SafeDns.clearCache()
     }
