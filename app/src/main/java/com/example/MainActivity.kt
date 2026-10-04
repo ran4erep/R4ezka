@@ -13,6 +13,8 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import com.example.ui.navigation.LocalNavAnimatedVisibilityScope
+import com.example.ui.navigation.LocalSharedTransitionScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -230,11 +232,16 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     }
 
     CompositionLocalProvider(LocalTvShowCursor provides showTvCursor) {
-        Box(
+        @OptIn(ExperimentalSharedTransitionApi::class)
+        SharedTransitionLayout(
             modifier = Modifier
                 .fillMaxSize()
                 .background(CinemaBlack)
         ) {
+            CompositionLocalProvider(LocalSharedTransitionScope provides this) {
+                Box(
+                    modifier = Modifier.fillMaxSize()
+                ) {
         if (isTvMode) {
             // Режим Android TV: строго изолированный рендеринг активного экрана
             // Никаких скрытых мобильных Scaffold, фоновых сеток каталога или полей ввода!
@@ -412,46 +419,55 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                 },
                 containerColor = CinemaBlack
             ) { paddingValues ->
-                // Crossfade content transition for ultra-smooth shifts
-                Crossfade(
-                    targetState = currentTab,
-                    label = "nav_transition",
+                AnimatedVisibility(
+                    visible = navigationStack.isEmpty(),
+                    enter = fadeIn(tween(250)),
+                    exit = fadeOut(tween(200)),
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(
                             top = paddingValues.calculateTopPadding(),
                             bottom = paddingValues.calculateBottomPadding()
                         )
-                ) { tab ->
-                    when (tab) {
-                        NavTab.FEED -> {
-                            CatalogScreen(
-                                viewModel = viewModel,
-                                onNavigateToDetail = { item ->
-                                    pushToStack(ScreenState.Detail(item))
-                                },
-                                onNavigateToThematic = { title, url ->
-                                    pushToStack(ScreenState.ThematicList(title, url))
-                                },
-                                onNavigateToSettings = { isSettingsOpen = true },
-                                isTopScreen = navigationStack.isEmpty() && !isSettingsOpen
-                            )
-                        }
-                        NavTab.FAVORITES -> {
-                            FavoritesScreen(
-                                viewModel = viewModel,
-                                onNavigateToDetail = { item ->
-                                    pushToStack(ScreenState.Detail(item))
+                ) {
+                    CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
+                        // Crossfade content transition for ultra-smooth shifts
+                        Crossfade(
+                            targetState = currentTab,
+                            label = "nav_transition",
+                            modifier = Modifier.fillMaxSize()
+                        ) { tab ->
+                            when (tab) {
+                                NavTab.FEED -> {
+                                    CatalogScreen(
+                                        viewModel = viewModel,
+                                        onNavigateToDetail = { item ->
+                                            pushToStack(ScreenState.Detail(item))
+                                        },
+                                        onNavigateToThematic = { title, url ->
+                                            pushToStack(ScreenState.ThematicList(title, url))
+                                        },
+                                        onNavigateToSettings = { isSettingsOpen = true },
+                                        isTopScreen = navigationStack.isEmpty() && !isSettingsOpen
+                                    )
                                 }
-                            )
-                        }
-                        NavTab.HISTORY -> {
-                            HistoryScreen(
-                                viewModel = viewModel,
-                                onNavigateToDetail = { item ->
-                                    pushToStack(ScreenState.Detail(item))
+                                NavTab.FAVORITES -> {
+                                    FavoritesScreen(
+                                        viewModel = viewModel,
+                                        onNavigateToDetail = { item ->
+                                            pushToStack(ScreenState.Detail(item))
+                                        }
+                                    )
                                 }
-                            )
+                                NavTab.HISTORY -> {
+                                    HistoryScreen(
+                                        viewModel = viewModel,
+                                        onNavigateToDetail = { item ->
+                                            pushToStack(ScreenState.Detail(item))
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -495,48 +511,50 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                 label = "stack_transition",
                 modifier = Modifier.fillMaxSize()
             ) { topState ->
-                if (topState != null) {
-                    when (topState) {
-                        is ScreenState.Detail -> {
-                            DetailScreen(
-                                viewModel = viewModel,
-                                item = topState.item,
-                                initialTranslatorId = topState.initialTranslatorId,
-                                onBack = { popBackStack() },
-                                onNavigateToThematic = { name, url ->
-                                    if (url.contains("/person/")) {
-                                        pushToStack(ScreenState.PersonProfile(name, url))
-                                    } else {
-                                        pushToStack(ScreenState.ThematicList(name, url))
-                                    }
-                                },
-                                onNavigateToDetail = { targetItem ->
-                                    pushToStack(ScreenState.Detail(targetItem))
-                                },
-                                isTvMode = false
-                            )
-                        }
-                        is ScreenState.ThematicList -> {
-                            ThematicListScreen(
-                                title = topState.title,
-                                url = topState.url,
-                                onBack = { popBackStack() },
-                                onNavigateToDetail = { item ->
-                                    pushToStack(ScreenState.Detail(item))
-                                },
-                                viewModel = viewModel
-                            )
-                        }
-                        is ScreenState.PersonProfile -> {
-                            PersonProfileScreen(
-                                name = topState.name,
-                                url = topState.url,
-                                onBack = { popBackStack() },
-                                onNavigateToDetail = { item ->
-                                    pushToStack(ScreenState.Detail(item))
-                                },
-                                viewModel = viewModel
-                            )
+                CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this@AnimatedContent) {
+                    if (topState != null) {
+                        when (topState) {
+                            is ScreenState.Detail -> {
+                                DetailScreen(
+                                    viewModel = viewModel,
+                                    item = topState.item,
+                                    initialTranslatorId = topState.initialTranslatorId,
+                                    onBack = { popBackStack() },
+                                    onNavigateToThematic = { name, url ->
+                                        if (url.contains("/person/")) {
+                                            pushToStack(ScreenState.PersonProfile(name, url))
+                                        } else {
+                                            pushToStack(ScreenState.ThematicList(name, url))
+                                        }
+                                    },
+                                    onNavigateToDetail = { targetItem ->
+                                        pushToStack(ScreenState.Detail(targetItem))
+                                    },
+                                    isTvMode = false
+                                )
+                            }
+                            is ScreenState.ThematicList -> {
+                                ThematicListScreen(
+                                    title = topState.title,
+                                    url = topState.url,
+                                    onBack = { popBackStack() },
+                                    onNavigateToDetail = { item ->
+                                        pushToStack(ScreenState.Detail(item))
+                                    },
+                                    viewModel = viewModel
+                                )
+                            }
+                            is ScreenState.PersonProfile -> {
+                                PersonProfileScreen(
+                                    name = topState.name,
+                                    url = topState.url,
+                                    onBack = { popBackStack() },
+                                    onNavigateToDetail = { item ->
+                                        pushToStack(ScreenState.Detail(item))
+                                    },
+                                    viewModel = viewModel
+                                )
+                            }
                         }
                     }
                 }
@@ -559,8 +577,10 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                     }
                 )
             }
-        }
-    }
+                } // Close Box
+            } // Close CompositionLocalProvider(LocalSharedTransitionScope)
+        } // Close SharedTransitionLayout
+    } // Close CompositionLocalProvider(LocalTvShowCursor)
 }
 
 @Composable

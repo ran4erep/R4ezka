@@ -63,6 +63,7 @@ import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.example.data.*
+import com.example.ui.navigation.sharedPosterElement
 import com.example.ui.DetailState
 import com.example.ui.RezkaViewModel
 import com.example.ui.components.FallingSkullsBufferingOverlay
@@ -557,9 +558,10 @@ fun DetailScreen(
     ) {
         when (val state = displayState) {
             is DetailState.Loading -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
-                }
+                DetailLoadingSkeleton(
+                    item = item,
+                    onBack = handleBack
+                )
             }
             is DetailState.Error -> {
                 Column(
@@ -618,6 +620,7 @@ fun DetailScreen(
 
                 // Automatically restore user's saved selection (translator, season, episode) or deep linked translator
                 LaunchedEffect(detail) {
+                    ImagePreloaderEngine.preloadDetailImages(context, detail)
                     val isOfflineContext = !NetworkMonitor.isOnline.value ||
                         (item.url.isBlank() && item.rating == "Оффлайн") ||
                         detail.rating == "Оффлайн" ||
@@ -896,7 +899,9 @@ fun DetailScreen(
                                         model = detail.imageUrl.ifEmpty { item.imageUrl },
                                         contentDescription = detail.title,
                                         contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .sharedPosterElement(key = item.id)
                                     )
                                 }
 
@@ -3260,6 +3265,137 @@ fun CommentUserAvatar(
                 color = CinemaTextWhite,
                 fontWeight = FontWeight.Bold,
                 fontSize = 14.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun DetailLoadingSkeleton(
+    item: RezkaItem,
+    onBack: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(CinemaBlack)
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // 1. Backdrop
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(250.dp)
+            ) {
+                AsyncImage(
+                    model = item.imageUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colorStops = arrayOf(
+                                    0.0f to Color.Black.copy(alpha = 0.5f),
+                                    0.5f to Color.Transparent,
+                                    1.0f to CinemaBlack
+                                )
+                            )
+                        )
+                )
+            }
+
+            // 2. Poster + Titles Row with Shared Poster Element
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .offset(y = (-44).dp)
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Card(
+                    modifier = Modifier
+                        .width(115.dp)
+                        .aspectRatio(0.68f)
+                        .clip(RoundedCornerShape(10.dp)),
+                    shape = RoundedCornerShape(10.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                ) {
+                    AsyncImage(
+                        model = item.imageUrl,
+                        contentDescription = item.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .sharedPosterElement(key = item.id)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(14.dp))
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(top = 6.dp)
+                ) {
+                    Text(
+                        text = item.title,
+                        color = CinemaTextWhite,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Black,
+                        lineHeight = 24.sp
+                    )
+                    if (item.subtitle.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = item.subtitle,
+                            color = CinemaTextGray,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+
+            // 3. Compact Loading Indicator
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(
+                        color = CinemaPrimary,
+                        modifier = Modifier.size(36.dp),
+                        strokeWidth = 3.dp
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = "Загрузка информации о фильме...",
+                        color = CinemaTextGray,
+                        fontSize = 14.sp
+                    )
+                }
+            }
+        }
+
+        // Back button floating top-left
+        IconButton(
+            onClick = onBack,
+            modifier = Modifier
+                .statusBarsPadding()
+                .padding(8.dp)
+                .size(40.dp)
+                .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Назад",
+                tint = CinemaTextWhite,
+                modifier = Modifier.size(20.dp)
             )
         }
     }

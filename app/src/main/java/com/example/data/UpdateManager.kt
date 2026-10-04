@@ -39,6 +39,11 @@ object UpdateManager {
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
 
+    data class ReleaseEntry(
+        val tag: String,
+        val changelog: String
+    )
+
     fun isNewerVersion(current: String, latest: String): Boolean {
         val curClean = current.trim().removePrefix("v").removePrefix("V")
         val latClean = latest.trim().removePrefix("v").removePrefix("V")
@@ -49,28 +54,71 @@ object UpdateManager {
 
         val maxLength = maxOf(curParts.size, latParts.size)
         for (i in 0 until maxLength) {
-            val curVal = curParts.getOrNull(i)?.toIntOrNull() ?: 0
-            val latVal = latParts.getOrNull(i)?.toIntOrNull() ?: 0
+            val curVal = curParts.getOrNull(i)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 0
+            val latVal = latParts.getOrNull(i)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 0
             if (latVal > curVal) return true
             if (curVal > latVal) return false
         }
         return false
     }
 
+    fun buildAggregatedChangelog(releases: List<ReleaseEntry>): String? {
+        if (releases.isEmpty()) return null
+
+        val nonEmpty = releases.map {
+            it.copy(changelog = it.changelog.replace("\r\n", "\n").trim())
+        }.filter { it.changelog.isNotBlank() }
+
+        if (nonEmpty.isEmpty()) return null
+
+        // Если только одна доступная версия новее текущей — сохраняем исходный текст без изменений
+        if (nonEmpty.size == 1) {
+            return nonEmpty.first().changelog
+        }
+
+        // Если версий несколько (пользователь пропустил промежуточные релизы) — конкатенируем с заголовками версий
+        val sb = StringBuilder(nonEmpty.sumOf { it.changelog.length + 32 })
+        for (rel in nonEmpty) {
+            if (sb.isNotEmpty()) {
+                sb.append("\n\n")
+            }
+            val tag = rel.tag.trim()
+            val cleanTag = tag.removePrefix("v").removePrefix("V")
+            val body = rel.changelog
+
+            val firstLine = body.lineSequence().firstOrNull()?.trim().orEmpty()
+            val alreadyHasHeader = firstLine.startsWith(tag, ignoreCase = true) ||
+                    firstLine.startsWith("v$cleanTag", ignoreCase = true) ||
+                    firstLine.startsWith(cleanTag, ignoreCase = true) ||
+                    firstLine.contains(tag, ignoreCase = true)
+
+            if (!alreadyHasHeader && tag.isNotBlank()) {
+                sb.append(tag).append(":\n")
+            }
+            sb.append(body)
+        }
+        return sb.toString().trim().ifBlank { null }
+    }
+
+    private fun extractChangelogFromElement(markdownEl: org.jsoup.nodes.Element?): String {
+        if (markdownEl == null) return ""
+        return try {
+            val listItems = markdownEl.select("li")
+            if (listItems.isNotEmpty()) {
+                listItems.joinToString("\n") { "• " + it.text().trim() }
+            } else {
+                markdownEl.wholeText().trim()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse changelog element", e)
+            ""
+        }
+    }
+
     private fun extractChangelogFromHtml(html: String): String {
         return try {
             val doc = Jsoup.parse(html)
-            val markdownEl = doc.selectFirst(".markdown-body")
-            if (markdownEl != null) {
-                val listItems = markdownEl.select("li")
-                if (listItems.isNotEmpty()) {
-                    listItems.joinToString("\n") { "• " + it.text().trim() }
-                } else {
-                    markdownEl.wholeText().trim()
-                }
-            } else {
-                ""
-            }
+            extractChangelogFromElement(doc.selectFirst(".markdown-body"))
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse changelog HTML", e)
             ""
@@ -91,10 +139,10 @@ object UpdateManager {
             val maxAttempts = 3
             while (attempt < maxAttempts) {
                 attempt++
-                // Стратегия 1: GitHub API (api.github.com)
+                // Стратегия 1: GitHub API (api.github.com/repos/.../releases) для получения всех релизов
                 try {
                     val request = Request.Builder()
-                        .url("https://api.github.com/repos/ran4erep/R4ezka/releases/latest")
+                        .url("https://api.github.com/repos/ran4erep/R4ezka/releases?per_page=30")
                         .header("User-Agent", "R4ezka-App-Updater")
                         .header("Accept", "application/vnd.github.v3+json")
                         .build()
@@ -104,31 +152,53 @@ object UpdateManager {
                     }
 
                     if (isSuccess && !bodyString.isNullOrBlank()) {
-                        val json = JSONObject(bodyString)
-                        val tagName = json.optString("tag_name", "").trim()
-                        val changelog = json.optString("body", "")
+                        val jsonArray = org.json.JSONArray(bodyString)
+                        if (jsonArray.length() > 0) {
+                            var latestTagName: String? = null
+                            var downloadUrl: String? = null
+                            val newerReleases = mutableListOf<ReleaseEntry>()
 
-                        if (tagName.isNotEmpty()) {
-                            if (isNewerVersion(currentVersion, tagName)) {
-                                val assetsArray = json.optJSONArray("assets")
-                                var downloadUrl: String? = null
-                                if (assetsArray != null) {
-                                    for (i in 0 until assetsArray.length()) {
-                                        val asset = assetsArray.getJSONObject(i)
-                                        val assetName = asset.optString("name", "")
-                                        if (assetName.endsWith(".apk", ignoreCase = true)) {
-                                            downloadUrl = asset.optString("browser_download_url", "")
-                                            break
+                            for (i in 0 until jsonArray.length()) {
+                                val relJson = jsonArray.optJSONObject(i) ?: continue
+                                if (relJson.optBoolean("draft", false)) continue
+
+                                val tagName = relJson.optString("tag_name", "").trim()
+                                if (tagName.isEmpty()) continue
+
+                                if (isNewerVersion(currentVersion, tagName)) {
+                                    if (latestTagName == null) {
+                                        latestTagName = tagName
+                                        val assetsArray = relJson.optJSONArray("assets")
+                                        if (assetsArray != null) {
+                                            for (j in 0 until assetsArray.length()) {
+                                                val asset = assetsArray.getJSONObject(j)
+                                                val assetName = asset.optString("name", "")
+                                                if (assetName.endsWith(".apk", ignoreCase = true)) {
+                                                    downloadUrl = asset.optString("browser_download_url", "")
+                                                    break
+                                                }
+                                            }
+                                        }
+                                        if (downloadUrl.isNullOrBlank()) {
+                                            downloadUrl = "https://github.com/ran4erep/R4ezka/releases/download/$tagName/r4ezka.apk"
                                         }
                                     }
+
+                                    val body = relJson.optString("body", "")
+                                    newerReleases.add(ReleaseEntry(tag = tagName, changelog = body))
+                                } else {
+                                    if (latestTagName != null) {
+                                        break
+                                    }
                                 }
-                                if (downloadUrl.isNullOrBlank()) {
-                                    downloadUrl = "https://github.com/ran4erep/R4ezka/releases/download/$tagName/r4ezka.apk"
-                                }
+                            }
+
+                            if (latestTagName != null && downloadUrl != null) {
+                                val combinedChangelog = buildAggregatedChangelog(newerReleases)
                                 _updateState.value = UpdateState.UpdateAvailable(
-                                    latestVersion = tagName,
+                                    latestVersion = latestTagName,
                                     downloadUrl = downloadUrl,
-                                    changelog = changelog
+                                    changelog = combinedChangelog
                                 )
                                 return@withContext
                             } else {
@@ -141,30 +211,94 @@ object UpdateManager {
                     Log.w(TAG, "GitHub API update check attempt $attempt error: ${e.message}")
                 }
 
-                // Стратегия 2 (Резервная): Прямой переход по ссылке /releases/latest без ограничений API
+                // Стратегия 2 (Резервная): Прямой запрос к HTML странице релизов https://github.com/ran4erep/R4ezka/releases
                 try {
                     val webRequest = Request.Builder()
-                        .url("https://github.com/ran4erep/R4ezka/releases/latest")
+                        .url("https://github.com/ran4erep/R4ezka/releases")
                         .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36")
                         .build()
 
                     client.newCall(webRequest).execute().use { response ->
                         if (response.isSuccessful) {
-                            val finalUrl = response.request.url.toString()
-                            val tagName = finalUrl.substringAfterLast("/tag/").substringAfterLast("/").trim()
-                            if (tagName.isNotEmpty() && tagName != "latest") {
-                                if (isNewerVersion(currentVersion, tagName)) {
-                                    val html = response.body?.string().orEmpty()
-                                    val changelog = extractChangelogFromHtml(html)
-                                    val downloadUrl = "https://github.com/ran4erep/R4ezka/releases/download/$tagName/r4ezka.apk"
+                            val html = response.body?.string().orEmpty()
+                            val doc = Jsoup.parse(html)
+                            val sections = doc.select("section[id^=release-], section[data-release-anchor]")
+
+                            if (sections.isNotEmpty()) {
+                                var latestTagName: String? = null
+                                var downloadUrl: String? = null
+                                val newerReleases = mutableListOf<ReleaseEntry>()
+
+                                for (section in sections) {
+                                    var tagName = section.id().removePrefix("release-").trim()
+                                    if (tagName.isEmpty()) {
+                                        tagName = section.attr("data-release-anchor").removePrefix("release-").trim()
+                                    }
+                                    if (tagName.isEmpty()) {
+                                        tagName = section.selectFirst("a[href*=/releases/tag/]")
+                                            ?.attr("href")?.substringAfterLast("/tag/")?.trim().orEmpty()
+                                    }
+                                    if (tagName.isEmpty()) continue
+
+                                    if (isNewerVersion(currentVersion, tagName)) {
+                                        if (latestTagName == null) {
+                                            latestTagName = tagName
+                                            val apkLink = section.selectFirst("a[href$=\".apk\"]")?.attr("href")
+                                            downloadUrl = if (!apkLink.isNullOrBlank()) {
+                                                if (apkLink.startsWith("http")) apkLink else "https://github.com$apkLink"
+                                            } else {
+                                                "https://github.com/ran4erep/R4ezka/releases/download/$tagName/r4ezka.apk"
+                                            }
+                                        }
+
+                                        val markdownEl = section.selectFirst(".markdown-body")
+                                        val changelog = extractChangelogFromElement(markdownEl)
+                                        newerReleases.add(ReleaseEntry(tag = tagName, changelog = changelog))
+                                    } else {
+                                        if (latestTagName != null) {
+                                            break
+                                        }
+                                    }
+                                }
+
+                                if (latestTagName != null && downloadUrl != null) {
+                                    val combinedChangelog = buildAggregatedChangelog(newerReleases)
                                     _updateState.value = UpdateState.UpdateAvailable(
-                                        latestVersion = tagName,
+                                        latestVersion = latestTagName,
                                         downloadUrl = downloadUrl,
-                                        changelog = changelog.ifBlank { null }
+                                        changelog = combinedChangelog
                                     )
                                     return@withContext
                                 } else {
                                     return@withContext
+                                }
+                            } else {
+                                // Если секции не найдены в HTML — крайний резерв: запрос на /releases/latest
+                                val singleFallback = Request.Builder()
+                                    .url("https://github.com/ran4erep/R4ezka/releases/latest")
+                                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36")
+                                    .build()
+
+                                client.newCall(singleFallback).execute().use { fbResponse ->
+                                    if (fbResponse.isSuccessful) {
+                                        val finalUrl = fbResponse.request.url.toString()
+                                        val tagName = finalUrl.substringAfterLast("/tag/").substringAfterLast("/").trim()
+                                        if (tagName.isNotEmpty() && tagName != "latest") {
+                                            if (isNewerVersion(currentVersion, tagName)) {
+                                                val fbHtml = fbResponse.body?.string().orEmpty()
+                                                val changelog = extractChangelogFromHtml(fbHtml)
+                                                val fbDownloadUrl = "https://github.com/ran4erep/R4ezka/releases/download/$tagName/r4ezka.apk"
+                                                _updateState.value = UpdateState.UpdateAvailable(
+                                                    latestVersion = tagName,
+                                                    downloadUrl = fbDownloadUrl,
+                                                    changelog = changelog.ifBlank { null }
+                                                )
+                                                return@withContext
+                                            } else {
+                                                return@withContext
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

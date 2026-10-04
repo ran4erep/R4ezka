@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.*
+import com.example.ui.navigation.sharedPosterElement
 import com.example.ui.util.rememberSavedLazyGridState
 import com.example.ui.CatalogState
 import com.example.ui.RezkaViewModel
@@ -802,6 +803,13 @@ fun CatalogScreen(
                             }
                         }
 
+                        // Упреждающая фоновая предзагрузка постеров (ImagePreloaderEngine) для сверхплавного 60/120 FPS скролла
+                        LaunchedEffect(displayedItems) {
+                            if (displayedItems.isNotEmpty()) {
+                                ImagePreloaderEngine.preloadCatalogItems(context, displayedItems, maxCount = 16)
+                            }
+                        }
+
                         // Если выбран фильтр по стране и найдено мало карточек, автоматически подгружаем следующую страницу
                         LaunchedEffect(displayedItems.size, currentCountry, isEndReached, isLoadingMore) {
                             if (isOnline && currentCountry.isNotEmpty() && displayedItems.size < 20 && !isEndReached && !isLoadingMore && searchInput.isEmpty()) {
@@ -927,6 +935,14 @@ fun CatalogScreen(
                             LaunchedEffect(gridState.isScrollInProgress) {
                                 if (gridState.isScrollInProgress && searchInput.isNotBlank()) {
                                     viewModel.commitSearchQuery(searchInput)
+                                }
+                            }
+
+                            val firstVisibleIdx by remember { derivedStateOf { gridState.firstVisibleItemIndex } }
+                            LaunchedEffect(firstVisibleIdx) {
+                                if (firstVisibleIdx > 0 && firstVisibleIdx + 8 < displayedItems.size) {
+                                    val nextSlice = displayedItems.drop(firstVisibleIdx + 4).take(12)
+                                    ImagePreloaderEngine.preloadCatalogItems(context, nextSlice, maxCount = 12)
                                 }
                             }
 
@@ -1115,7 +1131,7 @@ fun RezkaItemCard(
             .tvFocusableItem(
                 onClick = onClick,
                 onFocused = onFocused,
-                scaleFactor = 1.0f,
+                scaleFactor = if (isUltraDense) 1.02f else if (isDense) 1.035f else 1.05f,
                 shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp),
                 focusRequester = focusRequester
             )
@@ -1139,7 +1155,9 @@ fun RezkaItemCard(
                     model = item.imageUrl,
                     contentDescription = item.title,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .sharedPosterElement(key = item.id)
                 )
 
                 // Bottom fade overlay to blend poster with black text block
