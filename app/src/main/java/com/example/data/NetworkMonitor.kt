@@ -31,6 +31,20 @@ object NetworkMonitor {
         }
     }
 
+    /**
+     * Определяет, активно ли на устройстве VPN-соединение (WireGuard, OpenVPN, AdGuard, Tun2Socks и т.д.)
+     */
+    fun isVpnActive(): Boolean {
+        val cm = connectivityManager ?: return false
+        return try {
+            val activeNetwork = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(activeNetwork) ?: return false
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     fun init(context: Context) {
         if (isInitialized) return
         isInitialized = true

@@ -52,6 +52,8 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.R
 import com.example.data.DownloadHelper
+import com.example.data.DnsPreference
+import com.example.data.SafeDns
 import com.example.data.OfflineMediaEntity
 import com.example.data.RezkaService
 import com.example.data.RezkaType
@@ -93,6 +95,12 @@ fun SettingsScreen(
     val cardGridMode by viewModel.cardGridMode.collectAsState()
     val defaultCatalogType by viewModel.defaultCatalogType.collectAsState()
     val defaultCatalogSection by viewModel.defaultCatalogSection.collectAsState()
+    val dnsPreference by viewModel.dnsPreference.collectAsState()
+    val customDnsAddress by viewModel.customDnsAddress.collectAsState()
+    var customDnsInput by remember(customDnsAddress) { mutableStateOf(customDnsAddress) }
+    var dnsDropdownExpanded by remember { mutableStateOf(false) }
+    var isTestingDns by remember { mutableStateOf(false) }
+    var dnsCheckResult by remember { mutableStateOf<String?>(null) }
     val presetMirrors = viewModel.presetMirrors
 
     var customMirrorInput by remember(currentMirror) { mutableStateOf(currentMirror) }
@@ -212,7 +220,7 @@ fun SettingsScreen(
                 .testTag("mirrors_category_card")
         ) {
             Column {
-                // Header аккордеона
+                // Header аккордеона Сеть
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -223,7 +231,7 @@ fun SettingsScreen(
                             scaleFactor = 1.0f
                         )
                         .padding(16.dp)
-                        .testTag("settings_accordion_mirrors")
+                        .testTag("settings_accordion_network")
                 ) {
                     Box(
                         modifier = Modifier
@@ -240,7 +248,7 @@ fun SettingsScreen(
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
-                        text = "Зеркала",
+                        text = "Сеть",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         color = CinemaTextWhite,
@@ -598,6 +606,282 @@ fun SettingsScreen(
                             Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Сохранить и применить", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        }
+
+                        // ==========================================
+                        // РАЗДЕЛ: DNS
+                        // ==========================================
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Divider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Text(
+                            text = "DNS",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = CinemaPrimary,
+                            letterSpacing = 1.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Банальный выпадающий список выбора DNS
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(CinemaCard)
+                                    .tvFocusableItem(
+                                        onClick = {
+                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                            dnsDropdownExpanded = true
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.0f
+                                    )
+                                    .clickable {
+                                        HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                        dnsDropdownExpanded = true
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                                    .testTag("dns_dropdown_trigger"),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Dns,
+                                        contentDescription = null,
+                                        tint = CinemaPrimary,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = dnsPreference.title,
+                                        color = CinemaTextWhite,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                                Icon(
+                                    imageVector = if (dnsDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                    contentDescription = "Выбор DNS",
+                                    tint = CinemaPrimary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
+                            DropdownMenu(
+                                expanded = dnsDropdownExpanded,
+                                onDismissRequest = { dnsDropdownExpanded = false },
+                                modifier = Modifier
+                                    .background(CinemaDark)
+                                    .fillMaxWidth(0.85f)
+                            ) {
+                                DnsPreference.entries.forEach { pref ->
+                                    val isSelected = (dnsPreference == pref)
+                                    DropdownMenuItem(
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = if (isSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                                                contentDescription = null,
+                                                tint = if (isSelected) CinemaPrimary else CinemaTextGray,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        },
+                                        text = {
+                                            Text(
+                                                text = pref.title,
+                                                color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                fontSize = 14.sp
+                                            )
+                                        },
+                                        onClick = {
+                                            HapticEngine.get().perform(HapticType.SELECTION)
+                                            dnsCheckResult = null
+                                            viewModel.setDnsPreference(pref, if (pref == DnsPreference.CUSTOM) customDnsInput else "")
+                                            dnsDropdownExpanded = false
+                                        },
+                                        modifier = Modifier.tvFocusableItem(
+                                            onClick = {
+                                                HapticEngine.get().perform(HapticType.SELECTION)
+                                                dnsCheckResult = null
+                                                viewModel.setDnsPreference(pref, if (pref == DnsPreference.CUSTOM) customDnsInput else "")
+                                                dnsDropdownExpanded = false
+                                            },
+                                            scaleFactor = 1.0f
+                                        )
+                                    )
+                                }
+                            }
+                        }
+
+                        // Поле ввода для ручного DNS (только при Свой DNS)
+                        AnimatedVisibility(
+                            visible = (dnsPreference == DnsPreference.CUSTOM),
+                            enter = expandVertically() + fadeIn(),
+                            exit = shrinkVertically() + fadeOut()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 10.dp)
+                            ) {
+                                val customDnsFocusRequester = remember { FocusRequester() }
+                                val saveCustomDnsAction = {
+                                    HapticEngine.get().perform(HapticType.CONFIRM)
+                                    val input = customDnsInput.trim()
+                                    if (input.isBlank()) {
+                                        Toast.makeText(context, "Введите IP или DoH URL", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        viewModel.setDnsPreference(DnsPreference.CUSTOM, input)
+                                        dnsCheckResult = "DNS сохранён: $input"
+                                    }
+                                }
+
+                                TvRemoteInputField(
+                                    value = customDnsInput,
+                                    onValueChange = { customDnsInput = it },
+                                    placeholder = "77.88.8.8 или https://...",
+                                    onCommit = saveCustomDnsAction,
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(10.dp),
+                                    containerColor = CinemaCard,
+                                    focusRequester = customDnsFocusRequester,
+                                    testTag = "custom_dns_input",
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Button(
+                                    onClick = saveCustomDnsAction,
+                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .tvFocusableItem(
+                                            onClick = saveCustomDnsAction,
+                                            shape = RoundedCornerShape(10.dp),
+                                            scaleFactor = 1.0f
+                                        )
+                                        .testTag("save_custom_dns_button")
+                                ) {
+                                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Применить DNS", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Кнопки тестирования и сброса кэша
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            val testDnsAction: () -> Unit = {
+                                HapticEngine.get().perform(HapticType.CONFIRM)
+                                isTestingDns = true
+                                dnsCheckResult = null
+                                coroutineScope.launch {
+                                    val result = viewModel.testDnsLookup()
+                                    isTestingDns = false
+                                    dnsCheckResult = if (result.success) {
+                                        val ipsStr = if (result.ips.isNotEmpty()) " • IP: ${result.ips.joinToString(", ")}" else ""
+                                        "Отклик: ${result.durationMs} мс • ${result.providerUsed}$ipsStr"
+                                    } else {
+                                        "Недоступно: ${result.errorMessage ?: "ошибка DNS"}"
+                                    }
+                                }
+                            }
+
+                            Button(
+                                onClick = testDnsAction,
+                                enabled = !isTestingDns,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = CinemaMuted.copy(alpha = 0.5f),
+                                    contentColor = CinemaTextWhite
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .tvFocusableItem(
+                                        onClick = testDnsAction,
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.0f
+                                    )
+                                    .testTag("test_dns_button")
+                            ) {
+                                if (isTestingDns) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        color = CinemaTextWhite,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Проверка...", fontSize = 12.sp)
+                                } else {
+                                    Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Проверить DNS", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+
+                            val clearCacheAction = {
+                                HapticEngine.get().perform(HapticType.CONFIRM)
+                                viewModel.clearDnsCache()
+                                dnsCheckResult = "Кэш DNS успешно очищен"
+                            }
+
+                            OutlinedButton(
+                                onClick = clearCacheAction,
+                                border = BorderStroke(1.dp, CinemaMuted),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = CinemaTextWhite),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .tvFocusableItem(
+                                        onClick = clearCacheAction,
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.0f
+                                    )
+                                    .testTag("clear_dns_cache_button")
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Сброс кэша", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+
+                        AnimatedVisibility(visible = dnsCheckResult != null) {
+                            dnsCheckResult?.let { text ->
+                                val isOk = text.startsWith("Отклик:") || text.contains("очищен") || text.contains("сохранён")
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp)
+                                        .background(
+                                            if (isOk) CinemaGreen.copy(alpha = 0.12f) else CinemaPrimary.copy(alpha = 0.12f),
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                        .testTag("dns_check_result")
+                                ) {
+                                    Text(
+                                        text = text,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (isOk) CinemaGreen else CinemaPrimary
+                                    )
+                                }
+                            }
                         }
                     }
                 }
