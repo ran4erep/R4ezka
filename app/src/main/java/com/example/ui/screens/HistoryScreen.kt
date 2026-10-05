@@ -230,7 +230,8 @@ fun HistoryCardItem(
                 .tvFocusableItem(
                     onClick = onClick, 
                     scaleFactor = 1.015f, 
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    hideBorder = isBouncing
                 )
                 .testTag("history_item_${history.itemId}"),
             colors = CardDefaults.cardColors(containerColor = CinemaDark),

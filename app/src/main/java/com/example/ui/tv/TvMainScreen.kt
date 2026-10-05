@@ -1768,7 +1768,8 @@ private fun TvMovieCard(
                 scaleFactor = 1.0f,
                 focusedBorderWidth = if (isUltraDense) 1.5.dp else if (isDense) 2.dp else 2.dp,
                 shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp),
-                focusRequester = focusRequester
+                focusRequester = focusRequester,
+                hideBorder = isBouncing
             )
             .testTag("tv_movie_card_${item.id}"),
         colors = CardDefaults.cardColors(containerColor = CinemaDark),

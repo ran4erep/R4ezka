@@ -191,6 +191,18 @@ fun TvDetailContent(
             )
         }
 
+        val contentUnfoldProgress = remember { androidx.compose.animation.core.Animatable(0f) }
+        LaunchedEffect(detail.id) {
+            contentUnfoldProgress.snapTo(0f)
+            contentUnfoldProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(
+                    durationMillis = 520,
+                    easing = androidx.compose.animation.core.CubicBezierEasing(0.05f, 0.70f, 0.10f, 1.0f)
+                )
+            )
+        }
+
         // 2. Основная рабочая область: Двухпанельный ТВ-лейаут (Адаптивный под любые размеры экрана)
         Row(
             modifier = Modifier
@@ -393,6 +405,10 @@ fun TvDetailContent(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
+                    .graphicsLayer {
+                        translationX = (1f - contentUnfoldProgress.value) * 60.dp.toPx()
+                        alpha = contentUnfoldProgress.value
+                    }
                     .testTag("tv_detail_right_column"),
                 contentPadding = PaddingValues(bottom = 36.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
