@@ -81,6 +81,8 @@ import kotlinx.coroutines.launch
 
 val LocalTvShowCursor = staticCompositionLocalOf { true }
 
+val LocalCardClickBoundsTracker = staticCompositionLocalOf<(androidx.compose.ui.geometry.Rect) -> Unit> { {} }
+
 /**
  * Высокопроизводительный мерцающий неоновый ТВ-курсор вокруг выбранного элемента
  * с поддержкой динамической анимации вспышки при подтверждении выбора с пульта.
@@ -97,9 +99,10 @@ fun Modifier.tvPulsingFocusBorder(
     shape: Shape = RoundedCornerShape(12.dp),
     baseBorderWidth: Dp = 2.dp,
     inset: Dp = 0.dp,
-    selectionBurstProgress: Float = 0f
+    selectionBurstProgress: Float = 0f,
+    hideBorder: Boolean = false
 ): Modifier {
-    if ((!isFocused && selectionBurstProgress <= 0f) || !LocalTvShowCursor.current) return this
+    if (hideBorder || (!isFocused && selectionBurstProgress <= 0f) || !LocalTvShowCursor.current) return this
 
     val infiniteTransition = rememberInfiniteTransition(label = "tv_cursor_pulse")
 
@@ -230,7 +233,8 @@ fun Modifier.tvFocusableItem(
     focusRequester: FocusRequester? = null,
     lazyListState: LazyListState? = null,
     targetViewportY: Float = 220f,
-    inset: Dp = 0.dp
+    inset: Dp = 0.dp,
+    hideBorder: Boolean = false
 ): Modifier = composed {
     var isFocused by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }
@@ -255,6 +259,15 @@ fun Modifier.tvFocusableItem(
     )
 
     val haptic = remember { com.example.ui.haptics.HapticEngine.get() }
+    val boundsTracker = LocalCardClickBoundsTracker.current
+
+    val recordCardBounds = {
+        try {
+            if (itemCoordinates?.isAttached == true) {
+                itemCoordinates?.boundsInWindow()?.let { boundsTracker(it) }
+            }
+        } catch (_: Throwable) {}
+    }
 
     fun triggerSelectionAnimation() {
         coroutineScope.launch {
@@ -317,6 +330,7 @@ fun Modifier.tvFocusableItem(
             interactionSource = remember { MutableInteractionSource() },
             indication = null,
             onClick = {
+                recordCardBounds()
                 triggerSelectionAnimation()
                 haptic.perform(com.example.ui.haptics.HapticType.SOFT_CLICK)
                 onClick()
@@ -329,9 +343,11 @@ fun Modifier.tvFocusableItem(
                 android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                     if (keyEvent.type == KeyEventType.KeyDown) {
                         isPressed = true
+                        recordCardBounds()
                         true
                     } else if (keyEvent.type == KeyEventType.KeyUp) {
                         isPressed = false
+                        recordCardBounds()
                         triggerSelectionAnimation()
                         haptic.perform(com.example.ui.haptics.HapticType.SOFT_CLICK)
                         onClick()
@@ -347,7 +363,8 @@ fun Modifier.tvFocusableItem(
             shape = shape,
             baseBorderWidth = focusedBorderWidth,
             inset = inset,
-            selectionBurstProgress = selectionBurstAnim.value
+            selectionBurstProgress = selectionBurstAnim.value,
+            hideBorder = hideBorder
         )
 }
 

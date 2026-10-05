@@ -895,10 +895,26 @@ fun DetailScreen(
                     )
                 } else {
                     // ---- SCROLLABLE MOBILE DETAIL PAGE (with TV/D-Pad support) ----
+                    val mobileUnfoldProgress = remember { androidx.compose.animation.core.Animatable(0f) }
+                    LaunchedEffect(detail.id) {
+                        mobileUnfoldProgress.snapTo(0f)
+                        mobileUnfoldProgress.animateTo(
+                            targetValue = 1f,
+                            animationSpec = tween(
+                                durationMillis = 520,
+                                easing = androidx.compose.animation.core.CubicBezierEasing(0.05f, 0.70f, 0.10f, 1.0f)
+                            )
+                        )
+                    }
+
                     LazyColumn(
                         state = lazyListState,
                         modifier = Modifier
                             .fillMaxSize()
+                            .graphicsLayer {
+                                translationY = (1f - mobileUnfoldProgress.value) * 45.dp.toPx()
+                                alpha = mobileUnfoldProgress.value
+                            }
                             .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                             .dpadScrollable(lazyListState),
                         contentPadding = PaddingValues(bottom = 96.dp)

@@ -1125,7 +1125,8 @@ fun RezkaItemCard(
                 onFocused = onFocused,
                 scaleFactor = 1.0f,
                 shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp),
-                focusRequester = focusRequester
+                focusRequester = focusRequester,
+                hideBorder = isBouncing
             )
             .testTag("movie_card_${item.id}"),
         colors = CardDefaults.cardColors(containerColor = CinemaDark),
