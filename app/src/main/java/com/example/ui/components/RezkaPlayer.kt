@@ -445,6 +445,10 @@ fun RezkaPlayer(
                     buildUponParameters()
                         .setPreferredVideoMimeType(MimeTypes.VIDEO_H264)
                         .setForceHighestSupportedBitrate(true)
+                        .setAllowVideoNonSeamlessAdaptiveness(true)
+                        .setAllowVideoMixedMimeTypeAdaptiveness(true)
+                        .setMaxVideoSize(3840, 2160)
+                        .setMaxVideoFrameRate(60)
                 )
             }
 
@@ -464,6 +468,7 @@ fun RezkaPlayer(
                 .setLoadControl(loadControl)
                 .build().apply {
                     playWhenReady = true
+                    videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
                 }
         } catch (e: Exception) {
             Log.e("RezkaPlayer", "Error creating custom ExoPlayer instance, using fallback builder", e)
@@ -1245,7 +1250,7 @@ fun RezkaPlayer(
                     }
                     .testTag("floating_player_window")
             ) {
-                // Media3 Player TextureView
+                // Media3 Player SurfaceView
                 AndroidView(
                     factory = { ctx ->
                         (LayoutInflater.from(ctx).inflate(R.layout.item_player_view, null) as PlayerView).apply {
@@ -2049,7 +2054,7 @@ fun RezkaPlayer(
                     }
                 }
         ) {
-            // Media3 Player View (using TextureView via item_player_view layout to avoid SurfaceView EGL errors)
+            // Media3 Player View (using SurfaceView via item_player_view layout)
             AndroidView(
                 factory = { ctx ->
                     (LayoutInflater.from(ctx).inflate(R.layout.item_player_view, null) as PlayerView).apply {
@@ -2143,7 +2148,7 @@ fun RezkaPlayer(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(isScreenLocked) {
+                    .pointerInput(isScreenLocked, playbackSpeed) {
                         if (isScreenLocked) {
                             detectTapGestures(
                                 onTap = {
@@ -2160,6 +2165,21 @@ fun RezkaPlayer(
                                 var maxDistancePx = 0f
                                 var isMultiTouch = false
                                 var pointerUpEvent: androidx.compose.ui.input.pointer.PointerInputChange? = null
+                                var is2xHoldTriggered = false
+                                val savedSpeedBeforeHold = playbackSpeed
+
+                                val hold2xJob = scope.launch {
+                                    delay(1000L)
+                                    if (!isMultiTouch && maxDistancePx < 48f) {
+                                        is2xHoldTriggered = true
+                                        exoPlayer.setPlaybackSpeed(2.0f)
+                                        if (!exoPlayer.isPlaying) {
+                                            exoPlayer.play()
+                                            isPlayWhenReady = true
+                                        }
+                                        HapticEngine.get().perform(HapticType.SELECTION)
+                                    }
+                                }
 
                                 do {
                                     val event = awaitPointerEvent()
@@ -2167,6 +2187,11 @@ fun RezkaPlayer(
 
                                     if (changes.size > 1) {
                                         isMultiTouch = true
+                                        hold2xJob.cancel()
+                                        if (is2xHoldTriggered) {
+                                            is2xHoldTriggered = false
+                                            exoPlayer.setPlaybackSpeed(savedSpeedBeforeHold)
+                                        }
                                         val zoomFactor = event.calculateZoom()
                                         if (zoomFactor != 1f) {
                                             val newScale = (customZoomScale * zoomFactor).coerceIn(0.5f, 3.0f)
@@ -2188,6 +2213,13 @@ fun RezkaPlayer(
                                             if (dist > maxDistancePx) {
                                                 maxDistancePx = dist
                                             }
+                                            if (maxDistancePx > 48f) {
+                                                hold2xJob.cancel()
+                                                if (is2xHoldTriggered) {
+                                                    is2xHoldTriggered = false
+                                                    exoPlayer.setPlaybackSpeed(savedSpeedBeforeHold)
+                                                }
+                                            }
                                         }
                                     }
 
@@ -2197,7 +2229,13 @@ fun RezkaPlayer(
                                     }
                                 } while (event.changes.any { it.pressed })
 
-                                if (!isMultiTouch && maxDistancePx < 36f && pointerUpEvent != null) {
+                                hold2xJob.cancel()
+
+                                if (is2xHoldTriggered) {
+                                    is2xHoldTriggered = false
+                                    exoPlayer.setPlaybackSpeed(savedSpeedBeforeHold)
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                } else if (!isMultiTouch && maxDistancePx < 36f && pointerUpEvent != null) {
                                     val now = System.currentTimeMillis()
                                     val delta = now - gestureLastTapTime
                                     val tappedSide = if (isLeft) SeekSide.LEFT else SeekSide.RIGHT

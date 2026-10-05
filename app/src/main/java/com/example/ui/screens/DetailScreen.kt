@@ -219,12 +219,14 @@ fun DetailScreen(
     var playerSubtitle by remember { mutableStateOf("") }
     var playerStartPosition by remember { mutableStateOf(0L) }
     var isDecryptingStreams by remember { mutableStateOf(false) }
+    var isFetchingStreamsForPlay by remember { mutableStateOf(false) }
     var playbackJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     // Ensure screen orientation is restored to unspecified whenever leaving DetailScreen (if not in TV mode)
     DisposableEffect(isTvMode) {
         onDispose {
             playbackJob?.cancel()
+            isFetchingStreamsForPlay = false
             viewModel.setPlayerActive(false)
             if (!isTvMode) {
                 activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -263,6 +265,20 @@ fun DetailScreen(
                 idx++ // Play button
             }
             idx
+        }
+    }
+
+    // Deterministic calculation of translators section item index in the LazyColumn
+    val translatorsSectionIndex by remember(detailState) {
+        derivedStateOf {
+            val detail = (detailState as? DetailState.Success)?.detail ?: return@derivedStateOf -1
+            if (detail.translators.isNotEmpty()) {
+                2 // Backdrop (0) + Poster/Meta (1) -> Translators list (2)
+            } else if (detail.type == RezkaType.SERIES || detail.type == RezkaType.MOVIE) {
+                2 // Even if translators are empty, index 2 holds the playback/season actions
+            } else {
+                -1
+            }
         }
     }
 
@@ -379,7 +395,11 @@ fun DetailScreen(
         playerStartPosition = customStartPos ?: 0L
 
         val isInternalPlayer = selectedPlayer == RezkaService.PLAYER_INTERNAL
-        if (isInternalPlayer) {
+        val isAskQuality = defaultQuality == RezkaService.QUALITY_ASK
+
+        if (isAskQuality) {
+            isFetchingStreamsForPlay = true
+        } else if (isInternalPlayer) {
             isPlayerOpen = true
             isDecryptingStreams = true
         } else {
@@ -487,9 +507,11 @@ fun DetailScreen(
                     episode = effectiveEpisode
                 )
 
+                isFetchingStreamsForPlay = false
+
                 if (streams.isNotEmpty()) {
-                    if (defaultQuality == RezkaService.QUALITY_ASK) {
-                        // Open Quality Prompt Dialog
+                    if (isAskQuality) {
+                        // Open Quality Prompt Dialog directly on DetailScreen
                         pendingStreamsForDialog = streams
                         pendingPlayTitle = titleText
                         pendingPlaySubtitle = subtitleText
@@ -526,6 +548,7 @@ fun DetailScreen(
                 }
             } catch (e: Exception) {
                 if (e !is kotlinx.coroutines.CancellationException) {
+                    isFetchingStreamsForPlay = false
                     isDecryptingStreams = false
                     Toast.makeText(context, "Ошибка сети при загрузке плеера", Toast.LENGTH_SHORT).show()
                     if (isInternalPlayer) {
@@ -2592,89 +2615,130 @@ fun DetailScreen(
             }
         }
 
-        // Dialog for "Ask" quality selection before starting playback
+        // Loading indicator dialog when fetching streams for Quality selector
+        if (isFetchingStreamsForPlay) {
+            Dialog(
+                onDismissRequest = {
+                    playbackJob?.cancel()
+                    isFetchingStreamsForPlay = false
+                },
+                properties = DialogProperties(
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = true
+                )
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = CinemaCard,
+                    border = BorderStroke(1.dp, CinemaBorder),
+                    shadowElevation = 8.dp
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .padding(horizontal = 24.dp, vertical = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = CinemaPrimary,
+                            strokeWidth = 2.5.dp
+                        )
+                        Text(
+                            text = "Загрузка качества...",
+                            color = CinemaTextWhite,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        // Trigger haptic vibration when quality selection menu appears
+        LaunchedEffect(pendingStreamsForDialog) {
+            if (pendingStreamsForDialog != null) {
+                HapticEngine.get().perform(HapticType.SOFT_CLICK)
+            }
+        }
+
+        // Dialog for "Ask" quality selection before starting playback (identical style to download window)
         pendingStreamsForDialog?.let { streams ->
             AlertDialog(
                 onDismissRequest = { pendingStreamsForDialog = null },
+                containerColor = CinemaDark,
+                shape = RoundedCornerShape(20.dp),
                 title = {
                     Text(
                         text = "Выберите качество",
                         color = CinemaTextWhite,
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 },
-                containerColor = CinemaDark,
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
                         streams.forEachIndexed { idx, stream ->
+                            val onSelectQuality: () -> Unit = {
+                                HapticEngine.get().perform(HapticType.CONFIRM)
+                                val streamsToPlay = streams
+                                val title = pendingPlayTitle
+                                val subtitle = pendingPlaySubtitle
+                                val startPos = pendingPlayStartPos
+                                pendingStreamsForDialog = null
+
+                                if (selectedPlayer != RezkaService.PLAYER_INTERNAL) {
+                                    com.example.data.ExternalPlayerManager.launchPlayback(
+                                        context = context,
+                                        streamUrl = stream.url,
+                                        title = title,
+                                        subtitle = subtitle,
+                                        startPositionMs = startPos,
+                                        subtitles = stream.subtitles,
+                                        playerKey = selectedPlayer
+                                    )
+                                } else {
+                                    playerTitle = title
+                                    playerSubtitle = subtitle
+                                    playerStartPosition = startPos
+                                    initialQualityIndex = idx
+                                    activePlayerStreams = streamsToPlay
+                                    isPlayerOpen = true
+                                }
+                            }
+
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        if (selectedPlayer != RezkaService.PLAYER_INTERNAL) {
-                                            pendingStreamsForDialog = null
-                                            com.example.data.ExternalPlayerManager.launchPlayback(
-                                                context = context,
-                                                streamUrl = stream.url,
-                                                title = pendingPlayTitle,
-                                                subtitle = pendingPlaySubtitle,
-                                                startPositionMs = pendingPlayStartPos,
-                                                subtitles = stream.subtitles,
-                                                playerKey = selectedPlayer
-                                            )
-                                        } else {
-                                            playerTitle = pendingPlayTitle
-                                            playerSubtitle = pendingPlaySubtitle
-                                            playerStartPosition = pendingPlayStartPos
-                                            initialQualityIndex = idx
-                                            activePlayerStreams = streams
-                                            isPlayerOpen = true
-                                            pendingStreamsForDialog = null
-                                        }
-                                    }
-                                    .padding(vertical = 12.dp, horizontal = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                    .background(CinemaCard, RoundedCornerShape(10.dp))
+                                    .border(1.dp, CinemaPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                    .tvFocusableItem(
+                                        onClick = onSelectQuality,
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.HighQuality,
-                                        contentDescription = null,
-                                        tint = CinemaPrimary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Text(
-                                        text = stream.quality,
-                                        color = CinemaTextWhite,
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                                Icon(
-                                    imageVector = Icons.Default.PlayArrow,
-                                    contentDescription = null,
-                                    tint = CinemaPrimary,
-                                    modifier = Modifier.size(18.dp)
+                                Text(
+                                    text = stream.quality,
+                                    color = CinemaTextWhite,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center
                                 )
                             }
                         }
                     }
                 },
-                confirmButton = {
-                    TextButton(onClick = {
-                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                        pendingStreamsForDialog = null
-                        if (activePlayerStreams == null) {
-                            isPlayerOpen = false
-                            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                        }
-                    }) {
-                        Text("Отмена", color = CinemaTextGray)
-                    }
-                }
+                confirmButton = {}
             )
         }
 
@@ -2920,36 +2984,100 @@ fun DetailScreen(
             }
         }
 
-        AnimatedVisibility(
-            visible = showScrollToTop,
-            enter = fadeIn() + scaleIn(),
-            exit = fadeOut() + scaleOut(),
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val translatorsScrollOffsetPx = remember(density) { with(density) { (-60).dp.roundToPx() } }
+
+        // Кнопка быстрого перехода вниз к списку выбора озвучки
+        // Одновременно с кнопкой подъема наверх отображаться не может
+        val showScrollToTranslators by remember {
+            derivedStateOf {
+                if (isPlayerOpen) return@derivedStateOf false
+                if (showScrollToTop) return@derivedStateOf false
+                if (translatorsSectionIndex < 0) return@derivedStateOf false
+
+                val firstIndex = lazyListState.firstVisibleItemIndex
+                if (firstIndex >= translatorsSectionIndex) return@derivedStateOf false
+
+                // Проверяем видимость секции выбора озвучки
+                val translatorsItem = lazyListState.layoutInfo.visibleItemsInfo
+                    .firstOrNull { it.index == translatorsSectionIndex }
+
+                if (translatorsItem != null) {
+                    // Если заголовок озвучки уже поднялся достаточно близко к комфортной позиции - скрываем кнопку
+                    translatorsItem.offset > (-translatorsScrollOffsetPx + 80)
+                } else {
+                    true
+                }
+            }
+        }
+
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .navigationBarsPadding()
                 .padding(bottom = 24.dp, end = 24.dp)
         ) {
-            FloatingActionButton(
-                onClick = {
-                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                    scope.launch {
-                        if (commentsSectionIndex >= 0) {
-                            lazyListState.animateScrollToItem(commentsSectionIndex)
-                        }
-                    }
-                },
-                containerColor = CinemaPrimary,
-                contentColor = CinemaTextWhite,
-                shape = CircleShape,
-                modifier = Modifier
-                    .size(48.dp)
-                    .testTag("comments_scroll_to_top_button")
+            // Кнопка подъема к началу отзывов при прокрутке комментариев
+            AnimatedVisibility(
+                visible = showScrollToTop,
+                enter = fadeIn() + scaleIn(),
+                exit = fadeOut() + scaleOut()
             ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowUpward,
-                    contentDescription = "Вверх к началу отзывов",
-                    modifier = Modifier.size(22.dp)
-                )
+                FloatingActionButton(
+                    onClick = {
+                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                        scope.launch {
+                            if (commentsSectionIndex >= 0) {
+                                lazyListState.animateScrollToItem(commentsSectionIndex)
+                            }
+                        }
+                    },
+                    containerColor = CinemaPrimary,
+                    contentColor = CinemaTextWhite,
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("comments_scroll_to_top_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowUpward,
+                        contentDescription = "Вверх к началу отзывов",
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+
+            // Кнопка спуска к списку выбора озвучки с иконкой глаза
+            AnimatedVisibility(
+                visible = showScrollToTranslators,
+                enter = fadeIn() + scaleIn(),
+                exit = fadeOut() + scaleOut()
+            ) {
+                FloatingActionButton(
+                    onClick = {
+                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                        scope.launch {
+                            if (translatorsSectionIndex >= 0) {
+                                lazyListState.animateScrollToItem(
+                                    index = translatorsSectionIndex,
+                                    scrollOffset = translatorsScrollOffsetPx
+                                )
+                            }
+                        }
+                    },
+                    containerColor = CinemaPrimary,
+                    contentColor = CinemaTextWhite,
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("scroll_to_translators_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Visibility,
+                        contentDescription = "К выбору озвучки",
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
             }
         }
     }

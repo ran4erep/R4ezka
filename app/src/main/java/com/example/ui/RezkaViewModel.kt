@@ -2206,6 +2206,11 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     // Player Selection (локальная настройка, без синхронизации с облаком)
     val selectedPlayer: StateFlow<String> = RezkaService.selectedPlayer
+    val playerSurfaceEngine: StateFlow<String> = RezkaService.playerSurfaceEngine
+
+    fun setPlayerSurfaceEngine(engine: String) {
+        RezkaService.setPlayerSurfaceEngine(engine)
+    }
 
     // DNS Preference (локальная настройка, без синхронизации с облаком)
     val dnsPreference: StateFlow<DnsPreference> = RezkaService.dnsPreference
