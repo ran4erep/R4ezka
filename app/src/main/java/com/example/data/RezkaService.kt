@@ -1517,6 +1517,13 @@ object RezkaService {
     private val _selectedPlayer = MutableStateFlow(PLAYER_INTERNAL)
     val selectedPlayer: StateFlow<String> = _selectedPlayer.asStateFlow()
 
+    // Движок рендеринга поверхностей видео (SurfaceView - VLC hardware engine vs TextureView)
+    const val SURFACE_ENGINE_HARDWARE = "surface_view"
+    const val SURFACE_ENGINE_TEXTURE = "texture_view"
+
+    private val _playerSurfaceEngine = MutableStateFlow(SURFACE_ENGINE_HARDWARE)
+    val playerSurfaceEngine: StateFlow<String> = _playerSurfaceEngine.asStateFlow()
+
     // Сетка карточек в каталоге (auto или "WxH", где W in 1..10, H in 1..5)
     const val GRID_MODE_AUTO = "auto"
     data class CardGridLayout(val columns: Int, val rows: Int) {
@@ -1600,6 +1607,9 @@ object RezkaService {
         val savedPlayer = prefs?.getString("selected_video_player", PLAYER_INTERNAL) ?: PLAYER_INTERNAL
         _selectedPlayer.value = savedPlayer
 
+        val savedSurfaceEngine = prefs?.getString("player_surface_engine", SURFACE_ENGINE_HARDWARE) ?: SURFACE_ENGINE_HARDWARE
+        _playerSurfaceEngine.value = savedSurfaceEngine
+
         val savedGridMode = prefs?.getString("card_grid_mode", GRID_MODE_AUTO) ?: GRID_MODE_AUTO
         _cardGridMode.value = if (savedGridMode == GRID_MODE_AUTO || parseCardGrid(savedGridMode) != null) savedGridMode else GRID_MODE_AUTO
 
@@ -1644,6 +1654,12 @@ object RezkaService {
         val clean = playerKey.trim().ifEmpty { PLAYER_INTERNAL }
         _selectedPlayer.value = clean
         prefs?.edit()?.putString("selected_video_player", clean)?.apply()
+    }
+
+    fun setPlayerSurfaceEngine(engine: String) {
+        val clean = if (engine == SURFACE_ENGINE_TEXTURE) SURFACE_ENGINE_TEXTURE else SURFACE_ENGINE_HARDWARE
+        _playerSurfaceEngine.value = clean
+        prefs?.edit()?.putString("player_surface_engine", clean)?.apply()
     }
 
     fun setDefaultQuality(quality: String) {
