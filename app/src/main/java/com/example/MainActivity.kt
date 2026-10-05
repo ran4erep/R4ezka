@@ -15,6 +15,9 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateDp
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -116,7 +119,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val DetailScaleEasing = CubicBezierEasing(0.12f, 0.90f, 0.20f, 1.0f)
+private val MovieCardExpandEasing = CubicBezierEasing(0.06f, 0.72f, 0.12f, 1.0f)
+private val MovieCardCollapseEasing = CubicBezierEasing(0.36f, 0.0f, 0.75f, 0.15f)
+private val DetailScaleEasing = MovieCardExpandEasing
 
 @Composable
 fun MainContent(viewModel: RezkaViewModel = viewModel()) {
@@ -262,13 +267,40 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                 targetState = tvActiveTarget,
                 transitionSpec = {
                     if (targetState is ScreenState.Detail) {
-                        // Раскрытие карточки фильма во весь экран: элегантное приближение из карточки + кроссфейд
-                        (scaleIn(initialScale = 0.90f, transformOrigin = TransformOrigin.Center, animationSpec = tween(340, easing = DetailScaleEasing)) + fadeIn(animationSpec = tween(280, easing = FastOutSlowInEasing)))
-                            .togetherWith(scaleOut(targetScale = 0.96f, transformOrigin = TransformOrigin.Center, animationSpec = tween(280, easing = FastOutSlowInEasing)) + fadeOut(animationSpec = tween(240, easing = FastOutSlowInEasing)))
+                        // Кинематографичное раскрытие карточки фильма во весь экран TV:
+                        // Карточка плавно вырастает из своего размера в каталоге и становится страницей фильма
+                        (scaleIn(
+                            initialScale = 0.50f,
+                            transformOrigin = TransformOrigin(0.5f, 0.38f),
+                            animationSpec = tween(520, easing = MovieCardExpandEasing)
+                        ) + fadeIn(
+                            animationSpec = tween(320, easing = LinearOutSlowInEasing)
+                        )).togetherWith(
+                            scaleOut(
+                                targetScale = 0.92f,
+                                transformOrigin = TransformOrigin.Center,
+                                animationSpec = tween(460, easing = FastOutSlowInEasing)
+                            ) + fadeOut(
+                                animationSpec = tween(360, easing = FastOutSlowInEasing)
+                            )
+                        )
                     } else if (initialState is ScreenState.Detail && targetState == "main") {
-                        // Схлопывание страницы фильма обратно в карточку каталога TV
-                        (scaleIn(initialScale = 0.96f, transformOrigin = TransformOrigin.Center, animationSpec = tween(300, easing = FastOutSlowInEasing)) + fadeIn(animationSpec = tween(260, easing = FastOutSlowInEasing)))
-                            .togetherWith(scaleOut(targetScale = 0.90f, transformOrigin = TransformOrigin.Center, animationSpec = tween(260, easing = DetailScaleEasing)) + fadeOut(animationSpec = tween(220, easing = FastOutSlowInEasing)))
+                        // Плавное схлопывание страницы фильма обратно в карточку каталога TV
+                        (scaleIn(
+                            initialScale = 0.92f,
+                            transformOrigin = TransformOrigin.Center,
+                            animationSpec = tween(440, easing = FastOutSlowInEasing)
+                        ) + fadeIn(
+                            animationSpec = tween(360, easing = FastOutSlowInEasing)
+                        )).togetherWith(
+                            scaleOut(
+                                targetScale = 0.50f,
+                                transformOrigin = TransformOrigin(0.5f, 0.38f),
+                                animationSpec = tween(400, easing = MovieCardCollapseEasing)
+                            ) + fadeOut(
+                                animationSpec = tween(300, easing = FastOutLinearInEasing)
+                            )
+                        )
                     } else if (targetState is ScreenState && initialState is ScreenState) {
                         // Переходы между карточками/подэкранами (Detail -> PersonProfile / ThematicList)
                         (slideInHorizontally(animationSpec = tween(320, easing = FastOutSlowInEasing)) { it / 3 } + scaleIn(initialScale = 0.94f) + fadeIn(animationSpec = tween(280)))
@@ -283,6 +315,15 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                 label = "tv_screen_transition",
                 modifier = Modifier.fillMaxSize()
             ) { activeTarget ->
+                val tvCornerRadius by transition.animateDp(
+                    transitionSpec = {
+                        tween(durationMillis = 480, easing = MovieCardExpandEasing)
+                    },
+                    label = "tv_card_morph_radius"
+                ) { enterExitState ->
+                    if (enterExitState == EnterExitState.Visible) 0.dp else 14.dp
+                }
+
                 when (activeTarget) {
                     "settings" -> {
                         SettingsScreen(
@@ -309,7 +350,15 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 }
                             },
                             onNavigateToDetail = onNavigateToDetailWithBounce,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    val rPx = tvCornerRadius.toPx()
+                                    if (rPx > 0.5f) {
+                                        clip = true
+                                        shape = RoundedCornerShape(rPx)
+                                    }
+                                },
                             isTvMode = true
                         )
                     }
@@ -351,13 +400,13 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
         } else {
             val isStackActive = navigationStack.isNotEmpty()
             val bgCatalogScale by animateFloatAsState(
-                targetValue = if (isStackActive) 0.96f else 1.0f,
-                animationSpec = tween(300, easing = FastOutSlowInEasing),
+                targetValue = if (isStackActive) 0.92f else 1.0f,
+                animationSpec = tween(480, easing = FastOutSlowInEasing),
                 label = "bg_catalog_scale"
             )
             val bgCatalogAlpha by animateFloatAsState(
                 targetValue = if (isStackActive) 0.0f else 1.0f,
-                animationSpec = tween(260, easing = FastOutSlowInEasing),
+                animationSpec = tween(420, delayMillis = 40, easing = FastOutSlowInEasing),
                 label = "bg_catalog_alpha"
             )
 
@@ -528,8 +577,13 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                     if (targetState != null && initialState == null) {
                         // Первый экран поверх каталога: плавное перетекание карточки в страницу фильма
                         if (targetState is ScreenState.Detail) {
-                            (scaleIn(initialScale = 0.90f, transformOrigin = TransformOrigin.Center, animationSpec = tween(340, easing = DetailScaleEasing)) + fadeIn(animationSpec = tween(280, easing = FastOutSlowInEasing)))
-                                .togetherWith(ExitTransition.None)
+                            (scaleIn(
+                                initialScale = 0.44f,
+                                transformOrigin = TransformOrigin(0.5f, 0.36f),
+                                animationSpec = tween(520, easing = MovieCardExpandEasing)
+                            ) + fadeIn(
+                                animationSpec = tween(320, easing = LinearOutSlowInEasing)
+                            )).togetherWith(ExitTransition.None)
                         } else {
                             (slideInHorizontally(animationSpec = tween(300)) { it } + fadeIn(tween(250)))
                                 .togetherWith(ExitTransition.None)
@@ -538,7 +592,13 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                         // Возврат на каталог (стек пуст): страница фильма схлопывается обратно в карточку и растворяется
                         if (initialState is ScreenState.Detail) {
                             EnterTransition.None.togetherWith(
-                                scaleOut(targetScale = 0.90f, transformOrigin = TransformOrigin.Center, animationSpec = tween(260, easing = DetailScaleEasing)) + fadeOut(animationSpec = tween(220, easing = FastOutSlowInEasing))
+                                scaleOut(
+                                    targetScale = 0.44f,
+                                    transformOrigin = TransformOrigin(0.5f, 0.36f),
+                                    animationSpec = tween(420, easing = MovieCardCollapseEasing)
+                                ) + fadeOut(
+                                    animationSpec = tween(300, easing = FastOutLinearInEasing)
+                                )
                             )
                         } else {
                             EnterTransition.None.togetherWith(
@@ -556,6 +616,15 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                 label = "stack_transition",
                 modifier = Modifier.fillMaxSize()
             ) { topState ->
+                val mobileCornerRadius by transition.animateDp(
+                    transitionSpec = {
+                        tween(durationMillis = 480, easing = MovieCardExpandEasing)
+                    },
+                    label = "mobile_card_morph_radius"
+                ) { enterExitState ->
+                    if (enterExitState == EnterExitState.Visible) 0.dp else 14.dp
+                }
+
                 if (topState != null) {
                     when (topState) {
                         is ScreenState.Detail -> {
@@ -572,6 +641,15 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                     }
                                 },
                                 onNavigateToDetail = onNavigateToDetailWithBounce,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        val rPx = mobileCornerRadius.toPx()
+                                        if (rPx > 0.5f) {
+                                            clip = true
+                                            shape = RoundedCornerShape(rPx)
+                                        }
+                                    },
                                 isTvMode = false
                             )
                         }

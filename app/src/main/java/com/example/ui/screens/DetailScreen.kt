@@ -51,6 +51,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -560,8 +561,74 @@ fun DetailScreen(
     ) {
         when (val state = displayState) {
             is DetailState.Loading -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(48.dp))
+                Box(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    if (item.imageUrl.isNotEmpty()) {
+                        AsyncImage(
+                            model = item.imageUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { alpha = 0.22f }
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color.Black.copy(alpha = 0.5f),
+                                        CinemaBlack.copy(alpha = 0.88f),
+                                        CinemaBlack
+                                    )
+                                )
+                            )
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 24.dp, vertical = 40.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        if (item.imageUrl.isNotEmpty()) {
+                            Card(
+                                shape = RoundedCornerShape(12.dp),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                                modifier = Modifier
+                                    .width(130.dp)
+                                    .aspectRatio(0.68f)
+                            ) {
+                                AsyncImage(
+                                    model = item.imageUrl,
+                                    contentDescription = item.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(18.dp))
+                        }
+                        if (item.title.isNotEmpty()) {
+                            Text(
+                                text = item.title,
+                                color = CinemaTextWhite,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(18.dp))
+                        }
+                        CircularProgressIndicator(
+                            color = CinemaPrimary,
+                            modifier = Modifier.size(36.dp),
+                            strokeWidth = 3.dp
+                        )
+                    }
                 }
             }
             is DetailState.Error -> {

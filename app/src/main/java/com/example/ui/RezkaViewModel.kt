@@ -1031,7 +1031,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
             } finally {
                 val elapsed = System.currentTimeMillis() - startTime
-                val minBounceMs = 400L
+                val minBounceMs = 520L
                 if (elapsed < minBounceMs) {
                     delay(minBounceMs - elapsed)
                 }
