@@ -65,6 +65,7 @@ fun PersonProfileScreen(
     isTvMode: Boolean = false,
     viewModel: RezkaViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 ) {
+    val loadingMovieId by viewModel.loadingMovieId.collectAsState()
     var state by remember(url) { mutableStateOf<PersonState>(PersonState.Loading) }
 
     LaunchedEffect(url) {
@@ -526,6 +527,7 @@ fun PersonProfileScreen(
                             items(displayedItems, key = { "${it.id}_${selectedSectionIndex}" }) { item ->
                                 RezkaItemCard(
                                     item = item,
+                                    isBouncing = item.id == loadingMovieId,
                                     onClick = { onNavigateToDetail(item) }
                                 )
                             }
@@ -551,6 +553,7 @@ private fun TvPersonProfileContent(
     onNavigateToDetail: (RezkaItem) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val loadingMovieId by viewModel.loadingMovieId.collectAsState()
     val backFocusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         backFocusRequester.requestFocusSafe()
@@ -895,6 +898,7 @@ private fun TvPersonProfileContent(
                             index = index,
                             totalItems = displayedItems.size,
                             columnsCount = 5,
+                            isBouncing = item.id == loadingMovieId,
                             onNavigateIndex = navigateToItem,
                             focusRequester = getFocusRequesterForIndex(index),
                             onClick = { onNavigateToDetail(item) }

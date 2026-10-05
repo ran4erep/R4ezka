@@ -58,6 +58,7 @@ fun FavoritesScreen(
         viewModel.refreshFavoritesInfo()
     }
     val cardGridMode by viewModel.cardGridMode.collectAsState()
+    val loadingMovieId by viewModel.loadingMovieId.collectAsState()
     val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
     val configuration = LocalConfiguration.current
 
@@ -212,6 +213,7 @@ fun FavoritesScreen(
                                     totalItems = favorites.size,
                                     columnsCount = columnsCount,
                                     cardHeight = itemCardHeight,
+                                    isBouncing = item.id == loadingMovieId,
                                     onNavigateIndex = navigateToItem,
                                     focusRequester = getFocusRequesterForIndex(index),
                                     onClick = { onNavigateToDetail(item) },

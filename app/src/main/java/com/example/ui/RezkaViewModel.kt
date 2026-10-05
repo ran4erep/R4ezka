@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 sealed interface CatalogState {
     object Loading : CatalogState
@@ -983,6 +984,63 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     // Кэш страниц комментариев для текущего фильма (O(1) доступ в памяти без лишних запросов и нагрузки на CPU)
     private val commentsPageCache = HashMap<Int, CommentsResult>()
 
+    // Идентификатор фильма, который сейчас выбран и выполняет подпрыгивание с предзагрузкой
+    private val _loadingMovieId = MutableStateFlow<String?>(null)
+    val loadingMovieId: StateFlow<String?> = _loadingMovieId.asStateFlow()
+
+    /**
+     * Предзагрузка информации о фильме с визуальным подпрыгиванием карточки.
+     * Загружает данные заранее, исключая пустые экраны при открытии.
+     */
+    fun selectMovieWithPreload(
+        item: RezkaItem,
+        onReadyToNavigate: () -> Unit
+    ) {
+        if (_loadingMovieId.value != null) return // Защита от дребезга кликов
+
+        _loadingMovieId.value = item.id
+        commitSearchQuery()
+
+        // Проактивный прогрев кеша постера через Coil в фоне для мгновенной отрисовки без мерцаний
+        try {
+            val app = getApplication<Application>()
+            if (item.imageUrl.isNotBlank()) {
+                val imageRequest = coil.request.ImageRequest.Builder(app)
+                    .data(item.imageUrl)
+                    .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                    .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                    .build()
+                coil.Coil.imageLoader(app).enqueue(imageRequest)
+            }
+        } catch (_: Exception) {}
+
+        viewModelScope.launch {
+            val startTime = System.currentTimeMillis()
+            try {
+                val current = _detailState.value
+                val isAlreadyLoaded = current is DetailState.Success && current.detail.id == item.id
+                if (!isAlreadyLoaded) {
+                    _detailState.value = DetailState.Loading
+                    _commentsState.value = MovieCommentsState(isLoading = true)
+                    commentsPageCache.clear()
+                    withTimeoutOrNull(3500L) {
+                        executeLoadDetail(item.url, item)
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            } finally {
+                val elapsed = System.currentTimeMillis() - startTime
+                val minBounceMs = 400L
+                if (elapsed < minBounceMs) {
+                    delay(minBounceMs - elapsed)
+                }
+                _loadingMovieId.value = null
+                onReadyToNavigate()
+            }
+        }
+    }
+
     /**
      * Loads detailed info of selected item
      */
@@ -992,93 +1050,97 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         _commentsState.value = MovieCommentsState(isLoading = true)
         commentsPageCache.clear()
         viewModelScope.launch {
-            val offlineItemId = fallbackItem?.id ?: extractIdFromUrl(url)
-            val offlineEntities = if (offlineItemId.isNotEmpty()) {
-                val direct = repository.getOfflineMediaByItemId(offlineItemId)
-                if (direct.isNotEmpty()) {
-                    direct
-                } else {
-                    val cleanNum = offlineItemId.filter { it.isDigit() }
-                    repository.getAllOfflineMediaList().filter {
-                        it.itemId == offlineItemId || (cleanNum.isNotEmpty() && (it.itemId == cleanNum || it.itemId.startsWith("$cleanNum-") || it.itemId.filter { c -> c.isDigit() } == cleanNum))
-                    }
-                }
-            } else emptyList()
+            executeLoadDetail(url, fallbackItem)
+        }
+    }
 
-            val isOfflineRequest = !NetworkMonitor.isOnline.value || url.isBlank() || fallbackItem?.rating == "Оффлайн" || fallbackItem?.url.isNullOrBlank()
-            if (isOfflineRequest) {
-                if (offlineEntities.isNotEmpty()) {
-                    val offlineDetail = buildOfflineDetail(offlineEntities, fallbackItem)
-                    _detailState.value = DetailState.Success(offlineDetail)
-                    _commentsState.value = MovieCommentsState(isLoading = false)
-                    return@launch
+    private suspend fun executeLoadDetail(url: String, fallbackItem: RezkaItem? = null) {
+        val offlineItemId = fallbackItem?.id ?: extractIdFromUrl(url)
+        val offlineEntities = if (offlineItemId.isNotEmpty()) {
+            val direct = repository.getOfflineMediaByItemId(offlineItemId)
+            if (direct.isNotEmpty()) {
+                direct
+            } else {
+                val cleanNum = offlineItemId.filter { it.isDigit() }
+                repository.getAllOfflineMediaList().filter {
+                    it.itemId == offlineItemId || (cleanNum.isNotEmpty() && (it.itemId == cleanNum || it.itemId.startsWith("$cleanNum-") || it.itemId.filter { c -> c.isDigit() } == cleanNum))
                 }
             }
+        } else emptyList()
 
-            try {
-                val detail = RezkaService.getDetail(url)
-                _detailState.value = DetailState.Success(detail)
+        val isOfflineRequest = !NetworkMonitor.isOnline.value || url.isBlank() || fallbackItem?.rating == "Оффлайн" || fallbackItem?.url.isNullOrBlank()
+        if (isOfflineRequest) {
+            if (offlineEntities.isNotEmpty()) {
+                val offlineDetail = buildOfflineDetail(offlineEntities, fallbackItem)
+                _detailState.value = DetailState.Success(offlineDetail)
+                _commentsState.value = MovieCommentsState(isLoading = false)
+                return
+            }
+        }
 
-                val initialComments = detail.comments
-                val initialTotalPages = maxOf(1, detail.commentsTotalPages)
-                val initialHasMore = detail.commentsHasMore
-                val initialTotalCount = detail.commentsTotalCount
+        try {
+            val detail = RezkaService.getDetail(url)
+            _detailState.value = DetailState.Success(detail)
 
-                if (initialComments.isNotEmpty()) {
-                    commentsPageCache[1] = CommentsResult(
-                        comments = initialComments,
-                        currentPage = 1,
-                        totalPages = initialTotalPages,
-                        hasMore = initialHasMore,
-                        totalCommentsCount = initialTotalCount
-                    )
-                }
+            val initialComments = detail.comments
+            val initialTotalPages = maxOf(1, detail.commentsTotalPages)
+            val initialHasMore = detail.commentsHasMore
+            val initialTotalCount = detail.commentsTotalCount
 
-                _commentsState.value = MovieCommentsState(
+            if (initialComments.isNotEmpty()) {
+                commentsPageCache[1] = CommentsResult(
                     comments = initialComments,
                     currentPage = 1,
                     totalPages = initialTotalPages,
-                    totalCount = initialTotalCount,
-                    isLoading = false,
-                    isLoadingMore = false,
                     hasMore = initialHasMore,
-                    numericPostId = detail.numericPostId
+                    totalCommentsCount = initialTotalCount
                 )
+            }
 
-                if (repository.isFavorite(detail.id)) {
-                    val currentFav = favorites.value.find { it.id == detail.id }
-                    if (currentFav != null) {
-                        val latestBadge = if (detail.type == RezkaType.SERIES || detail.type == RezkaType.ANIME || detail.type == RezkaType.CARTOON) {
-                            val maxSeason = detail.seasons.maxOfOrNull { it.id } ?: 0
-                            val lastSeasonObj = detail.seasons.find { it.id == maxSeason }
-                            val maxEp = lastSeasonObj?.episodes?.maxOfOrNull { it.id.toIntOrNull() ?: 0 } ?: 0
-                            if (maxSeason > 0 && maxEp > 0) "$maxSeason сезон $maxEp серия" else detail.rating
-                        } else {
-                            detail.rating.ifEmpty { currentFav.rating }
-                        }
-                        if (latestBadge.isNotEmpty() && latestBadge != currentFav.rating) {
-                            val updated = currentFav.copy(rating = latestBadge)
-                            repository.insertFavoriteEntity(updated)
-                            FirebaseSyncManager.onFavoriteAdded(updated)
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                NetworkMonitor.handleNetworkException(e)
-                if (offlineEntities.isNotEmpty()) {
-                    val offlineDetail = buildOfflineDetail(offlineEntities, fallbackItem)
-                    _detailState.value = DetailState.Success(offlineDetail)
-                    _commentsState.value = MovieCommentsState(isLoading = false)
-                } else {
-                    val errorMsg = if (!NetworkMonitor.isOnline.value) {
-                        "Этот фильм не сохранён в оффлайн библиотеке. Подключитесь к интернету для просмотра онлайн."
+            _commentsState.value = MovieCommentsState(
+                comments = initialComments,
+                currentPage = 1,
+                totalPages = initialTotalPages,
+                totalCount = initialTotalCount,
+                isLoading = false,
+                isLoadingMore = false,
+                hasMore = initialHasMore,
+                numericPostId = detail.numericPostId
+            )
+
+            if (repository.isFavorite(detail.id)) {
+                val currentFav = favorites.value.find { it.id == detail.id }
+                if (currentFav != null) {
+                    val latestBadge = if (detail.type == RezkaType.SERIES || detail.type == RezkaType.ANIME || detail.type == RezkaType.CARTOON) {
+                        val maxSeason = detail.seasons.maxOfOrNull { it.id } ?: 0
+                        val lastSeasonObj = detail.seasons.find { it.id == maxSeason }
+                        val maxEp = lastSeasonObj?.episodes?.maxOfOrNull { it.id.toIntOrNull() ?: 0 } ?: 0
+                        if (maxSeason > 0 && maxEp > 0) "$maxSeason сезон $maxEp серия" else detail.rating
                     } else {
-                        "Что-то пошло не так :("
+                        detail.rating.ifEmpty { currentFav.rating }
                     }
-                    _detailState.value = DetailState.Error(errorMsg)
-                    _commentsState.value = MovieCommentsState(isLoading = false)
+                    if (latestBadge.isNotEmpty() && latestBadge != currentFav.rating) {
+                        val updated = currentFav.copy(rating = latestBadge)
+                        repository.insertFavoriteEntity(updated)
+                        FirebaseSyncManager.onFavoriteAdded(updated)
+                    }
                 }
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            NetworkMonitor.handleNetworkException(e)
+            if (offlineEntities.isNotEmpty()) {
+                val offlineDetail = buildOfflineDetail(offlineEntities, fallbackItem)
+                _detailState.value = DetailState.Success(offlineDetail)
+                _commentsState.value = MovieCommentsState(isLoading = false)
+            } else {
+                val errorMsg = if (!NetworkMonitor.isOnline.value) {
+                    "Этот фильм не сохранён в оффлайн библиотеке. Подключитесь к интернету для просмотра онлайн."
+                } else {
+                    "Что-то пошло не так :("
+                }
+                _detailState.value = DetailState.Error(errorMsg)
+                _commentsState.value = MovieCommentsState(isLoading = false)
             }
         }
     }

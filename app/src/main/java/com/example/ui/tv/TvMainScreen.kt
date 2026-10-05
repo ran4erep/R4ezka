@@ -61,6 +61,7 @@ import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.components.AuthDialog
 import com.example.ui.components.UserAvatar
+import com.example.ui.effects.subtleCardBounce
 import com.example.ui.theme.*
 
 enum class TvNavDestination(val title: String, val icon: ImageVector) {
@@ -118,6 +119,7 @@ fun TvMainScreen(
     val yearsList by viewModel.yearsList.collectAsState()
     val currentCountry by viewModel.currentCountry.collectAsState()
     val countriesList by viewModel.countriesList.collectAsState()
+    val loadingMovieId by viewModel.loadingMovieId.collectAsState()
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val isEndReached by viewModel.isEndReached.collectAsState()
     val cardGridMode by viewModel.cardGridMode.collectAsState()
@@ -472,6 +474,7 @@ private fun TvCatalogContent(
     }
 
     val coroutineScope = rememberCoroutineScope()
+    val loadingMovieId by viewModel.loadingMovieId.collectAsState()
     val cardGridMode by viewModel.cardGridMode.collectAsState()
     val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
     val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
@@ -844,6 +847,7 @@ private fun TvCatalogContent(
                                         totalItems = items.size,
                                         columnCount = tvGridCols,
                                         cardHeight = tvCardHeight,
+                                        isBouncing = item.id == loadingMovieId,
                                         onClick = {
                                             viewModel.commitSearchQuery(searchInput)
                                             viewModel.setTvCatalogFocusedItem(item.id, index)
@@ -1690,6 +1694,7 @@ private fun TvMovieCard(
     totalItems: Int,
     columnCount: Int,
     cardHeight: Dp = Dp.Unspecified,
+    isBouncing: Boolean = false,
     onClick: () -> Unit,
     onFocused: () -> Unit,
     onNavigateIndex: (Int) -> Unit,
@@ -1708,6 +1713,10 @@ private fun TvMovieCard(
         modifier = modifier
             .fillMaxWidth()
             .then(if (cardHeight != Dp.Unspecified) Modifier.height(cardHeight) else Modifier)
+            .subtleCardBounce(
+                isBouncing = isBouncing,
+                shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp)
+            )
             .onKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyDown) {
                     when (keyEvent.nativeKeyEvent.keyCode) {
