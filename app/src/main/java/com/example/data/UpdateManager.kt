@@ -20,7 +20,12 @@ import java.util.concurrent.TimeUnit
 
 sealed interface UpdateState {
     object Idle : UpdateState
-    data class UpdateAvailable(val latestVersion: String, val downloadUrl: String, val changelog: String?) : UpdateState
+    data class UpdateAvailable(
+        val latestVersion: String,
+        val downloadUrl: String,
+        val changelog: String?,
+        val skippedVersionsCount: Int = 1
+    ) : UpdateState
     data class Downloading(val progress: Float, val currentBytes: Long, val totalBytes: Long) : UpdateState
     data class ReadyToInstall(val apkFile: File) : UpdateState
     data class Error(val message: String) : UpdateState
@@ -198,7 +203,8 @@ object UpdateManager {
                                 _updateState.value = UpdateState.UpdateAvailable(
                                     latestVersion = latestTagName,
                                     downloadUrl = downloadUrl,
-                                    changelog = combinedChangelog
+                                    changelog = combinedChangelog,
+                                    skippedVersionsCount = newerReleases.size.coerceAtLeast(1)
                                 )
                                 return@withContext
                             } else {
@@ -266,7 +272,8 @@ object UpdateManager {
                                     _updateState.value = UpdateState.UpdateAvailable(
                                         latestVersion = latestTagName,
                                         downloadUrl = downloadUrl,
-                                        changelog = combinedChangelog
+                                        changelog = combinedChangelog,
+                                        skippedVersionsCount = newerReleases.size.coerceAtLeast(1)
                                     )
                                     return@withContext
                                 } else {

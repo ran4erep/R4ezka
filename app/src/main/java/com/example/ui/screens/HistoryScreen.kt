@@ -37,6 +37,7 @@ import com.example.data.RezkaItem
 import com.example.data.RezkaService
 import com.example.data.RezkaType
 import com.example.ui.RezkaViewModel
+import com.example.ui.effects.subtleCardBounce
 import com.example.ui.theme.*
 import com.example.ui.tv.*
 
@@ -48,6 +49,7 @@ fun HistoryScreen(
 ) {
     val historyList by viewModel.aggregatedWatchHistory.collectAsStateWithLifecycle()
     val isCheckingUpdates by viewModel.isCheckingSeriesUpdates.collectAsStateWithLifecycle()
+    val loadingMovieId by viewModel.loadingMovieId.collectAsStateWithLifecycle()
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.checkHistorySeriesUpdates(force = true)
@@ -169,6 +171,7 @@ fun HistoryScreen(
                     ) { history ->
                         HistoryCardItem(
                             history = history,
+                            isBouncing = history.itemId == loadingMovieId,
                             onClick = {
                                 val itemType = if (history.isSeries) RezkaType.SERIES else RezkaType.MOVIE
                                 val targetUrl = RezkaService.adjustUrlToCurrentMirror(history.url, itemType, history.itemId)
@@ -199,7 +202,8 @@ fun HistoryCardItem(
     onClick: () -> Unit,
     onMarkWatched: () -> Unit,
     onDelete: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isBouncing: Boolean = false
 ) {
     val isFullyWatched = history.isFullyWatched
     val progressFraction = remember(history.totalProgressFraction, isFullyWatched) {
@@ -219,6 +223,10 @@ fun HistoryCardItem(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
+                .subtleCardBounce(
+                    isBouncing = isBouncing,
+                    shape = RoundedCornerShape(12.dp)
+                )
                 .tvFocusableItem(
                     onClick = onClick, 
                     scaleFactor = 1.015f, 

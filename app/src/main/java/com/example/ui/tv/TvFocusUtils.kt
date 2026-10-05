@@ -82,13 +82,14 @@ import kotlinx.coroutines.launch
 val LocalTvShowCursor = staticCompositionLocalOf { true }
 
 /**
- * Высокопроизводительный мерцающий неоновый ТВ-курсор вокруг выбранного элемента
- * с поддержкой динамической анимации вспышки при подтверждении выбора с пульта.
+ * Высокопроизводительный мерцающий неоновый ТВ-курсор вокруг выбранного элемента.
  *
  * Архитектурные свойства:
- * 1. Обводка ложится СТРОГО от внешнего края элемента ВГЛУБЬ (inner stroke).
- * 2. Анимация выбора (Selection Burst): при нажатии ОК курсор выбрасывает мягкий неоновый ореол наружу.
- * 3. Аппаратная отрисовка через drawWithContent (0% лишних LayoutNode, нулевая нагрузка на CPU).
+ * 1. Обводка ложится СТРОГО от внешнего края элемента ВГЛУБЬ (inner stroke):
+ *    внешний край обводки совпадает с краем элемента, а вся толщина уходит внутрь.
+ * 2. Ни одного пикселя не выходит наружу, благодаря чему курсор не обрезается краями контейнеров.
+ * 3. Никаких лишних внутренних белых полос: цвет строго соответствует focusedBorderColor.
+ * 4. Аппаратная отрисовка через drawWithContent (0% лишних LayoutNode, нулевая нагрузка на CPU).
  */
 @Composable
 fun Modifier.tvPulsingFocusBorder(
@@ -96,10 +97,9 @@ fun Modifier.tvPulsingFocusBorder(
     focusedBorderColor: Color = CinemaPrimary,
     shape: Shape = RoundedCornerShape(12.dp),
     baseBorderWidth: Dp = 2.dp,
-    inset: Dp = 0.dp,
-    selectionBurstProgress: Float = 0f
+    inset: Dp = 0.dp
 ): Modifier {
-    if ((!isFocused && selectionBurstProgress <= 0f) || !LocalTvShowCursor.current) return this
+    if (!isFocused || !LocalTvShowCursor.current) return this
 
     val infiniteTransition = rememberInfiniteTransition(label = "tv_cursor_pulse")
 
@@ -122,43 +122,8 @@ fun Modifier.tvPulsingFocusBorder(
         val w = (size.width - 2f * pad).coerceAtLeast(0f)
         val h = (size.height - 2f * pad).coerceAtLeast(0f)
 
-        // 1. Анимация вспышки выбора курсора пульта (Selection Burst Halo Wave)
-        if (selectionBurstProgress > 0.01f) {
-            val expandPx = 7.dp.toPx() * (1f - selectionBurstProgress)
-            val burstAlpha = (selectionBurstProgress * 0.85f).coerceIn(0f, 1f)
-            val burstColor = focusedBorderColor.copy(alpha = burstAlpha)
-            val burstPad = pad - expandPx
-            val bw = (size.width - 2f * burstPad).coerceAtLeast(0f)
-            val bh = (size.height - 2f * burstPad).coerceAtLeast(0f)
-
-            if (bw > 0f && bh > 0f) {
-                if (shape is RoundedCornerShape) {
-                    val cornerSize = shape.topStart.toPx(size, this)
-                    val burstRadius = (cornerSize + expandPx).coerceAtLeast(0f)
-                    drawRoundRect(
-                        color = burstColor,
-                        topLeft = Offset(burstPad, burstPad),
-                        size = Size(bw, bh),
-                        cornerRadius = CornerRadius(burstRadius, burstRadius),
-                        style = Stroke(width = strokePx * 1.5f)
-                    )
-                } else if (shape == CircleShape) {
-                    val radius = ((size.minDimension - 2f * burstPad) / 2f).coerceAtLeast(0f)
-                    drawCircle(
-                        color = burstColor,
-                        radius = radius,
-                        center = center,
-                        style = Stroke(width = strokePx * 1.5f)
-                    )
-                }
-            }
-        }
-
-        // 2. Основной неоновый контур курсора
-        if (isFocused && w > 0f && h > 0f) {
-            val cursorColor = focusedBorderColor.copy(
-                alpha = if (selectionBurstProgress > 0.05f) 1.0f else pulseAlpha
-            )
+        if (w > 0f && h > 0f) {
+            val cursorColor = focusedBorderColor.copy(alpha = pulseAlpha)
             if (shape is RoundedCornerShape) {
                 val cornerSize = shape.topStart.toPx(size, this)
                 val cornerRadius = (cornerSize - pad).coerceAtLeast(0f)
@@ -167,7 +132,7 @@ fun Modifier.tvPulsingFocusBorder(
                     topLeft = Offset(pad, pad),
                     size = Size(w, h),
                     cornerRadius = CornerRadius(cornerRadius, cornerRadius),
-                    style = Stroke(width = if (selectionBurstProgress > 0.05f) strokePx * 1.4f else strokePx)
+                    style = Stroke(width = strokePx)
                 )
             } else if (shape == CircleShape) {
                 val radius = ((size.minDimension - 2f * pad) / 2f).coerceAtLeast(0f)
@@ -175,7 +140,7 @@ fun Modifier.tvPulsingFocusBorder(
                     color = cursorColor,
                     radius = radius,
                     center = center,
-                    style = Stroke(width = if (selectionBurstProgress > 0.05f) strokePx * 1.4f else strokePx)
+                    style = Stroke(width = strokePx)
                 )
             } else {
                 translate(left = pad, top = pad) {
@@ -213,8 +178,8 @@ fun Modifier.tvFocusCursor(
 /**
  * Высокопроизводительный модификатор фокуса для ТВ-интерфейса и пульта.
  * Объединяет:
- * 1. Аппаратное плавное увеличение (scale) через graphicsLayer с кинетическим пружинным откликом.
- * 2. Мерцающий неоновый курсор-рамочку вокруг выбранного элемента с анимацией вспышки при выборе.
+ * 1. Аппаратное плавное увеличение (scale) через graphicsLayer без relayout.
+ * 2. Мерцающий неоновый курсор-рамочку вокруг выбранного элемента.
  * 3. Автоматическую прокрутку списка к выбранному элементу (bringIntoView).
  * 4. Мгновенную обработку нажатий ОК (DPAD_CENTER / ENTER) с тактильным микровсплеском.
  */
@@ -234,39 +199,22 @@ fun Modifier.tvFocusableItem(
 ): Modifier = composed {
     var isFocused by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }
-    val selectionBurstAnim = remember { androidx.compose.animation.core.Animatable(0f) }
     val coroutineScope = rememberCoroutineScope()
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     var itemCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var scrollJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
-    // Упругий кинетический масштаб (Spring Bounce при выборе)
     val scale by animateFloatAsState(
         targetValue = when {
-            isPressed -> (scaleFactor * 0.93f).coerceAtLeast(0.92f)
+            isPressed -> (scaleFactor * 0.96f).coerceAtLeast(1.0f)
             isFocused -> scaleFactor
             else -> 1.0f
         },
-        animationSpec = androidx.compose.animation.core.spring(
-            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
-            stiffness = 500f
-        ),
+        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
         label = "tv_focus_scale"
     )
 
     val haptic = remember { com.example.ui.haptics.HapticEngine.get() }
-
-    fun triggerSelectionAnimation() {
-        coroutineScope.launch {
-            try {
-                selectionBurstAnim.snapTo(1.0f)
-                selectionBurstAnim.animateTo(
-                    targetValue = 0f,
-                    animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
-                )
-            } catch (_: Throwable) {}
-        }
-    }
 
     this
         .zIndex(if (isFocused) 5f else 1f)
@@ -317,7 +265,6 @@ fun Modifier.tvFocusableItem(
             interactionSource = remember { MutableInteractionSource() },
             indication = null,
             onClick = {
-                triggerSelectionAnimation()
                 haptic.perform(com.example.ui.haptics.HapticType.SOFT_CLICK)
                 onClick()
             }
@@ -332,7 +279,6 @@ fun Modifier.tvFocusableItem(
                         true
                     } else if (keyEvent.type == KeyEventType.KeyUp) {
                         isPressed = false
-                        triggerSelectionAnimation()
                         haptic.perform(com.example.ui.haptics.HapticType.SOFT_CLICK)
                         onClick()
                         true
@@ -346,8 +292,7 @@ fun Modifier.tvFocusableItem(
             focusedBorderColor = focusedBorderColor,
             shape = shape,
             baseBorderWidth = focusedBorderWidth,
-            inset = inset,
-            selectionBurstProgress = selectionBurstAnim.value
+            inset = inset
         )
 }
 

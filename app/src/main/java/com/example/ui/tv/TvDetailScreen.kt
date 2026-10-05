@@ -50,7 +50,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.*
-import com.example.ui.navigation.sharedPosterElement
 import com.example.ui.MovieCommentsState
 import com.example.ui.screens.CommentUserAvatar
 import com.example.ui.screens.DetailMetaRow
@@ -112,7 +111,6 @@ fun TvDetailContent(
     // Автофокус на кнопке "В закладки" и сброс скролла наверх только при смене фильма на ТВ
     var previousDetailId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(detail.id) {
-        ImagePreloaderEngine.preloadDetailImages(context, detail)
         if (previousDetailId != detail.id) {
             if (previousDetailId != null) {
                 rightScrollState.scrollToItem(0)
@@ -288,12 +286,10 @@ fun TvDetailContent(
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         AsyncImage(
-                            model = detail.imageUrl.ifEmpty { item.imageUrl },
+                            model = detail.imageUrl,
                             contentDescription = detail.title,
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .sharedPosterElement(key = item.id)
+                            modifier = Modifier.fillMaxSize()
                         )
 
                         // Бейдж возраста

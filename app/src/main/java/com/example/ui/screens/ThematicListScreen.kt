@@ -59,6 +59,7 @@ fun ThematicListScreen(
     var isLoadingMore by remember(url) { mutableStateOf(false) }
     var isEndReached by remember(url) { mutableStateOf(false) }
     val loadedItems = remember(url) { mutableStateListOf<RezkaItem>() }
+    val loadingMovieId by viewModel.loadingMovieId.collectAsState()
 
     val isCollection = remember(url) { url.contains("/collections/") }
 
@@ -445,6 +446,7 @@ fun ThematicListScreen(
                                         totalItems = loadedItems.size,
                                         columnsCount = columnsCount,
                                         cardHeight = cardHeight,
+                                        isBouncing = item.id == loadingMovieId,
                                         onNavigateIndex = navigateToItem,
                                         focusRequester = if (isTvMode) getFocusRequesterForIndex(index) else null,
                                         onUp = {

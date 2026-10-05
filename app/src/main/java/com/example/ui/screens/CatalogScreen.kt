@@ -29,9 +29,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.effects.subtleCardBounce
 import coil.compose.AsyncImage
 import com.example.data.*
-import com.example.ui.navigation.sharedPosterElement
 import com.example.ui.util.rememberSavedLazyGridState
 import com.example.ui.CatalogState
 import com.example.ui.RezkaViewModel
@@ -88,6 +88,7 @@ fun CatalogScreen(
     val collectionsState by viewModel.collectionsState.collectAsState()
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val isEndReached by viewModel.isEndReached.collectAsState()
+    val loadingMovieId by viewModel.loadingMovieId.collectAsState()
     val cardGridMode by viewModel.cardGridMode.collectAsState()
     val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
     var searchInput by remember { mutableStateOf(viewModel.searchQuery) }
@@ -803,13 +804,6 @@ fun CatalogScreen(
                             }
                         }
 
-                        // Упреждающая фоновая предзагрузка постеров (ImagePreloaderEngine) для сверхплавного 60/120 FPS скролла
-                        LaunchedEffect(displayedItems) {
-                            if (displayedItems.isNotEmpty()) {
-                                ImagePreloaderEngine.preloadCatalogItems(context, displayedItems, maxCount = 16)
-                            }
-                        }
-
                         // Если выбран фильтр по стране и найдено мало карточек, автоматически подгружаем следующую страницу
                         LaunchedEffect(displayedItems.size, currentCountry, isEndReached, isLoadingMore) {
                             if (isOnline && currentCountry.isNotEmpty() && displayedItems.size < 20 && !isEndReached && !isLoadingMore && searchInput.isEmpty()) {
@@ -938,14 +932,6 @@ fun CatalogScreen(
                                 }
                             }
 
-                            val firstVisibleIdx by remember { derivedStateOf { gridState.firstVisibleItemIndex } }
-                            LaunchedEffect(firstVisibleIdx) {
-                                if (firstVisibleIdx > 0 && firstVisibleIdx + 8 < displayedItems.size) {
-                                    val nextSlice = displayedItems.drop(firstVisibleIdx + 4).take(12)
-                                    ImagePreloaderEngine.preloadCatalogItems(context, nextSlice, maxCount = 12)
-                                }
-                            }
-
                             val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
                             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -1005,6 +991,7 @@ fun CatalogScreen(
                                             totalItems = displayedItems.size,
                                             columnsCount = columnsCount,
                                             cardHeight = cardHeight,
+                                            isBouncing = item.id == loadingMovieId,
                                             onNavigateIndex = navigateToItem,
                                             focusRequester = getFocusRequesterForIndex(index),
                                             onClick = {
@@ -1052,6 +1039,7 @@ fun RezkaItemCard(
     showMovieRating: Boolean = true,
     index: Int = 0,
     totalItems: Int = 1,
+    isBouncing: Boolean = false,
     focusRequester: FocusRequester? = null,
     onNavigateIndex: ((Int) -> Unit)? = null,
     onUp: (() -> Unit)? = null,
@@ -1075,6 +1063,10 @@ fun RezkaItemCard(
         modifier = modifier
             .fillMaxWidth()
             .then(if (cardHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.height(cardHeight) else Modifier)
+            .subtleCardBounce(
+                isBouncing = isBouncing,
+                shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp)
+            )
             .onKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyDown) {
                     when (keyEvent.nativeKeyEvent.keyCode) {
@@ -1131,7 +1123,7 @@ fun RezkaItemCard(
             .tvFocusableItem(
                 onClick = onClick,
                 onFocused = onFocused,
-                scaleFactor = if (isUltraDense) 1.02f else if (isDense) 1.035f else 1.05f,
+                scaleFactor = 1.0f,
                 shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp),
                 focusRequester = focusRequester
             )
@@ -1155,9 +1147,7 @@ fun RezkaItemCard(
                     model = item.imageUrl,
                     contentDescription = item.title,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .sharedPosterElement(key = item.id)
+                    modifier = Modifier.fillMaxSize()
                 )
 
                 // Bottom fade overlay to blend poster with black text block
