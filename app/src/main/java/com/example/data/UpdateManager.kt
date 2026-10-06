@@ -34,12 +34,13 @@ sealed interface UpdateState {
 object UpdateManager {
     private const val TAG = "UpdateManager"
 
-    private val client = OkHttpClient.Builder()
-        .dns(SafeDns)
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .build()
+    private val client = ResilientSslEngine.configure(
+        OkHttpClient.Builder()
+            .dns(SafeDns)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .followRedirects(true)
+    ).build()
 
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()

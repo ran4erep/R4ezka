@@ -26,6 +26,7 @@ class RezkaApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        com.example.data.ResilientSslEngine.init(this)
         com.example.ui.haptics.HapticEngine.init(this)
         com.example.data.NetworkMonitor.init(this)
         RezkaService.init(this)

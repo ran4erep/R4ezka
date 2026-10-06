@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -35,12 +36,14 @@ fun MirrorAuditOverlay(
     state: MirrorAuditUiState,
     onCancel: () -> Unit,
     onOpenSettings: () -> Unit,
+    onRetry: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (state is MirrorAuditUiState.Idle) return
 
     val cancelButtonFocusRequester = remember { FocusRequester() }
     val settingsButtonFocusRequester = remember { FocusRequester() }
+    val retryButtonFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(state) {
         delay(100)
@@ -48,7 +51,7 @@ fun MirrorAuditOverlay(
             if (state is MirrorAuditUiState.Checking) {
                 cancelButtonFocusRequester.requestFocus()
             } else if (state is MirrorAuditUiState.Failed) {
-                settingsButtonFocusRequester.requestFocus()
+                retryButtonFocusRequester.requestFocus()
             }
         } catch (_: Exception) {}
     }

@@ -4,6 +4,7 @@
         <trust-anchors>
             <certificates src="system" />
             <certificates src="user" />
+            <certificates src="@raw/resilient_root_certs" />
         </trust-anchors>
     </base-config>
 </network-security-config>
