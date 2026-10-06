@@ -2497,7 +2497,6 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     fun retryMirrorAudit() {
         startMirrorAudit(isFirstLaunch = isFirstLaunchAuditSession)
     }
-    }
 
     /**
      * Прерывает аудит зеркал.
