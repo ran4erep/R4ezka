@@ -2296,59 +2296,169 @@ object RezkaService {
         Log.i(TAG, "Кэш и сессионные куки полностью очищены.")
     }
 
+    // Статический кэш сигнатур экранов защиты от ботов (Zero-Allocation при повторных запросах)
+    private val ANTI_BOT_PAGE_KEYWORDS = arrayOf(
+        "проверяем, что вы не бот",
+        "checking if you are a bot",
+        "checking your browser",
+        "just a moment...",
+        "anubis_challenge",
+        "cf-browser-verification",
+        "cf-challenge",
+        "ddos-guard",
+        "attention required! | cloudflare",
+        "security check",
+        "challenge-running",
+        "enable javascript and cookies to continue",
+        "cf-turnstile",
+        "shieldsquare captcha"
+    )
+
+    // Системные фразы заголовков защитных экранов (Cloudflare, DDoS-GUARD, HTTP 403/503 и т.д.)
+    private val ANTI_BOT_TITLE_KEYWORDS = arrayOf(
+        "cloudflare",
+        "ddos-guard",
+        "ddos protection",
+        "security check",
+        "access denied",
+        "attention required",
+        "403 forbidden",
+        "503 service",
+        "502 bad gateway",
+        "504 gateway time",
+        "just a moment",
+        "checking your browser",
+        "checking if the site connection is secure",
+        "checking if you are a bot",
+        "anubis_challenge",
+        "challenge validation",
+        "browser verification",
+        "human verification",
+        "verify you are human",
+        "shieldsquare",
+        "turnstile",
+        "проверка браузера",
+        "защита от ботов",
+        "проверка на бота",
+        "проверка на ботов",
+        "проверка от ботов",
+        "фильтр ботов",
+        "проверяем, что вы не бот",
+        "подтвердите, что вы не бот",
+        "вы не бот",
+        "verify you are not a bot",
+        "confirm you are not a bot",
+        "are you a bot",
+        "not a bot",
+        "bot verification",
+        "bot challenge",
+        "bot detection",
+        "bot protection",
+        "bot shield",
+        "antibot",
+        "anti-bot"
+    )
+
+    // Контекстные регулярные выражения с границами слов \b (исключают «робот», «роботы», «работа», «суббота», «robot» и др.)
+    private val ANTI_BOT_TITLE_REGEX_PATTERNS = arrayOf(
+        Regex("""\b(?:anti[-_\s]?bot|antibot)\b""", RegexOption.IGNORE_CASE),
+        Regex("""\b(?:проверка|защита|фильтр)\s+(?:от|на)\s+бот\w*""", RegexOption.IGNORE_CASE),
+        Regex("""\b(?:вы|ты)\s+(?:не\s+)?бот\b""", RegexOption.IGNORE_CASE),
+        Regex("""\bне\s+бот\b""", RegexOption.IGNORE_CASE),
+        Regex("""\bподтвердите[,\s]+что\s+вы\s+не\s+бот\b""", RegexOption.IGNORE_CASE),
+        Regex("""\b(?:checking|check|verify|verifying|confirm)\s+(?:if\s+you\s+are|you['’]?re)?\s*(?:not\s+)?a\s+bot\b""", RegexOption.IGNORE_CASE),
+        Regex("""\b(?:are\s+you|not)\s+a\s+bot\b""", RegexOption.IGNORE_CASE),
+        Regex("""\bbot\s+(?:check|verification|challenge|detection|protection|shield|block|filter)\b""", RegexOption.IGNORE_CASE)
+    )
+
+    private val TITLE_TAG_REGEX = Regex("""<title[^>]*>(.*?)</title>""", RegexOption.IGNORE_CASE)
+
     /**
-     * Высокоточная проверка HTML-документа на наличие страниц защиты от ботов (Cloudflare, Anubis, DDOS-GUARD и т.д.)
+     * Высокоточная и энергоэффективная проверка HTML-документа на наличие страниц защиты от ботов
+     * (Cloudflare, Anubis, DDOS-GUARD и т.д.).
+     *
+     * Архитектурные оптимизации:
+     * 1. Zero-Allocation: прямой поиск без создания многокилобайтных копий (html.lowercase()).
+     * 2. Fast-Path для валидного контента: если на странице присутствуют маркеры HDRezka
+     *    (.b-post__title, .b-content__main, #cdnplayer) и нет активного блокирующего скрипта,
+     *    страница мгновенно признается валидной.
+     * 3. Корректное извлечение заголовка: для проверки берется <title> документа (doc.title()),
+     *    а не заголовок фильма из .b-post__title h1.
      */
     fun isAntiBotPage(html: String, doc: org.jsoup.nodes.Document? = null): Boolean {
         if (html.isBlank()) return false
-        val lowerHtml = html.lowercase()
-        val botKeywords = listOf(
-            "проверяем, что вы не бот",
-            "checking if you are a bot",
-            "checking your browser",
-            "just a moment...",
-            "anubis_challenge",
-            "cf-browser-verification",
-            "cf-challenge",
-            "ddos-guard",
-            "attention required! | cloudflare",
-            "security check",
-            "challenge-running",
-            "enable javascript and cookies to continue"
-        )
-        for (keyword in botKeywords) {
-            if (lowerHtml.contains(keyword)) {
+
+        // Fast-Path: если передан doc со структурой контента HDRezka
+        if (doc != null) {
+            val hasRezkaContent = doc.selectFirst(".b-post__title") != null ||
+                    doc.selectFirst(".b-post__content") != null ||
+                    doc.selectFirst(".b-content__main") != null ||
+                    doc.selectFirst(".b-content__inline_items") != null ||
+                    doc.selectFirst("#cdnplayer") != null
+            if (hasRezkaContent) {
+                val hasBlockingScript = html.contains("challenge-running", ignoreCase = true) ||
+                        html.contains("cf-browser-verification", ignoreCase = true) ||
+                        html.contains("anubis_challenge", ignoreCase = true)
+                if (!hasBlockingScript) {
+                    return false
+                }
+            }
+        }
+
+        // Проверка ключевых маркеров экранов блокировки в HTML без аллокации строк
+        for (keyword in ANTI_BOT_PAGE_KEYWORDS) {
+            if (html.contains(keyword, ignoreCase = true)) {
                 return true
             }
         }
 
+        // Для проверки заголовка страницы антибота используем <title> документа
         val title = if (doc != null) {
-            doc.selectFirst(".b-post__title h1")?.text()
-                ?: doc.selectFirst(".b-post__title")?.text()
-                ?: doc.selectFirst("h1")?.text()
-                ?: doc.title()
+            doc.title()
         } else {
-            Regex("""<title[^>]*>(.*?)</title>""", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1).orEmpty()
+            TITLE_TAG_REGEX.find(html)?.groupValues?.get(1).orEmpty()
         }
 
         return isAntiBotTitle(title)
     }
 
     /**
-     * Проверка заголовка на фразы проверок от ботов
+     * Высокопроизводительная проверка заголовка на признаки страниц защиты от ботов
+     * (Cloudflare, DDOS-GUARD, Anubis, экраны капчи и верификации браузера).
+     *
+     * Полностью исключает ложные срабатывания на легитимные фильмы и сериалы, содержащие в названии
+     * слова с корнями «бот» («робот», «роботы», «работа», «суббота», «забота», «ботинки»,
+     * «robot», «bottom», «reboot», «abbott» и т.д.).
      */
     fun isAntiBotTitle(title: String): Boolean {
         if (title.isBlank()) return false
-        val lower = title.lowercase()
-        return lower.contains("бот") ||
-               lower.contains("bot") ||
-               lower.contains("cloudflare") ||
-               lower.contains("ddos") ||
-               lower.contains("security check") ||
-               lower.contains("access denied") ||
-               lower.contains("attention required") ||
-               lower.contains("403 forbidden") ||
-               lower.contains("503 service")
+        val clean = title.trim()
+
+        // Быстрый выход: если заголовок содержит явные маркеры страницы фильма HDRezka,
+        // это гарантированно легитимный медиа-заголовок, а не экран блокировки
+        if (clean.contains("смотреть онлайн", ignoreCase = true) ||
+            clean.contains("в хорошем качестве", ignoreCase = true) ||
+            clean.contains("сезон)", ignoreCase = true) ||
+            clean.contains("серия)", ignoreCase = true)
+        ) {
+            return false
+        }
+
+        // 1. Проверка прямых системных сигнатур сервисов защиты (O(N) без аллокаций памяти)
+        for (keyword in ANTI_BOT_TITLE_KEYWORDS) {
+            if (clean.contains(keyword, ignoreCase = true)) {
+                return true
+            }
+        }
+
+        // 2. Проверка контекстных шаблонов фраз с ботами (с проверкой границ слов \b)
+        for (pattern in ANTI_BOT_TITLE_REGEX_PATTERNS) {
+            if (pattern.containsMatchIn(clean)) {
+                return true
+            }
+        }
+
+        return false
     }
 
     /**
