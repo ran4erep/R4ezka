@@ -34,12 +34,13 @@ object FirebaseSyncManager {
 
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)
-        .build()
+    private val httpClient = ResilientSslEngine.configure(
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+    ).build()
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 

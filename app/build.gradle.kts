@@ -14,7 +14,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.ran4erep.r4ezka"
+    applicationId = "com.ran4erep.r4ezka.test"
     minSdk = 24
     targetSdk = 36
     versionCode = 4
@@ -121,6 +121,7 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.androidx.work.runtime.ktx)
+  implementation(libs.conscrypt.android)
   implementation(libs.coil.compose)
   implementation(libs.coil.svg)
   implementation(libs.jsoup)

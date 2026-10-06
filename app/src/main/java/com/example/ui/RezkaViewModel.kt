@@ -2351,7 +2351,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         auditJob = viewModelScope.launch(Dispatchers.IO) {
-            val chunks = mirrors.chunked(5)
+            val chunks = mirrors.chunked(3)
             var selectedWorkingMirror: String? = null
             var selectedCatalogItems: List<RezkaItem>? = null
             var firstCatalogOnlyMirror: String? = null
@@ -2370,16 +2370,16 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-                // Параллельно асинхронно проверяем пачку из 5 зеркал
+                // Параллельно асинхронно проверяем пачку из 3 зеркал (оптимально для CPU и Wi-Fi стека ТВ)
                 val chunkDeferreds = chunk.map { mirrorUrl ->
                     async(Dispatchers.IO) {
                         val checkRes = RezkaService.testMirrorWithStreamCheck(mirrorUrl)
-                        val host = mirrorUrl.removePrefix("https://").removePrefix("http://").trimEnd('/')
+                        val host = checkRes.mirror.removePrefix("https://").removePrefix("http://").trimEnd('/')
                         withContext(Dispatchers.Main) {
                             checkedCount++
                             val statusMsg = when {
                                 checkRes.streamSuccess -> "$host: успешно (поток работает)"
-                                checkRes.catalogSuccess -> "$host: каталог OK (поток недоступен)"
+                                checkRes.catalogSuccess -> "$host: каталог OK"
                                 else -> "$host: недоступно"
                             }
                             _mirrorAuditState.value = MirrorAuditUiState.Checking(
@@ -2398,16 +2398,16 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 val chunkResults = chunkDeferreds.awaitAll()
                 if (!isActive) return@launch
 
-                // Анализируем результаты пачки в строгом порядке следования в списке (начиная с основного)
+                // Анализируем результаты пачки в строгом порядке следования в списке
                 for (m in chunk) {
                     val result = chunkResults.firstOrNull { it.first == m }?.second ?: continue
                     if (result.streamSuccess && selectedWorkingMirror == null) {
-                        selectedWorkingMirror = m
+                        selectedWorkingMirror = result.mirror
                         selectedCatalogItems = result.catalogItems
                         break
                     }
                     if (result.catalogSuccess && firstCatalogOnlyMirror == null) {
-                        firstCatalogOnlyMirror = m
+                        firstCatalogOnlyMirror = result.mirror
                         firstCatalogOnlyItems = result.catalogItems
                     }
                 }
@@ -2415,6 +2415,36 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 // Если найдено приоритетное зеркало с работающим потоком — завершаем поиск
                 if (selectedWorkingMirror != null) {
                     break
+                }
+            }
+
+            if (!isActive) return@launch
+
+            // Если прямого совпадения нет — аварийное спасательное сканирование основных зеркал по HTTP/HTTPS
+            if (selectedWorkingMirror == null && firstCatalogOnlyMirror == null) {
+                val rescueCandidates = listOf(
+                    "https://rezka-tv.org",
+                    "http://rezka-tv.org",
+                    "https://hdrezka.me",
+                    "http://hdrezka.me",
+                    "https://hdrezka.club",
+                    "http://hdrezka.club",
+                    "https://hdrezka.ag",
+                    "http://hdrezka.ag",
+                    "https://rezka.ag",
+                    "http://rezka.ag"
+                )
+                for (cand in rescueCandidates) {
+                    if (!isActive) break
+                    val catRes = RezkaService.testMirrorWithCatalog(cand)
+                    if (catRes.isSuccess) {
+                        val items = catRes.getOrNull()
+                        if (!items.isNullOrEmpty()) {
+                            firstCatalogOnlyMirror = cand
+                            firstCatalogOnlyItems = items
+                            break
+                        }
+                    }
                 }
             }
 
@@ -2446,12 +2476,27 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     if (isFirstLaunch) {
                         RezkaService.markFirstLaunchAuditDone()
                     }
-                    _mirrorAuditState.value = MirrorAuditUiState.Failed(
-                        "Не найдено ни одного работающего зеркала... :(\nПопробуйте указать работающий адрес зеркала вручную в настройках."
-                    )
+                    val isClockDesync = NetworkSecurityEngine.isSystemClockDesynchronized()
+                    val errorMessage = if (isClockDesync) {
+                        "На телевизоре сбиты дата и время (рассинхронизация системных часов).\n\n" +
+                        "Из-за этого защищенное подключение к зеркалам отклоняется системой.\n" +
+                        "Откройте «Настройки ТВ» -> «Дата и время» и включите «Использовать время сети» или установите актуальную дату."
+                    } else {
+                        "Не найдено ни одного работающего зеркала... :(\n" +
+                        "Проверьте доступ в интернет на телевизоре или укажите рабочий адрес зеркала в настройках."
+                    }
+                    _mirrorAuditState.value = MirrorAuditUiState.Failed(errorMessage)
                 }
             }
         }
+    }
+
+    /**
+     * Перезапускает процедуру аудита зеркал.
+     */
+    fun retryMirrorAudit() {
+        startMirrorAudit(isFirstLaunch = isFirstLaunchAuditSession)
+    }
     }
 
     /**

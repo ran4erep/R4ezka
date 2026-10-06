@@ -150,12 +150,13 @@ object SafeDns : Dns {
     }
 
     private val dohClient by lazy {
-        OkHttpClient.Builder()
-            .dns(bootstrapDns)
-            .connectTimeout(1800, TimeUnit.MILLISECONDS)
-            .readTimeout(1800, TimeUnit.MILLISECONDS)
-            .followRedirects(true)
-            .build()
+        ResilientSslEngine.configure(
+            OkHttpClient.Builder()
+                .dns(bootstrapDns)
+                .connectTimeout(1800, TimeUnit.MILLISECONDS)
+                .readTimeout(1800, TimeUnit.MILLISECONDS)
+                .followRedirects(true)
+        ).build()
     }
 
     private val DOH_ENDPOINTS = listOf(
@@ -1013,10 +1014,11 @@ object RezkaService {
 
     val cookieJar = PersistentCookieJar()
 
-    val client = OkHttpClient.Builder()
-        .dns(SafeDns)
-        .cookieJar(cookieJar)
-        .addInterceptor { chain ->
+    val client = ResilientSslEngine.configure(
+        OkHttpClient.Builder()
+            .dns(SafeDns)
+            .cookieJar(cookieJar)
+            .addInterceptor { chain ->
             val original = chain.request()
             val requestBuilder = original.newBuilder()
             if (original.header("User-Agent") == null) {
@@ -1052,7 +1054,7 @@ object RezkaService {
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .followRedirects(true)
-        .build()
+    ).build()
 
     /**
      * Оптимизированный HTTP-клиент для загрузки аватарок и изображений с сайта HDRezka.
