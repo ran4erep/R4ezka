@@ -1991,14 +1991,17 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Fetches stream URLs for playback (with offline local fallback)
+     * Fetches stream URLs for playback or download.
+     * @param forceOnline When true, forces network request for direct remote HTTP/HTTPS streams
+     *                    (critical for downloading via system DownloadManager or refreshing online links).
      */
     suspend fun getStreamUrls(
         itemId: String,
         translatorId: String,
         isSeries: Boolean,
         season: Int = 0,
-        episode: String = ""
+        episode: String = "",
+        forceOnline: Boolean = false
     ): List<StreamUrl> {
         val cleanNum = itemId.filter { it.isDigit() }
         val offlineList = repository.getOfflineMediaByItemId(itemId).ifEmpty {
@@ -2007,37 +2010,64 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        // Высокоточный поиск сохраненного оффлайн медиа (СТРОГО запрошенный сезон и серия, без подмены чужими сериями!)
         val matchingOffline = if (isSeries) {
-            val cleanEp = episode.filter { it.isDigit() }
-            offlineList.find {
-                it.season == season && (it.episode == episode || (cleanEp.isNotEmpty() && it.episode.filter { c -> c.isDigit() } == cleanEp)) &&
-                DownloadHelper.resolveOfflineVideoFile(it, getApplication()) != null
+            val cleanTargetEp = episode.filter { it.isDigit() }
+            offlineList.firstOrNull { entity ->
+                if (entity.season != season) return@firstOrNull false
+                val cleanEntityEp = entity.episode.filter { it.isDigit() }
+                val isEpisodeMatch = entity.episode == episode ||
+                    (cleanTargetEp.isNotEmpty() && cleanEntityEp.isNotEmpty() && cleanTargetEp == cleanEntityEp)
+                isEpisodeMatch && DownloadHelper.resolveOfflineVideoFile(entity, getApplication()) != null
             }
-                ?: offlineList.find { it.season == season && DownloadHelper.resolveOfflineVideoFile(it, getApplication()) != null }
-                ?: offlineList.firstOrNull { DownloadHelper.resolveOfflineVideoFile(it, getApplication()) != null }
         } else {
-            offlineList.find { DownloadHelper.resolveOfflineVideoFile(it, getApplication()) != null }
+            offlineList.firstOrNull { DownloadHelper.resolveOfflineVideoFile(it, getApplication()) != null }
         }
 
-        if (matchingOffline != null) {
+        val isExplicitOffline = !NetworkMonitor.isOnline.value || itemId.startsWith("offline_")
+
+        // 1. Если сети нет или карточка открыта из оффлайн библиотеки (и мы не требуем онлайн)
+        if (!forceOnline && isExplicitOffline && matchingOffline != null) {
             val resolvedFile = DownloadHelper.resolveOfflineVideoFile(matchingOffline, getApplication())
             if (resolvedFile != null && resolvedFile.exists()) {
-                if (!NetworkMonitor.isOnline.value || itemId.startsWith("offline_") || offlineList.isNotEmpty()) {
-                    return listOf(
-                        StreamUrl(
-                            quality = matchingOffline.quality.ifEmpty { "1080p" },
-                            url = "file://${resolvedFile.absolutePath}",
-                            directMp4Url = "file://${resolvedFile.absolutePath}"
-                        )
+                return listOf(
+                    StreamUrl(
+                        quality = matchingOffline.quality.ifEmpty { "1080p" },
+                        url = "file://${resolvedFile.absolutePath}",
+                        directMp4Url = "file://${resolvedFile.absolutePath}"
                     )
-                }
+                )
             }
         }
 
+        // 2. Если сети нет, а конкретной серии нет в оффлайне
+        if (!forceOnline && isExplicitOffline && matchingOffline == null) {
+            val epInfo = if (isSeries) "сезон $season, серия $episode" else "видео"
+            throw java.io.IOException("Эпизод ($epInfo) не найден в оффлайн библиотеке")
+        }
+
+        // 3. Запрос потоков через сеть (для скачивания или онлайн просмотра)
         return try {
-            RezkaService.getStreamUrls(itemId, translatorId, isSeries, season, episode)
+            val onlineStreams = RezkaService.getStreamUrls(itemId, translatorId, isSeries, season, episode)
+            // Если запрос для воспроизведения (не скачивания) и серия уже скачана локально — добавляем локальный файл
+            if (!forceOnline && matchingOffline != null) {
+                val resolvedFile = DownloadHelper.resolveOfflineVideoFile(matchingOffline, getApplication())
+                if (resolvedFile != null && resolvedFile.exists()) {
+                    val localStream = StreamUrl(
+                        quality = "Локально (${matchingOffline.quality.ifEmpty { "1080p" }})",
+                        url = "file://${resolvedFile.absolutePath}",
+                        directMp4Url = "file://${resolvedFile.absolutePath}"
+                    )
+                    listOf(localStream) + onlineStreams
+                } else {
+                    onlineStreams
+                }
+            } else {
+                onlineStreams
+            }
         } catch (e: Exception) {
-            if (matchingOffline != null) {
+            // Если сеть дала сбой, но точный локальный файл есть на устройстве
+            if (!forceOnline && matchingOffline != null) {
                 val resolvedFile = DownloadHelper.resolveOfflineVideoFile(matchingOffline, getApplication())
                 if (resolvedFile != null && resolvedFile.exists()) {
                     return listOf(
@@ -2059,14 +2089,14 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         translatorId: String,
         translatorUrl: String = ""
     ): List<Season> {
-        val cleanNum = numericId.filter { it.isDigit() }
-        val offlineList = repository.getOfflineMediaByItemId(numericId).ifEmpty {
-            repository.getAllOfflineMediaList().filter {
-                it.itemId == numericId || (cleanNum.isNotEmpty() && (it.itemId == cleanNum || it.itemId.startsWith("$cleanNum-") || it.itemId.filter { c -> c.isDigit() } == cleanNum))
+        val isExplicitOffline = !NetworkMonitor.isOnline.value || numericId.startsWith("offline_")
+        if (isExplicitOffline) {
+            val cleanNum = numericId.filter { it.isDigit() }
+            val offlineList = repository.getOfflineMediaByItemId(numericId).ifEmpty {
+                repository.getAllOfflineMediaList().filter {
+                    it.itemId == numericId || (cleanNum.isNotEmpty() && (it.itemId == cleanNum || it.itemId.startsWith("$cleanNum-") || it.itemId.filter { c -> c.isDigit() } == cleanNum))
+                }
             }
-        }
-
-        if (!NetworkMonitor.isOnline.value || offlineList.isNotEmpty()) {
             if (offlineList.isNotEmpty()) {
                 val filtered = offlineList.filter { it.translatorId == translatorId || translatorId.isBlank() }
                     .ifEmpty { offlineList }
@@ -2091,7 +2121,12 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             NetworkMonitor.handleNetworkException(e)
-            val offlineList = repository.getOfflineMediaByItemId(numericId)
+            val cleanNum = numericId.filter { it.isDigit() }
+            val offlineList = repository.getOfflineMediaByItemId(numericId).ifEmpty {
+                repository.getAllOfflineMediaList().filter {
+                    it.itemId == numericId || (cleanNum.isNotEmpty() && (it.itemId == cleanNum || it.itemId.startsWith("$cleanNum-") || it.itemId.filter { c -> c.isDigit() } == cleanNum))
+                }
+            }
             if (offlineList.isNotEmpty()) {
                 offlineList.groupBy { it.season }.map { (sNum, eps) ->
                     Season(

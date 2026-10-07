@@ -302,13 +302,20 @@ fun DetailScreen(
                         translatorId = trans.id,
                         isSeries = isSeries,
                         season = if (isSeries) seasonId else 0,
-                        episode = if (isSeries) epId else ""
+                        episode = if (isSeries) epId else "",
+                        forceOnline = true
                     )
-                    if (streams.isNotEmpty()) {
-                        val chosenIdx = RezkaService.findBestQualityIndex(streams, quality)
-                        val stream = streams.getOrNull(chosenIdx) ?: streams.first()
+                    // Для скачивания через DownloadManager отбираем только сетевые потоки HTTP/HTTPS
+                    val remoteStreams = streams.filter {
+                        !it.url.startsWith("file://") && !it.directMp4Url.startsWith("file://")
+                    }
+                    if (remoteStreams.isNotEmpty()) {
+                        val chosenIdx = RezkaService.findBestQualityIndex(remoteStreams, quality)
+                        val stream = remoteStreams.getOrNull(chosenIdx) ?: remoteStreams.first()
                         val downloadUrl = stream.directMp4Url.ifEmpty { stream.url }
-                        if (isOfflineLibrary) {
+                        if (downloadUrl.startsWith("file://") || downloadUrl.startsWith("content://")) {
+                            Toast.makeText(context, "Ошибка: не удалось получить сетевой адрес потока", Toast.LENGTH_SHORT).show()
+                        } else if (isOfflineLibrary) {
                             DownloadHelper.downloadToOfflineLibrary(
                                 context = context,
                                 detail = currentDetail,
