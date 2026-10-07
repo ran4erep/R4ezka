@@ -1550,6 +1550,11 @@ object RezkaService {
     private val _cardGridMode = MutableStateFlow(GRID_MODE_AUTO)
     val cardGridMode: StateFlow<String> = _cardGridMode.asStateFlow()
 
+    const val KEY_SERIES_BADGE_MODE = "series_badge_mode"
+
+    private val _seriesBadgeMode = MutableStateFlow(com.example.ui.util.SeriesBadgeMode.ADAPTIVE)
+    val seriesBadgeMode: StateFlow<com.example.ui.util.SeriesBadgeMode> = _seriesBadgeMode.asStateFlow()
+
     const val KEY_DEFAULT_CATALOG_TYPE = "default_catalog_type"
     const val KEY_DEFAULT_CATALOG_SECTION = "default_catalog_section"
     const val KEY_DNS_PREFERENCE = "dns_preference"
@@ -1614,6 +1619,9 @@ object RezkaService {
 
         val savedGridMode = prefs?.getString("card_grid_mode", GRID_MODE_AUTO) ?: GRID_MODE_AUTO
         _cardGridMode.value = if (savedGridMode == GRID_MODE_AUTO || parseCardGrid(savedGridMode) != null) savedGridMode else GRID_MODE_AUTO
+
+        val savedBadgeModeStr = prefs?.getString(KEY_SERIES_BADGE_MODE, com.example.ui.util.SeriesBadgeMode.ADAPTIVE.id)
+        _seriesBadgeMode.value = com.example.ui.util.SeriesBadgeMode.fromId(savedBadgeModeStr)
 
         val savedTypeStr = prefs?.getString(KEY_DEFAULT_CATALOG_TYPE, RezkaType.MOVIE.name) ?: RezkaType.MOVIE.name
         val parsedType = try {
@@ -1738,6 +1746,11 @@ object RezkaService {
         val validMode = if (clean == GRID_MODE_AUTO || parseCardGrid(clean) != null) clean else GRID_MODE_AUTO
         _cardGridMode.value = validMode
         prefs?.edit()?.putString("card_grid_mode", validMode)?.apply()
+    }
+
+    fun setSeriesBadgeMode(mode: com.example.ui.util.SeriesBadgeMode) {
+        _seriesBadgeMode.value = mode
+        prefs?.edit()?.putString(KEY_SERIES_BADGE_MODE, mode.id)?.apply()
     }
 
     fun setDefaultCatalogType(type: RezkaType) {

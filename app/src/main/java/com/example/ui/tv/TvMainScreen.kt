@@ -38,6 +38,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import com.example.ui.util.AdaptivePosterBadge
+import com.example.ui.util.PosterBadgeEngine
+import com.example.ui.util.SeriesBadgeMode
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -52,6 +55,8 @@ import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import com.example.ui.util.rememberSavedLazyGridState
+import com.example.ui.util.VoiceSearchButton
+import com.example.ui.util.rememberVoiceSearchLauncher
 import com.example.data.*
 import com.example.ui.CatalogState
 import com.example.ui.RezkaViewModel
@@ -476,6 +481,7 @@ private fun TvCatalogContent(
     val coroutineScope = rememberCoroutineScope()
     val loadingMovieId by viewModel.loadingMovieId.collectAsState()
     val cardGridMode by viewModel.cardGridMode.collectAsState()
+    val seriesBadgeMode by viewModel.seriesBadgeMode.collectAsState()
     val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
     val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
     fun getFocusRequesterForIndex(index: Int): FocusRequester {
@@ -847,6 +853,8 @@ private fun TvCatalogContent(
                                         totalItems = items.size,
                                         columnCount = tvGridCols,
                                         cardHeight = tvCardHeight,
+                                        cardWidth = resolvedGrid.estimatedCardWidth,
+                                        seriesBadgeMode = seriesBadgeMode,
                                         isBouncing = item.id == loadingMovieId,
                                         onClick = {
                                             viewModel.commitSearchQuery(searchInput)
@@ -932,10 +940,12 @@ private fun TvHeroPreview(
                                 shape = RoundedCornerShape(6.dp)
                             ) {
                                 Text(
-                                    text = item.rating,
+                                    text = PosterBadgeEngine.getVariants(item.rating).clean.ifEmpty { item.rating },
                                     color = Color.White,
                                     fontSize = if (isCompact) 10.sp else 11.sp,
                                     fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
@@ -1052,23 +1062,66 @@ private fun TvCatalogFiltersBar(
             .padding(bottom = 6.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // 1. Поиск (сверху) - оптимизированная и аккуратная строка поиска для ТВ
-        TvCompactSearchBar(
-            query = searchQuery,
-            onQueryChanged = onSearchQueryChanged,
-            searchBarFocusRequester = searchBarFocusRequester,
-            onLeft = { sidebarFocusRequester.requestFocusSafe() },
-            onDown = {
-                if (searchHistory.isNotEmpty() && isHistoryVisible) {
-                    firstHistoryFocusRequester.requestFocusSafe()
-                } else {
-                    categoryFocusRequester.requestFocusSafe()
+        val tvVoiceButtonFocusRequester = remember { FocusRequester() }
+        val launchTvVoiceSearch = rememberVoiceSearchLauncher(
+            prompt = "Назовите фильм или сериал"
+        ) { spokenText ->
+            onSearchQueryChanged(spokenText)
+            onSearchCommit?.invoke()
+        }
+
+        // 1. Поиск (сверху) - строка поиска и кнопка голосового ввода в одну линию для ТВ
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TvCompactSearchBar(
+                query = searchQuery,
+                onQueryChanged = onSearchQueryChanged,
+                searchBarFocusRequester = searchBarFocusRequester,
+                onLeft = { sidebarFocusRequester.requestFocusSafe() },
+                onRight = { tvVoiceButtonFocusRequester.requestFocusSafe() },
+                onDown = {
+                    if (searchHistory.isNotEmpty() && isHistoryVisible) {
+                        firstHistoryFocusRequester.requestFocusSafe()
+                    } else {
+                        categoryFocusRequester.requestFocusSafe()
+                    }
+                },
+                onSearchCommit = onSearchCommit,
+                onFocusChanged = { focused -> isSearchInputFocused = focused },
+                modifier = Modifier.weight(1f)
+            )
+
+            VoiceSearchButton(
+                onClick = launchTvVoiceSearch,
+                size = 42.dp,
+                iconSize = 20.dp,
+                shape = RoundedCornerShape(10.dp),
+                focusRequester = tvVoiceButtonFocusRequester,
+                testTag = "tv_voice_search_button",
+                modifier = Modifier.onKeyEvent { keyEvent ->
+                    if (keyEvent.type == KeyEventType.KeyDown) {
+                        when (keyEvent.nativeKeyEvent.keyCode) {
+                            AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                searchBarFocusRequester.requestFocusSafe()
+                                true
+                            }
+                            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                if (searchHistory.isNotEmpty() && isHistoryVisible) {
+                                    firstHistoryFocusRequester.requestFocusSafe()
+                                } else {
+                                    categoryFocusRequester.requestFocusSafe()
+                                }
+                                true
+                            }
+                            else -> false
+                        }
+                    } else false
                 }
-            },
-            onSearchCommit = onSearchCommit,
-            onFocusChanged = { focused -> isSearchInputFocused = focused },
-            modifier = Modifier.fillMaxWidth()
-        )
+            )
+        }
 
         // Подсказки недавних запросов из истории поиска для ТВ
         if (isHistoryVisible && searchHistory.isNotEmpty()) {
@@ -1486,6 +1539,7 @@ fun TvCompactSearchBar(
     modifier: Modifier = Modifier,
     searchBarFocusRequester: FocusRequester? = null,
     onLeft: (() -> Unit)? = null,
+    onRight: (() -> Unit)? = null,
     onDown: (() -> Unit)? = null,
     onSearchCommit: (() -> Unit)? = null,
     onFocusChanged: ((Boolean) -> Unit)? = null
@@ -1534,6 +1588,12 @@ fun TvCompactSearchBar(
                         AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
                             if (!isEditing && onLeft != null) {
                                 onLeft()
+                                true
+                            } else false
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if (!isEditing && onRight != null) {
+                                onRight()
                                 true
                             } else false
                         }
@@ -1694,6 +1754,8 @@ private fun TvMovieCard(
     totalItems: Int,
     columnCount: Int,
     cardHeight: Dp = Dp.Unspecified,
+    cardWidth: Dp = Dp.Unspecified,
+    seriesBadgeMode: SeriesBadgeMode = RezkaService.seriesBadgeMode.value,
     isBouncing: Boolean = false,
     onClick: () -> Unit,
     onFocused: () -> Unit,
@@ -1794,25 +1856,16 @@ private fun TvMovieCard(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                if (item.rating.isNotEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(if (isUltraDense) 2.dp else if (isDense) 4.dp else 6.dp)
-                            .background(CinemaPrimary, RoundedCornerShape(if (isUltraDense) 3.dp else if (isDense) 4.dp else 6.dp))
-                            .padding(
-                                horizontal = if (isUltraDense) 3.dp else if (isDense) 4.dp else 6.dp,
-                                vertical = if (isUltraDense) 1.dp else if (isDense) 2.dp else 3.dp
-                            )
-                    ) {
-                        Text(
-                            text = item.rating,
-                            color = Color.White,
-                            fontSize = if (isUltraDense) 7.sp else if (isDense) 8.sp else 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
+                // Adaptive Episode Badge (Series only)
+                AdaptivePosterBadge(
+                    rawText = item.rating,
+                    isSeries = item.type != RezkaType.MOVIE,
+                    columnsCount = columnCount,
+                    cardHeight = cardHeight,
+                    cardWidth = cardWidth,
+                    seriesBadgeMode = seriesBadgeMode,
+                    modifier = Modifier.align(Alignment.TopEnd)
+                )
             }
 
             Column(
