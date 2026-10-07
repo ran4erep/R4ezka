@@ -2976,6 +2976,7 @@ fun DetailScreen(
         // Кнопка быстрой прокрутки вверх к началу комментариев
         val showScrollToTop by remember {
             derivedStateOf {
+                if (isTvMode) return@derivedStateOf false
                 if (isPlayerOpen) return@derivedStateOf false
                 val success = detailState as? DetailState.Success ?: return@derivedStateOf false
                 if (commentsSectionIndex < 0) return@derivedStateOf false
@@ -2998,6 +2999,7 @@ fun DetailScreen(
         // Одновременно с кнопкой подъема наверх отображаться не может
         val showScrollToTranslators by remember {
             derivedStateOf {
+                if (isTvMode) return@derivedStateOf false
                 if (isPlayerOpen) return@derivedStateOf false
                 if (showScrollToTop) return@derivedStateOf false
                 if (translatorsSectionIndex < 0) return@derivedStateOf false
