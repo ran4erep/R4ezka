@@ -99,17 +99,26 @@ fun TvDetailContent(
     val backButtonFocusRequester = remember { FocusRequester() }
     val trailerButtonFocusRequester = remember { FocusRequester() }
     val favoriteButtonFocusRequester = remember { FocusRequester() }
+    val scrollToWatchButtonFocusRequester = remember { FocusRequester() }
     val shareButtonFocusRequester = remember { FocusRequester() }
     val mainActionFocusRequester = remember { FocusRequester() }
     val movieDownloadButtonFocusRequester = remember { FocusRequester() }
     val rightScrollState = scrollState ?: rememberLazyListState()
     var isActorsExpanded by remember { mutableStateOf(false) }
 
+    val tvTranslatorsWatchIndex = remember(detail) {
+        var idx = 4 // 0: Header & actions, 1: Info card, 2: Actors, 3: Description
+        if (detail.franchiseItems.isNotEmpty()) {
+            idx++
+        }
+        idx
+    }
+
     val displayComments = remember(commentsState.comments, detail.comments) {
         if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
     }
 
-    // Автофокус на кнопке "В закладки" и сброс скролла наверх только при смене фильма на ТВ
+    // Автофокус на кнопке "К просмотру" и сброс скролла наверх только при смене фильма на ТВ
     var previousDetailId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(detail.id) {
         ImagePreloaderEngine.preloadDetailImages(context, detail)
@@ -117,7 +126,7 @@ fun TvDetailContent(
             if (previousDetailId != null) {
                 rightScrollState.scrollToItem(0)
             }
-            favoriteButtonFocusRequester.requestFocusSafe()
+            scrollToWatchButtonFocusRequester.requestFocusSafe()
             previousDetailId = detail.id
         }
     }
@@ -438,7 +447,7 @@ fun TvDetailContent(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Чипы: Год, Кнопка добавления в закладки
+                        // Чипы: Год, Кнопки "К просмотру", "В закладки", "Поделиться"
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -458,14 +467,11 @@ fun TvDetailContent(
                                 }
                             }
 
-                            // Кнопка "В закладки" (доступна прямо в панели действий)
+                            // Кнопка "К просмотру" (эксклюзивно для телевизоров, прокручивает к плееру/выбору озвучки)
                             Surface(
                                 color = CinemaCard,
                                 shape = RoundedCornerShape(6.dp),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (isFavorite) CinemaPrimary else CinemaSecondary.copy(alpha = 0.3f)
-                                ),
+                                border = BorderStroke(1.dp, CinemaSecondary.copy(alpha = 0.3f)),
                                 modifier = Modifier
                                     .focusProperties {
                                         left = backButtonFocusRequester
@@ -476,6 +482,68 @@ fun TvDetailContent(
                                             when (event.nativeKeyEvent.keyCode) {
                                                 AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
                                                     backButtonFocusRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                    true
+                                                }
+                                                else -> false
+                                            }
+                                        } else false
+                                    }
+                                    .tvFocusableItem(
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                if (tvTranslatorsWatchIndex >= 0) {
+                                                    rightScrollState.animateScrollToItem(tvTranslatorsWatchIndex)
+                                                }
+                                            }
+                                        },
+                                        scaleFactor = 1.05f,
+                                        shape = RoundedCornerShape(6.dp),
+                                        focusRequester = scrollToWatchButtonFocusRequester,
+                                        lazyListState = rightScrollState
+                                    )
+                                    .testTag("tv_scroll_to_watch_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Visibility,
+                                        contentDescription = "К просмотру",
+                                        tint = CinemaTextWhite,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        text = "К просмотру",
+                                        color = CinemaTextWhite,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            // Кнопка "В закладки" (доступна прямо в панели действий)
+                            Surface(
+                                color = CinemaCard,
+                                shape = RoundedCornerShape(6.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isFavorite) CinemaPrimary else CinemaSecondary.copy(alpha = 0.3f)
+                                ),
+                                modifier = Modifier
+                                    .focusProperties {
+                                        left = scrollToWatchButtonFocusRequester
+                                        up = FocusRequester.Cancel
+                                    }
+                                    .onKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyDown) {
+                                            when (event.nativeKeyEvent.keyCode) {
+                                                AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                    scrollToWatchButtonFocusRequester.requestFocusSafe()
                                                     true
                                                 }
                                                 AndroidKeyEvent.KEYCODE_DPAD_UP -> {
