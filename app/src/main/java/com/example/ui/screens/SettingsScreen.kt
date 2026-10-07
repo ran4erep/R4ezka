@@ -53,6 +53,7 @@ import coil.request.ImageRequest
 import com.example.R
 import com.example.data.DownloadHelper
 import com.example.data.DnsPreference
+import com.example.data.ResilientSslEngine
 import com.example.data.SafeDns
 import com.example.data.OfflineMediaEntity
 import com.example.data.RezkaService
@@ -101,6 +102,9 @@ fun SettingsScreen(
     var dnsDropdownExpanded by remember { mutableStateOf(false) }
     var isTestingDns by remember { mutableStateOf(false) }
     var dnsCheckResult by remember { mutableStateOf<String?>(null) }
+    var isTestingSslFallback by remember { mutableStateOf(false) }
+    var sslFallbackResult by remember { mutableStateOf<String?>(null) }
+    var isForceFallbackActive by remember { mutableStateOf(ResilientSslEngine.forceFallbackMode) }
     val presetMirrors = viewModel.presetMirrors
 
     var customMirrorInput by remember(currentMirror) { mutableStateOf(currentMirror) }
@@ -873,6 +877,122 @@ fun SettingsScreen(
                                         )
                                         .padding(horizontal = 12.dp, vertical = 8.dp)
                                         .testTag("dns_check_result")
+                                ) {
+                                    Text(
+                                        text = text,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (isOk) CinemaGreen else CinemaPrimary
+                                    )
+                                }
+                            }
+                        }
+
+                        // Временная кнопка тестирования Fallback SSL
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            val testFallbackAction: () -> Unit = {
+                                HapticEngine.get().perform(HapticType.CONFIRM)
+                                isTestingSslFallback = true
+                                sslFallbackResult = null
+                                coroutineScope.launch {
+                                    try {
+                                        val res = ResilientSslEngine.testFallbackValidation(RezkaService.currentBaseUrl)
+                                        sslFallbackResult = res
+                                    } catch (e: Exception) {
+                                        sslFallbackResult = "Ошибка: ${e.message}"
+                                    } finally {
+                                        isTestingSslFallback = false
+                                    }
+                                }
+                            }
+
+                            Button(
+                                onClick = testFallbackAction,
+                                enabled = !isTestingSslFallback,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = CinemaMuted.copy(alpha = 0.5f),
+                                    contentColor = CinemaTextWhite
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .tvFocusableItem(
+                                        onClick = testFallbackAction,
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.0f
+                                    )
+                                    .testTag("test_ssl_fallback_button")
+                            ) {
+                                if (isTestingSslFallback) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        color = CinemaTextWhite,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Проверка...", fontSize = 12.sp)
+                                } else {
+                                    Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Тест Fallback SSL", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+
+                            val toggleFallbackAction = {
+                                HapticEngine.get().perform(HapticType.CONFIRM)
+                                val newState = !isForceFallbackActive
+                                isForceFallbackActive = newState
+                                ResilientSslEngine.forceFallbackMode = newState
+                                sslFallbackResult = if (newState) {
+                                    "✓ Принудительный Fallback SSL ВКЛЮЧЁН (системный trust store обойдён)"
+                                } else {
+                                    "Принудительный Fallback SSL ВЫКЛЮЧЕН (штатный режим)"
+                                }
+                            }
+
+                            FilterChip(
+                                selected = isForceFallbackActive,
+                                onClick = toggleFallbackAction,
+                                label = {
+                                    Text(
+                                        if (isForceFallbackActive) "Fallback: ВКЛ" else "Fallback: ВЫКЛ",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = CinemaPrimary,
+                                    selectedLabelColor = CinemaTextWhite
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .tvFocusableItem(
+                                        onClick = toggleFallbackAction,
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.0f
+                                    )
+                                    .testTag("toggle_force_fallback_chip")
+                            )
+                        }
+
+                        AnimatedVisibility(visible = sslFallbackResult != null) {
+                            sslFallbackResult?.let { text ->
+                                val isOk = text.startsWith("✓") || text.contains("ВКЛЮЧЁН") || text.contains("ВЫКЛЮЧЕН")
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp)
+                                        .background(
+                                            if (isOk) CinemaGreen.copy(alpha = 0.12f) else CinemaPrimary.copy(alpha = 0.12f),
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                        .testTag("ssl_fallback_result")
                                 ) {
                                     Text(
                                         text = text,

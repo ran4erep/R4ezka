@@ -52,6 +52,18 @@ object ResilientSslEngine {
     @Volatile
     private var sslSocketFactory: SSLSocketFactory? = null
 
+    @Volatile
+    private var fallbackTrustManagerRef: X509TrustManager? = null
+
+    /**
+     * Флаг принудительной симуляции сбоя системного Trust Anchor.
+     * При включении (true) системный TrustManager полностью игнорируется,
+     * и все HTTPS-соединения проверяются ИСКЛЮЧИТЕЛЬНО через резервное хранилище Fallback CA.
+     * Позволяет проверить работу движка на современных устройствах.
+     */
+    @Volatile
+    var forceFallbackMode: Boolean = false
+
     // ThreadLocal экземпляр MessageDigest исключает блокировки потоков (lock contention) и аллокации
     private val threadLocalDigest = ThreadLocal.withInitial {
         try {
@@ -93,6 +105,7 @@ object ResilientSslEngine {
 
         // Шаг 3. Загрузка резервных корневых сертификатов из ресурсов (resilient_root_certs.pem)
         val fallbackTrustManager = createFallbackTrustManager(context)
+        fallbackTrustManagerRef = fallbackTrustManager
 
         // Шаг 4. Создание двухуровневого адаптивного TrustManager
         val dualTrustManager = if (systemTrustManager != null) {
@@ -191,6 +204,43 @@ object ResilientSslEngine {
     }
 
     /**
+     * Тестовый метод: отправляет изолированный HTTPS-запрос строго через fallbackTrustManager,
+     * полностью минуя системный TrustManager Android.
+     * Позволяет на современном устройстве на 100% сымитировать ТВ без системных сертификатов.
+     */
+    suspend fun testFallbackValidation(targetUrl: String): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        if (!initialized) {
+            try { init(RezkaApplication.instance) } catch (_: Throwable) {}
+        }
+        val fallbackTm = fallbackTrustManagerRef
+            ?: throw CertificateException("Fallback TrustManager не инициализирован")
+
+        val sslContext = SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf(fallbackTm), null)
+        }
+
+        val testClient = OkHttpClient.Builder()
+            .sslSocketFactory(sslContext.socketFactory, fallbackTm)
+            .connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+            .followRedirects(true)
+            .build()
+
+        val request = okhttp3.Request.Builder()
+            .url(targetUrl)
+            .header("User-Agent", "Mozilla/5.0")
+            .build()
+
+        val start = System.currentTimeMillis()
+        testClient.newCall(request).execute().use { response ->
+            val duration = System.currentTimeMillis() - start
+            val tls = response.handshake?.tlsVersion?.javaName ?: "TLS"
+            val cipher = response.handshake?.cipherSuite?.javaName ?: "Cipher"
+            "✓ Успешно: цепочка проверена через Fallback CA ($tls, $cipher, ${duration} мс, код ${response.code})"
+        }
+    }
+
+    /**
      * Двухуровневый адаптивный X509TrustManager:
      * - Сначала всегда запускает стандартный системный менеджер доверия.
      * - Fallback запускается ИСКЛЮЧИТЕЛЬНО при возникновении CertificateException.
@@ -215,8 +265,22 @@ object ResilientSslEngine {
             // Быстрая проверка по кэшу отпечатков (0 аллокаций при попадании в кэш)
             val leaf = chain[0]
             val fingerprint = computeFingerprint(leaf)
-            if (fingerprint != null && trustedCertCache.get(fingerprint) == true) {
+            if (!forceFallbackMode && fingerprint != null && trustedCertCache.get(fingerprint) == true) {
                 return
+            }
+
+            // РЕЖИМ ТЕСТИРОВАНИЯ: принудительный обход системного хранилища
+            if (forceFallbackMode) {
+                if (fallbackTrustManager != null) {
+                    fallbackTrustManager.checkServerTrusted(chain, authType)
+                    if (fingerprint != null) {
+                        trustedCertCache.put(fingerprint, true)
+                    }
+                    Log.i(TAG, "[FORCE FALLBACK] Validated cert via fallback store for ${leaf.subjectX500Principal.name}")
+                    return
+                } else {
+                    throw CertificateException("Fallback trust manager not initialized")
+                }
             }
 
             // 1. БЫСТРЫЙ ПУТЬ (Fast-Path):

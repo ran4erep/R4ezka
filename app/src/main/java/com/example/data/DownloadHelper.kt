@@ -183,6 +183,10 @@ object DownloadHelper {
             Toast.makeText(context, "Ссылка на поток не найдена", Toast.LENGTH_SHORT).show()
             return
         }
+        if (streamUrl.startsWith("file://") || streamUrl.startsWith("content://")) {
+            Toast.makeText(context, "Ошибка: получен локальный файл вместо сетевой ссылки", Toast.LENGTH_SHORT).show()
+            return
+        }
 
         try {
             val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
@@ -207,8 +211,13 @@ object DownloadHelper {
             }
 
             val finalUrl = extractDirectMp4(streamUrl)
+            val parsedUri = Uri.parse(finalUrl)
+            if (parsedUri.scheme != "http" && parsedUri.scheme != "https") {
+                Toast.makeText(context, "Ошибка: загрузка возможна только по протоколам HTTP/HTTPS", Toast.LENGTH_SHORT).show()
+                return
+            }
 
-            val request = DownloadManager.Request(Uri.parse(finalUrl)).apply {
+            val request = DownloadManager.Request(parsedUri).apply {
                 setTitle(fileName)
                 val desc = if (translatorName.isNotEmpty()) "Озвучка: $translatorName" else "Rezka Cinema"
                 setDescription(desc)
@@ -243,6 +252,10 @@ object DownloadHelper {
     ) {
         if (streamUrl.isBlank()) {
             Toast.makeText(context, "Ссылка на поток не найдена", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (streamUrl.startsWith("file://") || streamUrl.startsWith("content://")) {
+            Toast.makeText(context, "Ошибка: получен локальный файл вместо сетевой ссылки", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -311,7 +324,15 @@ object DownloadHelper {
                         itemDir.mkdirs()
                     }
 
-                    val request = DownloadManager.Request(Uri.parse(finalUrl)).apply {
+                    val parsedUri = Uri.parse(finalUrl)
+                    if (parsedUri.scheme != "http" && parsedUri.scheme != "https") {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "Ошибка: загрузка возможна только по протоколам HTTP/HTTPS", Toast.LENGTH_SHORT).show()
+                        }
+                        return@launch
+                    }
+
+                    val request = DownloadManager.Request(parsedUri).apply {
                         setTitle(if (isSeries) "${detail.title} (С$seasonId Э$episodeId)" else detail.title)
                         setDescription("Оффлайн библиотека • ${translator.name} ($quality)")
                         setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
