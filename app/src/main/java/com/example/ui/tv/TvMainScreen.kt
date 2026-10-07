@@ -1070,58 +1070,25 @@ private fun TvCatalogFiltersBar(
             onSearchCommit?.invoke()
         }
 
-        // 1. Поиск (сверху) - строка поиска и кнопка голосового ввода в одну линию для ТВ
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TvCompactSearchBar(
-                query = searchQuery,
-                onQueryChanged = onSearchQueryChanged,
-                searchBarFocusRequester = searchBarFocusRequester,
-                onLeft = { sidebarFocusRequester.requestFocusSafe() },
-                onRight = { tvVoiceButtonFocusRequester.requestFocusSafe() },
-                onDown = {
-                    if (searchHistory.isNotEmpty() && isHistoryVisible) {
-                        firstHistoryFocusRequester.requestFocusSafe()
-                    } else {
-                        categoryFocusRequester.requestFocusSafe()
-                    }
-                },
-                onSearchCommit = onSearchCommit,
-                onFocusChanged = { focused -> isSearchInputFocused = focused },
-                modifier = Modifier.weight(1f)
-            )
-
-            VoiceSearchButton(
-                onClick = launchTvVoiceSearch,
-                size = 42.dp,
-                iconSize = 20.dp,
-                shape = RoundedCornerShape(10.dp),
-                focusRequester = tvVoiceButtonFocusRequester,
-                testTag = "tv_voice_search_button",
-                modifier = Modifier.onKeyEvent { keyEvent ->
-                    if (keyEvent.type == KeyEventType.KeyDown) {
-                        when (keyEvent.nativeKeyEvent.keyCode) {
-                            AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                                searchBarFocusRequester.requestFocusSafe()
-                                true
-                            }
-                            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                if (searchHistory.isNotEmpty() && isHistoryVisible) {
-                                    firstHistoryFocusRequester.requestFocusSafe()
-                                } else {
-                                    categoryFocusRequester.requestFocusSafe()
-                                }
-                                true
-                            }
-                            else -> false
-                        }
-                    } else false
+        // 1. Поиск (сверху) - строка поиска во всю ширину со встроенной кнопкой голосового ввода для ТВ
+        TvCompactSearchBar(
+            query = searchQuery,
+            onQueryChanged = onSearchQueryChanged,
+            searchBarFocusRequester = searchBarFocusRequester,
+            voiceButtonFocusRequester = tvVoiceButtonFocusRequester,
+            onVoiceSearchClick = launchTvVoiceSearch,
+            onLeft = { sidebarFocusRequester.requestFocusSafe() },
+            onDown = {
+                if (searchHistory.isNotEmpty() && isHistoryVisible) {
+                    firstHistoryFocusRequester.requestFocusSafe()
+                } else {
+                    categoryFocusRequester.requestFocusSafe()
                 }
-            )
-        }
+            },
+            onSearchCommit = onSearchCommit,
+            onFocusChanged = { focused -> isSearchInputFocused = focused },
+            modifier = Modifier.fillMaxWidth()
+        )
 
         // Подсказки недавних запросов из истории поиска для ТВ
         if (isHistoryVisible && searchHistory.isNotEmpty()) {
@@ -1538,6 +1505,8 @@ fun TvCompactSearchBar(
     onQueryChanged: (String) -> Unit,
     modifier: Modifier = Modifier,
     searchBarFocusRequester: FocusRequester? = null,
+    voiceButtonFocusRequester: FocusRequester? = null,
+    onVoiceSearchClick: (() -> Unit)? = null,
     onLeft: (() -> Unit)? = null,
     onRight: (() -> Unit)? = null,
     onDown: (() -> Unit)? = null,
@@ -1592,7 +1561,10 @@ fun TvCompactSearchBar(
                             } else false
                         }
                         AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                            if (!isEditing && onRight != null) {
+                            if (!isEditing && voiceButtonFocusRequester != null && onVoiceSearchClick != null) {
+                                voiceButtonFocusRequester.requestFocusSafe()
+                                true
+                            } else if (!isEditing && onRight != null) {
                                 onRight()
                                 true
                             } else false
@@ -1728,13 +1700,58 @@ fun TvCompactSearchBar(
                         isEditing = false
                         keyboardController?.hide()
                     },
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(28.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Очистить",
                         tint = CinemaTextGray,
                         modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            // Встроенная в поисковую строку ТВ кнопка микрофона
+            if (onVoiceSearchClick != null) {
+                Spacer(modifier = Modifier.width(4.dp))
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .tvFocusableItem(
+                            onClick = {
+                                com.example.ui.haptics.HapticEngine.get().perform(com.example.ui.haptics.HapticType.GENTLE_TICK)
+                                onVoiceSearchClick()
+                            },
+                            scaleFactor = 1.15f,
+                            focusedBorderColor = CinemaPrimary,
+                            focusedBorderWidth = 2.dp,
+                            shape = CircleShape,
+                            focusRequester = voiceButtonFocusRequester
+                        )
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        searchBarFocusRequester?.requestFocusSafe()
+                                        true
+                                    }
+                                    AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                        onDown?.invoke()
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
+                        .testTag("tv_voice_search_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Mic,
+                        contentDescription = "Голосовой поиск",
+                        tint = CinemaTextWhite.copy(alpha = 0.85f),
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
