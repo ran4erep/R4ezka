@@ -17,6 +17,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import com.example.ui.util.rememberSavedScrollState
+import com.example.ui.util.SeriesBadgeMode
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -94,6 +95,8 @@ fun SettingsScreen(
     val defaultResizeMode by viewModel.defaultResizeMode.collectAsState()
     val tvModePreference by viewModel.tvModePreference.collectAsState()
     val cardGridMode by viewModel.cardGridMode.collectAsState()
+    val seriesBadgeMode by viewModel.seriesBadgeMode.collectAsState()
+    var badgeModeDropdownExpanded by remember { mutableStateOf(false) }
     val defaultCatalogType by viewModel.defaultCatalogType.collectAsState()
     val defaultCatalogSection by viewModel.defaultCatalogSection.collectAsState()
     val dnsPreference by viewModel.dnsPreference.collectAsState()
@@ -1832,6 +1835,83 @@ fun SettingsScreen(
                                     },
                                     colors = MenuDefaults.itemColors(textColor = CinemaTextWhite)
                                 )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+                        HorizontalDivider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // 2.1. НАСТРОЙКА: ПЛАШКИ НА КАРТОЧКАХ СЕРИАЛОВ
+                        Text(
+                            text = "ПЛАШКИ НА КАРТОЧКАХ СЕРИАЛОВ",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = CinemaTextGray,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(CinemaCard)
+                                    .tvFocusableItem(
+                                        onClick = { badgeModeDropdownExpanded = true },
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.0f
+                                    )
+                                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                                    .testTag("series_badge_mode_dropdown_trigger"),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = seriesBadgeMode.title,
+                                    color = CinemaTextWhite,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Icon(
+                                    imageVector = if (badgeModeDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                    contentDescription = "Выбор режима плашек",
+                                    tint = CinemaPrimary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
+                            DropdownMenu(
+                                expanded = badgeModeDropdownExpanded,
+                                onDismissRequest = { badgeModeDropdownExpanded = false },
+                                modifier = Modifier
+                                    .background(CinemaDark)
+                                    .fillMaxWidth(0.85f)
+                            ) {
+                                SeriesBadgeMode.entries.forEach { mode ->
+                                    val isSelected = seriesBadgeMode == mode
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = mode.title,
+                                                color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        },
+                                        onClick = {
+                                            badgeModeDropdownExpanded = false
+                                            if (!isSelected) {
+                                                viewModel.setSeriesBadgeMode(mode)
+                                                Toast.makeText(context, "Плашки: ${mode.title}", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        colors = MenuDefaults.itemColors(textColor = CinemaTextWhite)
+                                    )
+                                }
                             }
                         }
 

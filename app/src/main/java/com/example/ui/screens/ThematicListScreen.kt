@@ -394,6 +394,7 @@ fun ThematicListScreen(
                         val configuration = LocalConfiguration.current
                         val isLandscape = isTvMode || configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
                         val cardGridMode by viewModel.cardGridMode.collectAsState()
+                        val seriesBadgeMode by viewModel.seriesBadgeMode.collectAsState()
 
                         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                             val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight, isLandscape) {
@@ -446,6 +447,8 @@ fun ThematicListScreen(
                                         totalItems = loadedItems.size,
                                         columnsCount = columnsCount,
                                         cardHeight = cardHeight,
+                                        cardWidth = resolvedGrid.estimatedCardWidth,
+                                        seriesBadgeMode = seriesBadgeMode,
                                         isBouncing = item.id == loadingMovieId,
                                         onNavigateIndex = navigateToItem,
                                         focusRequester = if (isTvMode) getFocusRequesterForIndex(index) else null,

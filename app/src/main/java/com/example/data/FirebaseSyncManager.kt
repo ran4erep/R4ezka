@@ -591,6 +591,7 @@ object FirebaseSyncManager {
         resizeMode: String = RezkaService.defaultResizeMode.value,
         tvMode: String = RezkaService.tvModePreference.value,
         cardGridMode: String = RezkaService.cardGridMode.value,
+        seriesBadgeMode: String = RezkaService.seriesBadgeMode.value.id,
         defaultCatalogType: String = RezkaService.defaultCatalogType.value.name,
         defaultCatalogSection: String = RezkaService.defaultCatalogSection.value.name
     ) {
@@ -606,6 +607,7 @@ object FirebaseSyncManager {
                     put("resizeMode", resizeMode)
                     put("tvMode", tvMode)
                     put("cardGridMode", cardGridMode)
+                    put("seriesBadgeMode", seriesBadgeMode)
                     put("defaultCatalogType", defaultCatalogType)
                     put("defaultCatalogSection", defaultCatalogSection)
                     put("updatedAt", System.currentTimeMillis())
@@ -975,6 +977,15 @@ object FirebaseSyncManager {
                         if (remoteGridMode.isNotBlank() && remoteGridMode != RezkaService.cardGridMode.value) {
                             withContext(Dispatchers.Main) {
                                 RezkaService.setCardGridMode(remoteGridMode)
+                            }
+                        }
+                        val remoteBadgeMode = setJson.optString("seriesBadgeMode", "")
+                        if (remoteBadgeMode.isNotBlank()) {
+                            val parsedMode = com.example.ui.util.SeriesBadgeMode.fromId(remoteBadgeMode)
+                            if (parsedMode != RezkaService.seriesBadgeMode.value) {
+                                withContext(Dispatchers.Main) {
+                                    RezkaService.setSeriesBadgeMode(parsedMode)
+                                }
                             }
                         }
                         val remoteType = setJson.optString("defaultCatalogType", "")

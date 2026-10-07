@@ -2238,6 +2238,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     val defaultResizeMode: StateFlow<String> = RezkaService.defaultResizeMode
     val tvModePreference: StateFlow<String> = RezkaService.tvModePreference
     val cardGridMode: StateFlow<String> = RezkaService.cardGridMode
+    val seriesBadgeMode: StateFlow<com.example.ui.util.SeriesBadgeMode> = RezkaService.seriesBadgeMode
 
     // Player Selection (локальная настройка, без синхронизации с облаком)
     val selectedPlayer: StateFlow<String> = RezkaService.selectedPlayer
@@ -2315,6 +2316,11 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     fun setCardGridMode(mode: String) {
         RezkaService.setCardGridMode(mode)
         FirebaseSyncManager.onSettingsUpdated(cardGridMode = mode)
+    }
+
+    fun setSeriesBadgeMode(mode: com.example.ui.util.SeriesBadgeMode) {
+        RezkaService.setSeriesBadgeMode(mode)
+        FirebaseSyncManager.onSettingsUpdated(seriesBadgeMode = mode.id)
     }
 
     fun setDefaultCatalogType(type: RezkaType) {

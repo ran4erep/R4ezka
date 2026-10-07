@@ -13,7 +13,8 @@ data class ResolvedCardGrid(
     val cardHeight: Dp,
     val isExactRowsFitted: Boolean,
     val horizontalSpacing: Dp,
-    val verticalSpacing: Dp
+    val verticalSpacing: Dp,
+    val estimatedCardWidth: Dp = Dp.Unspecified
 )
 
 /**
@@ -40,13 +41,20 @@ object CardGridEngine {
             val cols = parsed?.columns ?: 2
             val hSpacing = if (cols >= 6) 8.dp else 14.dp
             val vSpacing = if (cols >= 6) 10.dp else 16.dp
+            val totalHSpacing = (hSpacing.value * (cols - 1)).dp
+            val estWidth = if (availableWidth > 0.dp) {
+                ((availableWidth - totalHSpacing).value / cols.coerceAtLeast(1)).dp
+            } else {
+                Dp.Unspecified
+            }
             return ResolvedCardGrid(
                 columns = cols,
                 rows = parsed?.rows ?: 1,
                 cardHeight = Dp.Unspecified,
                 isExactRowsFitted = false,
                 horizontalSpacing = hSpacing,
-                verticalSpacing = vSpacing
+                verticalSpacing = vSpacing,
+                estimatedCardWidth = estWidth
             )
         }
 
@@ -82,13 +90,18 @@ object CardGridEngine {
         val netHeight = (availableHeight - totalVerticalSpacings).coerceAtLeast(minAllowedHeight)
         val calculatedCardHeight = (netHeight.value / targetRows).dp
 
+        val totalHorizontalSpacings = (hSpacing.value * (targetCols - 1)).dp
+        val netWidth = (availableWidth - totalHorizontalSpacings).coerceAtLeast((30f * targetCols).dp)
+        val calculatedCardWidth = (netWidth.value / targetCols).dp
+
         return ResolvedCardGrid(
             columns = targetCols,
             rows = targetRows,
             cardHeight = calculatedCardHeight,
             isExactRowsFitted = true,
             horizontalSpacing = hSpacing,
-            verticalSpacing = vSpacing
+            verticalSpacing = vSpacing,
+            estimatedCardWidth = calculatedCardWidth
         )
     }
 }
