@@ -181,178 +181,199 @@ fun CatalogScreen(
             .fillMaxSize()
             .background(CinemaBlack)
     ) {
-        // ---- SEARCH BAR ROW: СТРОКА ПОИСКА + КНОПКА МИКРОФОНА + КНОПКА ФИЛЬТРА В ОДНУ ЛИНИЮ ----
+        // ---- SEARCH BAR: СТРОКА ПОИСКА НА ВСЮ ШИРИНУ СО ВСТРОЕННЫМИ КНОПКАМИ МИКРОФОНА И ФИЛЬТРА ----
         if (currentType != RezkaType.COLLECTIONS) {
             val searchBarFocusRequester = remember { FocusRequester() }
             val voiceButtonFocusRequester = remember { FocusRequester() }
             val filterButtonFocusRequester = remember { FocusRequester() }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // 1. Строка текстового поиска
-                TextField(
-                    value = searchInput,
-                    onValueChange = {
-                        searchInput = it
-                        viewModel.onSearchQueryChanged(it)
-                    },
-                    placeholder = { Text("Поиск фильмов, сериалов, аниме...", color = CinemaMuted) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Поиск", tint = CinemaPrimary) },
-                    trailingIcon = {
+            val filterClickScope = rememberCoroutineScope()
+            var singleClickJob by remember { mutableStateOf<Job?>(null) }
+
+            val performFilterClick: () -> Unit = {
+                val haptic = HapticEngine.get()
+                haptic.perform(HapticType.GENTLE_TICK)
+                val activeJob = singleClickJob
+                if (activeJob != null && activeJob.isActive) {
+                    activeJob.cancel()
+                    singleClickJob = null
+                    viewModel.resetCatalogFilters()
+                } else {
+                    singleClickJob = filterClickScope.launch {
+                        delay(280L)
+                        isFiltersExpanded = !isFiltersExpanded
+                    }
+                }
+            }
+
+            TextField(
+                value = searchInput,
+                onValueChange = {
+                    searchInput = it
+                    viewModel.onSearchQueryChanged(it)
+                },
+                placeholder = { Text("Поиск фильмов, сериалов, аниме...", color = CinemaMuted) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Поиск", tint = CinemaPrimary) },
+                trailingIcon = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        modifier = Modifier.padding(end = 6.dp)
+                    ) {
                         if (searchInput.isNotEmpty()) {
-                            IconButton(onClick = {
-                                HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                                searchInput = ""
-                                viewModel.onSearchQueryChanged("")
-                            }) {
-                                Icon(Icons.Default.Close, contentDescription = "Очистить", tint = CinemaTextGray)
+                            IconButton(
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                    searchInput = ""
+                                    viewModel.onSearchQueryChanged("")
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Очистить",
+                                    tint = CinemaTextGray,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
-                    },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(
-                        onSearch = {
-                            viewModel.commitSearchQuery(searchInput)
-                            keyboardController?.hide()
-                            focusManager.clearFocus()
-                        }
-                    ),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = CinemaDark,
-                        unfocusedContainerColor = CinemaDark,
-                        focusedTextColor = CinemaTextWhite,
-                        unfocusedTextColor = CinemaTextWhite,
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                        disabledIndicatorColor = Color.Transparent
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp)
-                        .focusRequester(searchBarFocusRequester)
-                        .onFocusChanged { isSearchFocused = it.isFocused }
-                        .onKeyEvent { keyEvent ->
-                            if (keyEvent.type == KeyEventType.KeyDown) {
-                                when (keyEvent.nativeKeyEvent.keyCode) {
-                                    AndroidKeyEvent.KEYCODE_ENTER,
-                                    AndroidKeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                                        viewModel.commitSearchQuery(searchInput)
-                                        keyboardController?.hide()
-                                        focusManager.clearFocus()
-                                        true
-                                    }
-                                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                        if (!isSearchFocused) {
-                                            voiceButtonFocusRequester.requestFocusSafe()
-                                            true
-                                        } else false
-                                    }
-                                    else -> false
-                                }
-                            } else false
-                        }
-                        .testTag("catalog_search_bar")
-                )
 
-                // 2. Кнопка голосового ввода с иконкой микрофона, виброоткликом и наведением курсора пульта
-                VoiceSearchButton(
-                    onClick = launchVoiceSearch,
-                    focusRequester = voiceButtonFocusRequester,
-                    modifier = Modifier.onKeyEvent { keyEvent ->
+                        // Компактная кнопка микрофона, встроенная внутрь строки поиска
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .tvFocusableItem(
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                        launchVoiceSearch()
+                                    },
+                                    scaleFactor = 1.1f,
+                                    focusedBorderColor = CinemaPrimary,
+                                    focusedBorderWidth = 2.dp,
+                                    shape = CircleShape,
+                                    focusRequester = voiceButtonFocusRequester
+                                )
+                                .onKeyEvent { keyEvent ->
+                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                        when (keyEvent.nativeKeyEvent.keyCode) {
+                                            AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                searchBarFocusRequester.requestFocusSafe()
+                                                true
+                                            }
+                                            AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                                filterButtonFocusRequester.requestFocusSafe()
+                                                true
+                                            }
+                                            else -> false
+                                        }
+                                    } else false
+                                }
+                                .testTag("catalog_voice_search_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = "Голосовой поиск",
+                                tint = CinemaTextWhite.copy(alpha = 0.85f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Компактная кнопка фильтра, встроенная внутрь строки поиска
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .tvFocusableItem(
+                                    onClick = performFilterClick,
+                                    scaleFactor = 1.1f,
+                                    focusedBorderColor = CinemaPrimary,
+                                    focusedBorderWidth = 2.dp,
+                                    shape = CircleShape,
+                                    focusRequester = filterButtonFocusRequester
+                                )
+                                .onKeyEvent { keyEvent ->
+                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                        when (keyEvent.nativeKeyEvent.keyCode) {
+                                            AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                voiceButtonFocusRequester.requestFocusSafe()
+                                                true
+                                            }
+                                            else -> false
+                                        }
+                                    } else false
+                                }
+                                .testTag("catalog_filter_toggle_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.FilterList,
+                                    contentDescription = if (isFiltersExpanded) "Скрыть фильтры" else "Показать фильтры",
+                                    tint = if (isFiltersExpanded || hasActiveFilters) CinemaPrimary else CinemaTextWhite.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                if (hasActiveFilters) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .offset(x = 2.dp, y = (-2).dp)
+                                            .size(6.dp)
+                                            .background(CinemaPrimary, CircleShape)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(
+                    onSearch = {
+                        viewModel.commitSearchQuery(searchInput)
+                        keyboardController?.hide()
+                        focusManager.clearFocus()
+                    }
+                ),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = CinemaDark,
+                    unfocusedContainerColor = CinemaDark,
+                    focusedTextColor = CinemaTextWhite,
+                    unfocusedTextColor = CinemaTextWhite,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    disabledIndicatorColor = Color.Transparent
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .height(52.dp)
+                    .focusRequester(searchBarFocusRequester)
+                    .onFocusChanged { isSearchFocused = it.isFocused }
+                    .onKeyEvent { keyEvent ->
                         if (keyEvent.type == KeyEventType.KeyDown) {
                             when (keyEvent.nativeKeyEvent.keyCode) {
-                                AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                                    searchBarFocusRequester.requestFocusSafe()
+                                AndroidKeyEvent.KEYCODE_ENTER,
+                                AndroidKeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                                    viewModel.commitSearchQuery(searchInput)
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
                                     true
                                 }
                                 AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                    filterButtonFocusRequester.requestFocusSafe()
-                                    true
+                                    if (!isSearchFocused) {
+                                        voiceButtonFocusRequester.requestFocusSafe()
+                                        true
+                                    } else false
                                 }
                                 else -> false
                             }
                         } else false
                     }
-                )
-
-                // 3. Кнопка фильтра каталога: вибрация при клике, анимация и наведение курсора с пульта
-                val filterClickScope = rememberCoroutineScope()
-                var singleClickJob by remember { mutableStateOf<Job?>(null) }
-
-                val performFilterClick = {
-                    val haptic = HapticEngine.get()
-                    haptic.perform(HapticType.GENTLE_TICK)
-                    val activeJob = singleClickJob
-                    if (activeJob != null && activeJob.isActive) {
-                        activeJob.cancel()
-                        singleClickJob = null
-                        viewModel.resetCatalogFilters()
-                    } else {
-                        singleClickJob = filterClickScope.launch {
-                            delay(280L)
-                            isFiltersExpanded = !isFiltersExpanded
-                        }
-                    }
-                }
-
-                Surface(
-                    onClick = performFilterClick,
-                    shape = RoundedCornerShape(12.dp),
-                    color = CinemaDark,
-                    border = BorderStroke(1.dp, CinemaBorder),
-                    modifier = Modifier
-                        .size(52.dp)
-                        .testTag("catalog_filter_toggle_button")
-                        .tvFocusableItem(
-                            onClick = performFilterClick,
-                            scaleFactor = 1.05f,
-                            focusedBorderColor = CinemaPrimary,
-                            focusedBorderWidth = 2.dp,
-                            shape = RoundedCornerShape(12.dp),
-                            focusRequester = filterButtonFocusRequester
-                        )
-                        .onKeyEvent { keyEvent ->
-                            if (keyEvent.type == KeyEventType.KeyDown) {
-                                when (keyEvent.nativeKeyEvent.keyCode) {
-                                    AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                                        voiceButtonFocusRequester.requestFocusSafe()
-                                        true
-                                    }
-                                    else -> false
-                                }
-                            } else false
-                        }
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FilterList,
-                            contentDescription = if (isFiltersExpanded) "Скрыть фильтры" else "Показать фильтры",
-                            tint = CinemaTextWhite,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        // Акцентная точка активных фильтров (всегда отображается, если фильтры не дефолтные)
-                        if (hasActiveFilters) {
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(top = 9.dp, end = 9.dp)
-                                    .size(8.dp)
-                                    .background(CinemaPrimary, CircleShape)
-                            )
-                        }
-                    }
-                }
-            }
+                    .testTag("catalog_search_bar")
+            )
         }
 
         // ---- ВСПЛЫВАЮЩАЯ ИСТОРИЯ ПОИСКА (ПОСЛЕДНИЕ 5 ЗАПРОСОВ) ----
