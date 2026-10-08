@@ -162,6 +162,19 @@ fun SettingsScreen(
     val subscriptionsCategoryRequester = remember { FocusRequester() }
     val offlineCategoryRequester = remember { FocusRequester() }
 
+    val networkFirstItemRequester = remember { FocusRequester() }
+    val networkLastItemRequester = remember { FocusRequester() }
+    val mirrorDropdownTriggerRequester = remember { FocusRequester() }
+    val customMirrorFocusRequester = remember { FocusRequester() }
+    val applyMirrorFocusRequester = remember { FocusRequester() }
+    val playbackFirstItemRequester = remember { FocusRequester() }
+    val playbackLastItemRequester = remember { FocusRequester() }
+    val tvFirstItemRequester = remember { FocusRequester() }
+    val tvLastItemRequester = remember { FocusRequester() }
+    val subscriptionsFirstItemRequester = remember { FocusRequester() }
+    val subscriptionsLastItemRequester = remember { FocusRequester() }
+    val offlineFirstItemRequester = remember { FocusRequester() }
+
     // Автофокус по умолчанию на первой категории настроек
     LaunchedEffect(Unit) {
         for (attempt in 0..12) {
@@ -184,11 +197,6 @@ fun SettingsScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .focusProperties {
-                    up = FocusRequester.Cancel
-                    down = FocusRequester.Cancel
-                    left = FocusRequester.Cancel
-                }
                 .verticalScroll(scrollState)
                 .bounceOverscroll(Orientation.Vertical)
                 .dpadScrollable(scrollState)
@@ -270,10 +278,13 @@ fun SettingsScreen(
                                         true
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                        if (!isMirrorsExpanded) {
+                                        if (isMirrorsExpanded) {
+                                            networkFirstItemRequester.requestFocusSafe()
+                                            true
+                                        } else {
                                             playbackCategoryRequester.requestFocusSafe()
                                             true
-                                        } else false
+                                        }
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
                                         if (!isMirrorsExpanded) {
@@ -394,10 +405,26 @@ fun SettingsScreen(
                                 shape = RoundedCornerShape(10.dp),
                                 enabled = !isPinging,
                                 modifier = Modifier
+                                    .onKeyEvent { keyEvent ->
+                                        if (keyEvent.type == KeyEventType.KeyDown) {
+                                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                    networkCategoryRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                    mirrorDropdownTriggerRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                else -> false
+                                            }
+                                        } else false
+                                    }
                                     .tvFocusableItem(
                                         onClick = { if (!isPinging) triggerPing() },
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.0f
+                                        scaleFactor = 1.0f,
+                                        focusRequester = networkFirstItemRequester
                                     )
                                     .testTag("ping_mirror_button")
                             ) {
@@ -525,10 +552,26 @@ fun SettingsScreen(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(CinemaCard)
+                                    .onKeyEvent { keyEvent ->
+                                        if (keyEvent.type == KeyEventType.KeyDown) {
+                                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                    networkFirstItemRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                    customMirrorFocusRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                else -> false
+                                            }
+                                        } else false
+                                    }
                                     .tvFocusableItem(
                                         onClick = { mirrorDropdownExpanded = true },
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.0f
+                                        scaleFactor = 1.0f,
+                                        focusRequester = mirrorDropdownTriggerRequester
                                     )
                                     .padding(horizontal = 14.dp, vertical = 12.dp)
                                     .testTag("mirror_dropdown_trigger"),
@@ -634,8 +677,6 @@ fun SettingsScreen(
                             }
                         }
 
-                        val customMirrorFocusRequester = remember { FocusRequester() }
-
                         TvRemoteInputField(
                             value = customMirrorInput,
                             onValueChange = { customMirrorInput = it },
@@ -646,7 +687,27 @@ fun SettingsScreen(
                             containerColor = CinemaCard,
                             focusRequester = customMirrorFocusRequester,
                             testTag = "custom_mirror_input",
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onKeyEvent { keyEvent ->
+                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                        when (keyEvent.nativeKeyEvent.keyCode) {
+                                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                mirrorDropdownTriggerRequester.requestFocusSafe()
+                                                true
+                                            }
+                                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                applyMirrorFocusRequester.requestFocusSafe()
+                                                true
+                                            }
+                                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                // Поглощаем стрелку влево, чтобы фокус не улетал на боковое меню
+                                                true
+                                            }
+                                            else -> false
+                                        }
+                                    } else false
+                                }
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -657,10 +718,25 @@ fun SettingsScreen(
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .onKeyEvent { keyEvent ->
+                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                        when (keyEvent.nativeKeyEvent.keyCode) {
+                                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                customMirrorFocusRequester.requestFocusSafe()
+                                                true
+                                            }
+                                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                true
+                                            }
+                                            else -> false
+                                        }
+                                    } else false
+                                }
                                 .tvFocusableItem(
                                     onClick = applyCustomMirror,
                                     shape = RoundedCornerShape(10.dp),
-                                    scaleFactor = 1.0f
+                                    scaleFactor = 1.0f,
+                                    focusRequester = applyMirrorFocusRequester
                                 )
                                 .testTag("apply_mirror_button")
                         ) {
@@ -908,10 +984,17 @@ fun SettingsScreen(
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = CinemaTextWhite),
                                 modifier = Modifier
                                     .weight(1f)
+                                    .onKeyEvent { keyEvent ->
+                                        if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
+                                            playbackCategoryRequester.requestFocusSafe()
+                                            true
+                                        } else false
+                                    }
                                     .tvFocusableItem(
                                         onClick = clearCacheAction,
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.0f
+                                        scaleFactor = 1.0f,
+                                        focusRequester = networkLastItemRequester
                                     )
                                     .testTag("clear_dns_cache_button")
                             ) {
@@ -977,14 +1060,22 @@ fun SettingsScreen(
                                         } else false
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_UP -> {
-                                        networkCategoryRequester.requestFocusSafe()
-                                        true
+                                        if (isMirrorsExpanded) {
+                                            networkLastItemRequester.requestFocusSafe()
+                                            true
+                                        } else {
+                                            networkCategoryRequester.requestFocusSafe()
+                                            true
+                                        }
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                        if (!isPlaybackExpanded) {
+                                        if (isPlaybackExpanded) {
+                                            playbackFirstItemRequester.requestFocusSafe()
+                                            true
+                                        } else {
                                             tvCategoryRequester.requestFocusSafe()
                                             true
-                                        } else false
+                                        }
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
                                         if (!isPlaybackExpanded) {
@@ -1088,13 +1179,20 @@ fun SettingsScreen(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(CinemaCard)
+                                    .onKeyEvent { keyEvent ->
+                                        if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP) {
+                                            playbackCategoryRequester.requestFocusSafe()
+                                            true
+                                        } else false
+                                    }
                                     .tvFocusableItem(
                                         onClick = {
                                             viewModel.loadInstalledPlayers()
                                             playerDropdownExpanded = true
                                         },
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.0f
+                                        scaleFactor = 1.0f,
+                                        focusRequester = playbackFirstItemRequester
                                     )
                                     .padding(horizontal = 14.dp, vertical = 12.dp)
                                     .testTag("player_dropdown_trigger"),
@@ -1490,10 +1588,21 @@ fun SettingsScreen(
                                     shape = RoundedCornerShape(8.dp),
                                     modifier = Modifier
                                         .weight(1f)
+                                        .then(
+                                            if (mode == "FILL") {
+                                                Modifier.onKeyEvent { keyEvent ->
+                                                    if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
+                                                        tvCategoryRequester.requestFocusSafe()
+                                                        true
+                                                    } else false
+                                                }
+                                            } else Modifier
+                                        )
                                         .tvFocusableItem(
                                             onClick = triggerResize,
                                             shape = RoundedCornerShape(8.dp),
-                                            scaleFactor = 1.0f
+                                            scaleFactor = 1.0f,
+                                            focusRequester = if (mode == "FILL") playbackLastItemRequester else null
                                         )
                                 ) {
                                     Text(
@@ -1537,14 +1646,22 @@ fun SettingsScreen(
                                         } else false
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_UP -> {
-                                        playbackCategoryRequester.requestFocusSafe()
-                                        true
+                                        if (isPlaybackExpanded) {
+                                            playbackLastItemRequester.requestFocusSafe()
+                                            true
+                                        } else {
+                                            playbackCategoryRequester.requestFocusSafe()
+                                            true
+                                        }
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                        if (!isTvExpanded) {
+                                        if (isTvExpanded) {
+                                            tvFirstItemRequester.requestFocusSafe()
+                                            true
+                                        } else {
                                             subscriptionsCategoryRequester.requestFocusSafe()
                                             true
-                                        } else false
+                                        }
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
                                         if (!isTvExpanded) {
@@ -1634,10 +1751,17 @@ fun SettingsScreen(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(CinemaCard)
+                                    .onKeyEvent { keyEvent ->
+                                        if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP) {
+                                            tvCategoryRequester.requestFocusSafe()
+                                            true
+                                        } else false
+                                    }
                                     .tvFocusableItem(
                                         onClick = { tvModeDropdownExpanded = true },
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.0f
+                                        scaleFactor = 1.0f,
+                                        focusRequester = tvFirstItemRequester
                                     )
                                     .padding(horizontal = 14.dp, vertical = 12.dp)
                                     .testTag("tv_mode_dropdown_trigger"),
@@ -2041,6 +2165,7 @@ fun SettingsScreen(
                                         viewModel.setDefaultCatalogSection(section)
                                         Toast.makeText(context, "Раздел по умолчанию: $label", Toast.LENGTH_SHORT).show()
                                     }
+                                    val isLastSection = section == SectionType.AWAITING
                                     Surface(
                                         color = if (isSelected) CinemaPrimary else CinemaCard,
                                         shape = RoundedCornerShape(10.dp),
@@ -2050,10 +2175,21 @@ fun SettingsScreen(
                                         ),
                                         modifier = Modifier
                                             .weight(1f)
+                                            .then(
+                                                if (isLastSection) {
+                                                    Modifier.onKeyEvent { keyEvent ->
+                                                        if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
+                                                            subscriptionsCategoryRequester.requestFocusSafe()
+                                                            true
+                                                        } else false
+                                                    }
+                                                } else Modifier
+                                            )
                                             .tvFocusableItem(
                                                 onClick = triggerSection,
                                                 shape = RoundedCornerShape(10.dp),
-                                                scaleFactor = 1.02f
+                                                scaleFactor = 1.02f,
+                                                focusRequester = if (isLastSection) tvLastItemRequester else null
                                             )
                                             .testTag("default_section_${section.name.lowercase()}")
                                     ) {
@@ -2117,14 +2253,22 @@ fun SettingsScreen(
                                         } else false
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_UP -> {
-                                        tvCategoryRequester.requestFocusSafe()
-                                        true
+                                        if (isTvExpanded) {
+                                            tvLastItemRequester.requestFocusSafe()
+                                            true
+                                        } else {
+                                            tvCategoryRequester.requestFocusSafe()
+                                            true
+                                        }
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                        if (!isSubscriptionsExpanded) {
+                                        if (isSubscriptionsExpanded) {
+                                            subscriptionsFirstItemRequester.requestFocusSafe()
+                                            true
+                                        } else {
                                             offlineCategoryRequester.requestFocusSafe()
                                             true
-                                        } else false
+                                        }
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
                                         if (!isSubscriptionsExpanded) {
@@ -2225,10 +2369,17 @@ fun SettingsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(44.dp)
+                                .onKeyEvent { keyEvent ->
+                                    if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP) {
+                                        subscriptionsCategoryRequester.requestFocusSafe()
+                                        true
+                                    } else false
+                                }
                                 .tvFocusableItem(
                                     onClick = triggerCheckUpdates,
                                     shape = RoundedCornerShape(10.dp),
-                                    scaleFactor = 1.0f
+                                    scaleFactor = 1.0f,
+                                    focusRequester = subscriptionsFirstItemRequester
                                 )
                                 .testTag("check_series_updates_button")
                         ) {
