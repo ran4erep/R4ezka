@@ -18,6 +18,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyListState
@@ -282,6 +283,8 @@ fun Modifier.tvFocusableItem(
         }
     }
 
+    var lastFocusTime by remember { mutableLongStateOf(0L) }
+
     this
         .zIndex(if (isFocused) 5f else 1f)
         .graphicsLayer {
@@ -301,6 +304,11 @@ fun Modifier.tvFocusableItem(
                 haptic.perform(com.example.ui.haptics.HapticType.SELECTION)
                 onFocused?.invoke()
                 scrollJob?.cancel()
+
+                val now = android.os.SystemClock.uptimeMillis()
+                val isRapid = (now - lastFocusTime) < 180L
+                lastFocusTime = now
+
                 scrollJob = coroutineScope.launch {
                     try {
                         if (lazyListState != null && itemCoordinates?.isAttached == true) {
@@ -308,18 +316,24 @@ fun Modifier.tvFocusableItem(
                             val layoutInfo = lazyListState.layoutInfo
                             val viewportHeight = layoutInfo.viewportSize.height.toFloat()
                             if (bounds != null && viewportHeight > 0f) {
-                                val topPadding = 24f
-                                val bottomPadding = 24f
+                                val pad = (viewportHeight * 0.12f).coerceIn(48f, 96f)
                                 val delta = when {
-                                    bounds.top < topPadding -> bounds.top - topPadding
-                                    bounds.bottom > (viewportHeight - bottomPadding) -> bounds.bottom - (viewportHeight - bottomPadding)
+                                    bounds.top < pad -> bounds.top - pad
+                                    bounds.bottom > (viewportHeight - pad) -> bounds.bottom - (viewportHeight - pad)
                                     else -> 0f
                                 }
-                                if (kotlin.math.abs(delta) > 5f) {
-                                    lazyListState.animateScrollBy(
-                                        value = delta,
-                                        animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)
-                                    )
+                                if (kotlin.math.abs(delta) > 3f) {
+                                    if (isRapid) {
+                                        // Мгновенный сдвиг при быстром перемещении или удержании клавиши:
+                                        // устраняет зависание и постоянные прерывания анимаций
+                                        lazyListState.scrollBy(delta)
+                                    } else {
+                                        // Плавная доводка при одиночном клике или остановке на элементе
+                                        lazyListState.animateScrollBy(
+                                            value = delta,
+                                            animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
+                                        )
+                                    }
                                 }
                             }
                         } else {
