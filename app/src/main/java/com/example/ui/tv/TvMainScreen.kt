@@ -1774,9 +1774,9 @@ fun TvCompactSearchBar(
                 Box(
                     modifier = Modifier
                         .size(34.dp)
-                        .background(
-                            if (isVoiceFocused) CinemaPrimary.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.08f),
-                            CircleShape
+                        .clip(CircleShape)
+                        .then(
+                            if (isVoiceFocused) Modifier.background(CinemaPrimary.copy(alpha = 0.25f), CircleShape) else Modifier
                         )
                         .onKeyEvent { keyEvent ->
                             if (keyEvent.type == KeyEventType.KeyDown) {
@@ -1813,7 +1813,7 @@ fun TvCompactSearchBar(
                     Icon(
                         imageVector = Icons.Default.Mic,
                         contentDescription = "Голосовой поиск",
-                        tint = if (isVoiceFocused) CinemaPrimary else CinemaTextWhite,
+                        tint = if (isVoiceFocused) CinemaPrimary else CinemaTextWhite.copy(alpha = 0.85f),
                         modifier = Modifier.size(19.dp)
                     )
                 }

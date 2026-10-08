@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
@@ -162,10 +163,10 @@ fun VoiceSearchButton(
     modifier: Modifier = Modifier,
     size: Dp = 52.dp,
     iconSize: Dp = 24.dp,
-    shape: Shape = RoundedCornerShape(12.dp),
-    backgroundColor: Color = CinemaDark,
-    borderColor: Color = CinemaBorder,
-    iconTint: Color = CinemaTextWhite,
+    shape: Shape = CircleShape,
+    backgroundColor: Color = Color.Transparent,
+    borderColor: Color = Color.Transparent,
+    iconTint: Color = CinemaTextWhite.copy(alpha = 0.85f),
     focusRequester: FocusRequester? = null,
     testTag: String = "catalog_voice_search_button",
     onFocused: (() -> Unit)? = null

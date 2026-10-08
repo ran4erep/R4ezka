@@ -303,17 +303,23 @@ fun Modifier.tvFocusableItem(
                 scrollJob?.cancel()
                 scrollJob = coroutineScope.launch {
                     try {
-                        if (lazyListState != null) {
-                            if (itemCoordinates?.isAttached == true) {
-                                val bounds = try { itemCoordinates?.boundsInWindow() } catch (_: Throwable) { null }
-                                if (bounds != null) {
-                                    val delta = bounds.top - targetViewportY
-                                    if (kotlin.math.abs(delta) > 20f) {
-                                        lazyListState.animateScrollBy(
-                                            value = delta,
-                                            animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)
-                                        )
-                                    }
+                        if (lazyListState != null && itemCoordinates?.isAttached == true) {
+                            val bounds = try { itemCoordinates?.boundsInWindow() } catch (_: Throwable) { null }
+                            val layoutInfo = lazyListState.layoutInfo
+                            val viewportHeight = layoutInfo.viewportSize.height.toFloat()
+                            if (bounds != null && viewportHeight > 0f) {
+                                val topPadding = 24f
+                                val bottomPadding = 24f
+                                val delta = when {
+                                    bounds.top < topPadding -> bounds.top - topPadding
+                                    bounds.bottom > (viewportHeight - bottomPadding) -> bounds.bottom - (viewportHeight - bottomPadding)
+                                    else -> 0f
+                                }
+                                if (kotlin.math.abs(delta) > 5f) {
+                                    lazyListState.animateScrollBy(
+                                        value = delta,
+                                        animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)
+                                    )
                                 }
                             }
                         } else {
@@ -562,7 +568,8 @@ fun TvRemoteInputField(
     val context = LocalContext.current
     val view = LocalView.current
 
-    // При входе в режим редактирования плавно и надежно активируем поле ввода и открываем IME клавиатуру
+    // При входе в режим редактирования активируем поле ввода и открываем IME клавиатуру.
+    // При выходе — надежно удерживаем фокус на элементе поля, предотвращая соскакивание на боковое меню.
     LaunchedEffect(isEditing) {
         if (isEditing) {
             for (attempt in 0..4) {
@@ -575,10 +582,13 @@ fun TvRemoteInputField(
                     break
                 } catch (_: Throwable) {}
             }
+        } else {
+            delay(20L)
+            localRequester.requestFocusSafe()
         }
     }
 
-    // При открытой клавиатуре кнопка "Назад" пульта закрывает клавиатуру и возвращает фокус на поле с неоновым курсором
+    // При открытой клавиатуре кнопка "Назад" пульта закрывает клавиатуру и возвращает фокус на поле
     BackHandler(enabled = isEditing) {
         isEditing = false
         keyboardController?.hide()
@@ -668,21 +678,18 @@ fun TvRemoteInputField(
                                 onCommit?.invoke()
                                 isEditing = false
                                 keyboardController?.hide()
-                                focusManager.clearFocus()
                                 localRequester.requestFocusSafe()
                             },
                             onSearch = {
                                 onCommit?.invoke()
                                 isEditing = false
                                 keyboardController?.hide()
-                                focusManager.clearFocus()
                                 localRequester.requestFocusSafe()
                             },
                             onGo = {
                                 onCommit?.invoke()
                                 isEditing = false
                                 keyboardController?.hide()
-                                focusManager.clearFocus()
                                 localRequester.requestFocusSafe()
                             }
                         ),
@@ -693,7 +700,6 @@ fun TvRemoteInputField(
                                 if (focusState.isFocused) {
                                     hasBeenFocused = true
                                 } else if (hasBeenFocused && isEditing) {
-                                    // Сбрасываем только если поле действительно получало фокус и потеряло его
                                     isEditing = false
                                     keyboardController?.hide()
                                 }
@@ -705,17 +711,31 @@ fun TvRemoteInputField(
                                         android.view.KeyEvent.KEYCODE_ENTER,
                                         android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
                                         android.view.KeyEvent.KEYCODE_DPAD_CENTER -> {
-                                            // Игнорируем "хвост" нажатия от открывающего клика пульта
                                             if (elapsed > 250L) {
                                                 onCommit?.invoke()
                                                 isEditing = false
                                                 keyboardController?.hide()
-                                                focusManager.clearFocus()
                                                 localRequester.requestFocusSafe()
                                                 true
                                             } else {
                                                 true
                                             }
+                                        }
+                                        android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                            if (isEditing) {
+                                                isEditing = false
+                                                keyboardController?.hide()
+                                                localRequester.requestFocusSafe()
+                                            }
+                                            false
+                                        }
+                                        android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                            if (isEditing) {
+                                                isEditing = false
+                                                keyboardController?.hide()
+                                                localRequester.requestFocusSafe()
+                                            }
+                                            false
                                         }
                                         else -> false
                                     }

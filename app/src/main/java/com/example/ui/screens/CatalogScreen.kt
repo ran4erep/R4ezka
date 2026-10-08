@@ -250,9 +250,9 @@ fun CatalogScreen(
                         Box(
                             modifier = Modifier
                                 .size(36.dp)
-                                .background(
-                                    if (isCatalogVoiceFocused) CinemaPrimary.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.08f),
-                                    CircleShape
+                                .clip(CircleShape)
+                                .then(
+                                    if (isCatalogVoiceFocused) Modifier.background(CinemaPrimary.copy(alpha = 0.25f), CircleShape) else Modifier
                                 )
                                 .onKeyEvent { keyEvent ->
                                     if (keyEvent.type == KeyEventType.KeyDown) {
@@ -287,7 +287,7 @@ fun CatalogScreen(
                             Icon(
                                 imageVector = Icons.Default.Mic,
                                 contentDescription = "Голосовой поиск",
-                                tint = if (isCatalogVoiceFocused) CinemaPrimary else CinemaTextWhite,
+                                tint = if (isCatalogVoiceFocused) CinemaPrimary else CinemaTextWhite.copy(alpha = 0.85f),
                                 modifier = Modifier.size(20.dp)
                             )
                         }
