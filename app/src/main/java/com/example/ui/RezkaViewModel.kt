@@ -10,10 +10,13 @@ import com.example.RezkaApplication
 import com.example.data.*
 import java.text.Collator
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.*
@@ -2630,14 +2633,14 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         auditJob = viewModelScope.launch(Dispatchers.IO) {
-            val chunks = mirrors.chunked(3)
+            val chunks = mirrors.chunked(5)
             var selectedWorkingMirror: String? = null
             var selectedCatalogItems: List<RezkaItem>? = null
             var firstCatalogOnlyMirror: String? = null
             var firstCatalogOnlyItems: List<RezkaItem>? = null
 
             for (chunk in chunks) {
-                if (!isActive) break
+                if (!isActive || selectedWorkingMirror != null) break
 
                 val firstHostInChunk = chunk.firstOrNull()?.removePrefix("https://")?.removePrefix("http://")?.trimEnd('/').orEmpty()
                 withContext(Dispatchers.Main) {
@@ -2649,10 +2652,48 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-                // Параллельно асинхронно проверяем пачку из 3 зеркал (оптимально для CPU и Wi-Fi стека ТВ)
-                val chunkDeferreds = chunk.map { mirrorUrl ->
-                    async(Dispatchers.IO) {
-                        val checkRes = RezkaService.testMirrorWithStreamCheck(mirrorUrl)
+                // Асинхронная проверка пачки с неблокирующей обработкой результатов в реальном времени.
+                // Как только ЛЮБОЕ зеркало подтверждает рабочий видеопоток и каталог — аудит МГНОВЕННО
+                // прерывается, а остальные фоновые сетевые запросы отменяются без ожидания таймаутов.
+                val resultsChannel = Channel<Pair<String, MirrorAuditCheckResult>>(capacity = chunk.size)
+                val chunkJobs = mutableListOf<Job>()
+
+                coroutineScope {
+                    chunk.forEach { mirrorUrl ->
+                        val job = launch(Dispatchers.IO) {
+                            try {
+                                val checkRes = RezkaService.testMirrorWithStreamCheck(mirrorUrl)
+                                if (isActive) {
+                                    resultsChannel.send(Pair(mirrorUrl, checkRes))
+                                }
+                            } catch (e: CancellationException) {
+                                // Штатная отмена корутины при нахождении первого рабочего зеркала
+                                throw e
+                            } catch (e: Exception) {
+                                if (isActive) {
+                                    resultsChannel.send(
+                                        Pair(
+                                            mirrorUrl,
+                                            MirrorAuditCheckResult(
+                                                mirror = mirrorUrl,
+                                                catalogSuccess = false,
+                                                streamSuccess = false,
+                                                errorMessage = e.message
+                                            )
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        chunkJobs.add(job)
+                    }
+
+                    // Принимаем результаты по мере их реального поступления из сети:
+                    var processedCount = 0
+                    while (processedCount < chunk.size && isActive) {
+                        val (mirrorUrl, checkRes) = resultsChannel.receive()
+                        processedCount++
+
                         val host = checkRes.mirror.removePrefix("https://").removePrefix("http://").trimEnd('/')
                         withContext(Dispatchers.Main) {
                             checkedCount++
@@ -2670,36 +2711,39 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                                 lastCheckedSuccess = checkRes.streamSuccess || checkRes.catalogSuccess
                             )
                         }
-                        Pair(mirrorUrl, checkRes)
+
+                        // 1. НАЙДЕНО РАБОЧЕЕ ЗЕРКАЛО (видеопоток и каталог проверены на 100%)!
+                        // Не ждем остальные зеркала пачки: немедленно отменяем их и прерываем аудит!
+                        if (checkRes.streamSuccess) {
+                            selectedWorkingMirror = checkRes.mirror
+                            selectedCatalogItems = checkRes.catalogItems
+                            chunkJobs.forEach { if (it.isActive) it.cancel() }
+                            break
+                        }
+
+                        // 2. Если это ранее настроенное зеркало пользователя и его каталог подтвержден
+                        if (checkRes.catalogSuccess && mirrorUrl == currentSaved && selectedWorkingMirror == null) {
+                            selectedWorkingMirror = currentSaved
+                            selectedCatalogItems = checkRes.catalogItems
+                            chunkJobs.forEach { if (it.isActive) it.cancel() }
+                            break
+                        }
+
+                        // 3. Сохраняем запасное зеркало с каталогом на случай если стрим не отдастся нигде
+                        if (checkRes.catalogSuccess && firstCatalogOnlyMirror == null) {
+                            firstCatalogOnlyMirror = checkRes.mirror
+                            firstCatalogOnlyItems = checkRes.catalogItems
+                        }
+                    }
+
+                    // Гарантированно отменяем все оставшиеся активные задачи пачки
+                    if (selectedWorkingMirror != null) {
+                        chunkJobs.forEach { if (it.isActive) it.cancel() }
                     }
                 }
 
-                val chunkResults = chunkDeferreds.awaitAll()
-                if (!isActive) return@launch
-
-                // Анализируем результаты пачки в строгом порядке следования в списке
-                for (m in chunk) {
-                    val result = chunkResults.firstOrNull { it.first == m }?.second ?: continue
-                    if (result.streamSuccess && selectedWorkingMirror == null) {
-                        selectedWorkingMirror = result.mirror
-                        selectedCatalogItems = result.catalogItems
-                        break
-                    }
-                    if (result.catalogSuccess && firstCatalogOnlyMirror == null) {
-                        firstCatalogOnlyMirror = result.mirror
-                        firstCatalogOnlyItems = result.catalogItems
-                    }
-                }
-
-                // Если найдено приоритетное зеркало с работающим потоком — завершаем поиск
+                // Если рабочее зеркало найдено — прерываем цикл по остальным пачкам
                 if (selectedWorkingMirror != null) {
-                    break
-                }
-
-                // Если в пачке было текущее настроенное зеркало пользователя и его каталог подтвержден — не мучаем проверкой дальше
-                if (firstCatalogOnlyMirror != null && chunk.contains(currentSaved) && firstCatalogOnlyMirror == currentSaved) {
-                    selectedWorkingMirror = currentSaved
-                    selectedCatalogItems = firstCatalogOnlyItems
                     break
                 }
             }
@@ -2740,7 +2784,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             val targetItems = selectedCatalogItems ?: firstCatalogOnlyItems
 
             if (targetMirror != null && targetItems != null) {
-                delay(300)
+                delay(150)
                 withContext(Dispatchers.Main) {
                     RezkaService.setMirror(targetMirror)
                     RezkaService.markFirstLaunchAuditDone()

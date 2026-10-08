@@ -19,6 +19,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import java.io.IOException
 import okhttp3.*
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -1855,6 +1862,39 @@ object RezkaService {
             .build()
     }
 
+    /**
+     * Оптимизированный ультрабыстрый HTTP-клиент для аудита зеркал (Fail-Fast).
+     * Таймауты ровно 500 миллисекунд на подключение и чтение: если зеркало не отвечает мгновенно,
+     * оно считается недоступным у пользователя.
+     */
+    val auditHttpClient by lazy {
+        client.newBuilder()
+            .connectTimeout(500, TimeUnit.MILLISECONDS)
+            .readTimeout(500, TimeUnit.MILLISECONDS)
+            .build()
+    }
+
+    /**
+     * Выполняет неблокирующий OkHttp запрос с поддержкой мгновенной отмены корутины.
+     * При отмене корутины вызов call.cancel() сразу закрывает сокет, не тратя процессорные циклы и сеть.
+     */
+    private suspend fun Call.executeCancellable(): Response = suspendCancellableCoroutine { cont ->
+        cont.invokeOnCancellation {
+            try {
+                cancel()
+            } catch (_: Throwable) {}
+        }
+        enqueue(object : Callback {
+            override fun onResponse(call: Call, response: Response) {
+                cont.resume(response)
+            }
+            override fun onFailure(call: Call, e: IOException) {
+                if (cont.isCancelled) return
+                cont.resumeWithException(e)
+            }
+        })
+    }
+
     suspend fun testMirror(mirrorUrl: String): Result<Long> = withContext(Dispatchers.IO) {
         val normalized = normalizeMirrorUrl(mirrorUrl)
         val startTime = System.currentTimeMillis()
@@ -2007,7 +2047,7 @@ object RezkaService {
                 .header("Referer", "$normalized/")
                 .build()
 
-            val (html, isSuccess) = client.newCall(request).execute().use { response ->
+            val (html, isSuccess) = auditHttpClient.newCall(request).executeCancellable().use { response ->
                 Pair(response.body?.string().orEmpty(), response.isSuccessful)
             }
 
@@ -2063,8 +2103,9 @@ object RezkaService {
         var catalogItems: List<RezkaItem> = emptyList()
         var catalogError: String? = null
 
-        // 1. Прямая проверка каталога с зеркала
+        // 1. Прямая проверка каталога с зеркала (быстрый Fail-Fast: если каталог не отдал фильмы — зеркало бракуется)
         try {
+            ensureActive()
             val request = Request.Builder()
                 .url(catalogUrl)
                 .header("User-Agent", USER_AGENT)
@@ -2073,7 +2114,7 @@ object RezkaService {
                 .header("Referer", "$normalized/")
                 .build()
 
-            val (html, isSuccess) = client.newCall(request).execute().use { response ->
+            val (html, isSuccess) = auditHttpClient.newCall(request).executeCancellable().use { response ->
                 Pair(response.body?.string().orEmpty(), response.isSuccessful)
             }
 
@@ -2085,37 +2126,18 @@ object RezkaService {
                 } else {
                     catalogError = "Защита от ботов"
                 }
+            } else {
+                catalogError = "Каталог недоступен"
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             catalogError = e.message
         }
 
-        // Если /films/ вернул пустой список или ошибку, пробуем корень сайта зеркала
-        if (catalogItems.isEmpty()) {
-            try {
-                val rootRequest = Request.Builder()
-                    .url("$normalized/")
-                    .header("User-Agent", USER_AGENT)
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                    .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-                    .header("Referer", "$normalized/")
-                    .build()
+        ensureActive()
 
-                val (rootHtml, rootOk) = client.newCall(rootRequest).execute().use { resp ->
-                    Pair(resp.body?.string().orEmpty(), resp.isSuccessful)
-                }
-
-                if (rootOk && rootHtml.isNotBlank()) {
-                    val rootDoc = Jsoup.parse(rootHtml)
-                    if (!isAntiBotPage(rootHtml, rootDoc)) {
-                        catalogItems = parseCatalogHtml(rootHtml, RezkaType.MOVIE)
-                    }
-                }
-            } catch (e: Exception) {
-                if (catalogError == null) catalogError = e.message
-            }
-        }
-
+        // Если каталог сразу не ответил — видеопотока точно не будет, не тратим время на проверку
         if (catalogItems.isEmpty()) {
             return@withContext MirrorAuditCheckResult(
                 mirror = mirrorUrl,
@@ -2126,11 +2148,12 @@ object RezkaService {
         }
 
         // 2. Каталог успешно подтвержден и распарсен! Зеркало точно рабочее.
-        // Проверяем получение видеопотока через AJAX CDN (до 3 кандидатов из каталога)
+        // Проверяем получение видеопотока через AJAX CDN (до 2 кандидатов из каталога для максимального быстродействия)
         var streamWorking = false
         var streamErrMsg: String? = null
 
-        for (candidate in catalogItems.take(3)) {
+        for (candidate in catalogItems.take(2)) {
+            if (!isActive) break
             try {
                 val candidateUrl = adjustUrlToMirror(candidate.url, normalized)
                 val detailReq = Request.Builder()
@@ -2141,7 +2164,7 @@ object RezkaService {
                     .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                     .build()
 
-                val (detailHtml, detailOk) = client.newCall(detailReq).execute().use { response ->
+                val (detailHtml, detailOk) = auditHttpClient.newCall(detailReq).executeCancellable().use { response ->
                     Pair(response.body?.string().orEmpty(), response.isSuccessful)
                 }
                 if (!detailOk || detailHtml.isBlank()) continue
@@ -2173,6 +2196,7 @@ object RezkaService {
                 var resolvedStreams: List<StreamUrl> = emptyList()
 
                 for (act in actionsToTry) {
+                    if (!isActive) break
                     val formBuilder = FormBody.Builder()
                         .add("id", numericId)
                         .add("action", act)
@@ -2199,7 +2223,7 @@ object RezkaService {
                         .header("Accept", "application/json, text/javascript, */*; q=0.01")
                         .build()
 
-                    val cdnBody = client.newCall(cdnReq).execute().use { resp ->
+                    val cdnBody = auditHttpClient.newCall(cdnReq).executeCancellable().use { resp ->
                         if (resp.isSuccessful) resp.body?.string().orEmpty() else null
                     }
 
@@ -2238,13 +2262,11 @@ object RezkaService {
                     }
 
                     val videoOk = try {
-                        client.newBuilder()
-                            .connectTimeout(6, TimeUnit.SECONDS)
-                            .readTimeout(6, TimeUnit.SECONDS)
-                            .build()
-                            .newCall(probeBuilder.build()).execute().use { vResp ->
-                                vResp.isSuccessful || vResp.code in 200..308 || vResp.code == 416
-                            }
+                        auditHttpClient.newCall(probeBuilder.build()).executeCancellable().use { vResp ->
+                            vResp.isSuccessful || vResp.code in 200..308 || vResp.code == 416
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (_: Exception) {
                         // Ссылки на стримы успешно расшифрованы через плеер зеркала
                         true
@@ -2253,13 +2275,12 @@ object RezkaService {
                     if (videoOk) {
                         streamWorking = true
                         break
-                    } else {
-                        streamWorking = true
-                        break
                     }
                 } else {
                     streamErrMsg = "Плеер не отдал ссылки на видео"
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 streamErrMsg = e.message
             }
