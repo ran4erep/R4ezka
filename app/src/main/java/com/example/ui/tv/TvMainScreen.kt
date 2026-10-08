@@ -54,6 +54,7 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import com.example.ui.util.rememberSavedLazyGridState
 import com.example.ui.util.VoiceSearchButton
 import com.example.ui.util.rememberVoiceSearchLauncher
@@ -1628,7 +1629,13 @@ fun TvCompactSearchBar(
     LaunchedEffect(isEditing) {
         if (!isEditing) {
             hasBeenFocused = false
-            searchBarFocusRequester?.requestFocusSafe()
+            for (attempt in 0..4) {
+                delay(if (attempt == 0) 30L else 40L)
+                try {
+                    searchBarFocusRequester?.requestFocus()
+                    break
+                } catch (_: Throwable) {}
+            }
         } else {
             onFocusChanged?.invoke(true)
         }
@@ -1649,6 +1656,9 @@ fun TvCompactSearchBar(
         ),
         modifier = modifier
             .height(42.dp)
+            .then(
+                if (searchBarFocusRequester != null) Modifier.focusRequester(searchBarFocusRequester) else Modifier
+            )
             .focusProperties {
                 // Запрещаем переход фокуса ВВЕРХ с поисковой строки в боковое меню.
                 up = FocusRequester.Cancel
