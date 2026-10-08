@@ -22,6 +22,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.key.*
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.haptics.bounceOverscroll
 import com.example.ui.haptics.HapticEngine
@@ -46,10 +50,13 @@ import com.example.ui.theme.*
 import com.example.ui.tv.dpadScrollable
 import com.example.ui.tv.tvFocusableItem
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun FavoritesScreen(
     viewModel: RezkaViewModel,
     onNavigateToDetail: (RezkaItem) -> Unit,
+    onNavigateLeftToSidebar: (() -> Unit)? = null,
+    firstItemFocusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier
 ) {
     val favorites by viewModel.favorites.collectAsState()
@@ -105,10 +112,34 @@ fun FavoritesScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .focusProperties {
+                    up = FocusRequester.Cancel
+                    down = FocusRequester.Cancel
+                    left = FocusRequester.Cancel
+                }
         ) {
             if (favorites.isEmpty()) {
+                val emptyFocusRequester = firstItemFocusRequester ?: remember { FocusRequester() }
+                LaunchedEffect(Unit) {
+                    emptyFocusRequester.requestFocusSafe()
+                }
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+                                if (onNavigateLeftToSidebar != null) {
+                                    onNavigateLeftToSidebar()
+                                    true
+                                } else false
+                            } else false
+                        }
+                        .tvFocusableItem(
+                            onClick = {},
+                            shape = RoundedCornerShape(12.dp),
+                            focusRequester = emptyFocusRequester,
+                            hideBorder = true
+                        ),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -140,7 +171,26 @@ fun FavoritesScreen(
                     val coroutineScope = rememberCoroutineScope()
                     val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
                     fun getFocusRequesterForIndex(idx: Int): FocusRequester {
-                        return itemFocusRequesters.getOrPut(idx) { FocusRequester() }
+                        return if (idx == 0 && firstItemFocusRequester != null) {
+                            firstItemFocusRequester
+                        } else {
+                            itemFocusRequesters.getOrPut(idx) { FocusRequester() }
+                        }
+                    }
+
+                    // Автофокус по умолчанию на первый элемент в избранном
+                    var hasSetInitialFocus by remember { mutableStateOf(false) }
+                    LaunchedEffect(favorites.size) {
+                        if (!hasSetInitialFocus && favorites.isNotEmpty()) {
+                            hasSetInitialFocus = true
+                            for (attempt in 0..12) {
+                                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
+                                try {
+                                    getFocusRequesterForIndex(0).requestFocus()
+                                    break
+                                } catch (_: Throwable) {}
+                            }
+                        }
                     }
 
                     val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight, isLandscape) {
@@ -152,17 +202,16 @@ fun FavoritesScreen(
                         )
                     }
 
-                    val columnsCount = resolvedGrid.columns
-                    val isDense = columnsCount >= 5
-                    // Для избранного учитываем кнопку "Удалить" снизу
-                    val buttonHeight = if (columnsCount >= 7) 28.dp else if (isDense) 32.dp else 38.dp
+                    val gridColumns = resolvedGrid.columns
+                    val isDense = gridColumns >= 5
+                    val buttonHeight = if (gridColumns >= 7) 28.dp else if (isDense) 32.dp else 38.dp
                     val spacerHeight = if (isDense) 4.dp else 8.dp
                     val itemCardHeight = if (resolvedGrid.cardHeight != androidx.compose.ui.unit.Dp.Unspecified) {
                         (resolvedGrid.cardHeight - buttonHeight - spacerHeight).coerceAtLeast(60.dp)
                     } else androidx.compose.ui.unit.Dp.Unspecified
 
                     LazyVerticalGrid(
-                        columns = GridCells.Fixed(columnsCount),
+                        columns = GridCells.Fixed(gridColumns),
                         state = gridState,
                         contentPadding = PaddingValues(top = 12.dp, start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
                         horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
@@ -208,16 +257,27 @@ fun FavoritesScreen(
                                     .fillMaxWidth()
                                     .padding(bottom = 4.dp)
                             ) {
+                                val isFirstCol = index % gridColumns == 0
                                 RezkaItemCard(
                                     item = item,
                                     index = index,
                                     totalItems = favorites.size,
-                                    columnsCount = columnsCount,
+                                    columnsCount = gridColumns,
                                     cardHeight = itemCardHeight,
                                     cardWidth = resolvedGrid.estimatedCardWidth,
                                     seriesBadgeMode = seriesBadgeMode,
                                     isBouncing = item.id == loadingMovieId,
                                     onNavigateIndex = navigateToItem,
+                                    onUp = {
+                                        // Не улетаем вверх на сайдбар
+                                    },
+                                    onLeft = {
+                                        if (isFirstCol) {
+                                            onNavigateLeftToSidebar?.invoke()
+                                        } else {
+                                            navigateToItem(index - 1)
+                                        }
+                                    },
                                     focusRequester = getFocusRequesterForIndex(index),
                                     onClick = { onNavigateToDetail(item) },
                                     modifier = Modifier.fillMaxWidth()
@@ -237,6 +297,35 @@ fun FavoritesScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(buttonHeight)
+                                        .onKeyEvent { keyEvent ->
+                                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                        if (isFirstCol) {
+                                                            if (onNavigateLeftToSidebar != null) {
+                                                                onNavigateLeftToSidebar()
+                                                                true
+                                                            } else false
+                                                        } else {
+                                                            navigateToItem(index - 1)
+                                                            true
+                                                        }
+                                                    }
+                                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                        getFocusRequesterForIndex(index).requestFocusSafe()
+                                                        true
+                                                    }
+                                                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                        val nextIndex = index + gridColumns
+                                                        if (nextIndex < favorites.size) {
+                                                            navigateToItem(nextIndex)
+                                                            true
+                                                        } else true
+                                                    }
+                                                    else -> false
+                                                }
+                                            } else false
+                                        }
                                         .tvFocusableItem(
                                             onClick = {
                                                 haptic.perform(HapticType.WARNING)
@@ -263,7 +352,7 @@ fun FavoritesScreen(
                                         Text(
                                             text = "Удалить",
                                             color = CinemaTextWhite,
-                                            fontSize = if (columnsCount >= 7) 9.sp else if (isDense) 10.sp else 11.sp,
+                                            fontSize = if (gridColumns >= 7) 9.sp else if (isDense) 10.sp else 11.sp,
                                             fontWeight = FontWeight.Bold
                                         )
                                     }

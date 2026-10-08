@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -14,10 +15,17 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
-import androidx.compose.runtime.remember
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.key.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,10 +49,13 @@ import com.example.ui.effects.subtleCardBounce
 import com.example.ui.theme.*
 import com.example.ui.tv.*
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun HistoryScreen(
     viewModel: RezkaViewModel,
     onNavigateToDetail: (RezkaItem) -> Unit,
+    onNavigateLeftToSidebar: (() -> Unit)? = null,
+    firstItemFocusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier
 ) {
     val historyList by viewModel.aggregatedWatchHistory.collectAsStateWithLifecycle()
@@ -53,6 +64,21 @@ fun HistoryScreen(
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.checkHistorySeriesUpdates(force = true)
+    }
+
+    val itemRequester = firstItemFocusRequester ?: remember { FocusRequester() }
+    var hasSetInitialFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(historyList.size) {
+        if (!hasSetInitialFocus && historyList.isNotEmpty()) {
+            hasSetInitialFocus = true
+            for (attempt in 0..12) {
+                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
+                try {
+                    itemRequester.requestFocus()
+                    break
+                } catch (_: Throwable) {}
+            }
+        }
     }
 
     Column(
@@ -126,10 +152,34 @@ fun HistoryScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .focusProperties {
+                    up = FocusRequester.Cancel
+                    down = FocusRequester.Cancel
+                    left = FocusRequester.Cancel
+                }
         ) {
             if (historyList.isEmpty()) {
+                val emptyFocusRequester = itemRequester
+                LaunchedEffect(Unit) {
+                    emptyFocusRequester.requestFocusSafe()
+                }
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+                                if (onNavigateLeftToSidebar != null) {
+                                    onNavigateLeftToSidebar()
+                                    true
+                                } else false
+                            } else false
+                        }
+                        .tvFocusableItem(
+                            onClick = {},
+                            shape = RoundedCornerShape(12.dp),
+                            focusRequester = emptyFocusRequester,
+                            hideBorder = true
+                        ),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -165,13 +215,16 @@ fun HistoryScreen(
                         .dpadScrollable(listState)
                         .testTag("history_list")
                 ) {
-                    items(
+                    itemsIndexed(
                         items = historyList,
-                        key = { it.itemId }
-                    ) { history ->
+                        key = { _, it -> it.itemId }
+                    ) { index, history ->
                         HistoryCardItem(
                             history = history,
                             isBouncing = history.itemId == loadingMovieId,
+                            isFirst = index == 0,
+                            focusRequester = if (index == 0) itemRequester else null,
+                            onLeft = onNavigateLeftToSidebar,
                             onClick = {
                                 val itemType = if (history.isSeries) RezkaType.SERIES else RezkaType.MOVIE
                                 val targetUrl = RezkaService.adjustUrlToCurrentMirror(history.url, itemType, history.itemId)
@@ -203,7 +256,10 @@ fun HistoryCardItem(
     onMarkWatched: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
-    isBouncing: Boolean = false
+    isBouncing: Boolean = false,
+    isFirst: Boolean = false,
+    focusRequester: FocusRequester? = null,
+    onLeft: (() -> Unit)? = null
 ) {
     val isFullyWatched = history.isFullyWatched
     val progressFraction = remember(history.totalProgressFraction, isFullyWatched) {
@@ -212,6 +268,10 @@ fun HistoryCardItem(
     val progressPercentage = remember(progressFraction, isFullyWatched) {
         if (isFullyWatched) 100 else (progressFraction * 100f).toInt().coerceIn(0, 99)
     }
+
+    val cardRequester = focusRequester ?: remember { FocusRequester() }
+    val markWatchedRequester = remember { FocusRequester() }
+    val deleteRequester = remember { FocusRequester() }
 
     Column(
         modifier = modifier
@@ -227,10 +287,30 @@ fun HistoryCardItem(
                     isBouncing = isBouncing,
                     shape = RoundedCornerShape(12.dp)
                 )
+                .onKeyEvent { keyEvent ->
+                    if (keyEvent.type == KeyEventType.KeyDown) {
+                        when (keyEvent.nativeKeyEvent.keyCode) {
+                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                if (onLeft != null) {
+                                    onLeft()
+                                    true
+                                } else false
+                            }
+                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                if (isFirst) {
+                                    // Не улетаем на сайдбар при нажатии вверх на первом элементе
+                                    true
+                                } else false
+                            }
+                            else -> false
+                        }
+                    } else false
+                }
                 .tvFocusableItem(
                     onClick = onClick, 
                     scaleFactor = 1.015f, 
                     shape = RoundedCornerShape(12.dp),
+                    focusRequester = cardRequester,
                     hideBorder = isBouncing
                 )
                 .testTag("history_item_${history.itemId}"),
@@ -369,11 +449,29 @@ fun HistoryCardItem(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(36.dp)
+                    .onKeyEvent { keyEvent ->
+                        if (keyEvent.type == KeyEventType.KeyDown) {
+                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                    if (onLeft != null) {
+                                        onLeft()
+                                        true
+                                    } else false
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                    cardRequester.requestFocusSafe()
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else false
+                    }
                     .tvFocusableItem(
                         onClick = onDelete,
                         scaleFactor = 1.01f,
                         focusedBorderColor = CinemaPrimary,
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(8.dp),
+                        focusRequester = deleteRequester
                     )
                     .testTag("history_item_delete_${history.itemId}"),
                 border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
@@ -415,11 +513,33 @@ fun HistoryCardItem(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        if (onLeft != null) {
+                                            onLeft()
+                                            true
+                                        } else false
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        deleteRequester.requestFocusSafe()
+                                        true
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                        cardRequester.requestFocusSafe()
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
                         .tvFocusableItem(
                             onClick = onMarkWatched,
                             scaleFactor = 1.01f,
                             focusedBorderColor = CinemaPrimary,
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            focusRequester = markWatchedRequester
                         )
                         .testTag("history_item_mark_watched_${history.itemId}")
                 ) {
@@ -452,11 +572,27 @@ fun HistoryCardItem(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        markWatchedRequester.requestFocusSafe()
+                                        true
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                        cardRequester.requestFocusSafe()
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
                         .tvFocusableItem(
                             onClick = onDelete,
                             scaleFactor = 1.01f,
                             focusedBorderColor = CinemaPrimary,
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            focusRequester = deleteRequester
                         )
                         .testTag("history_item_delete_${history.itemId}")
                 ) {

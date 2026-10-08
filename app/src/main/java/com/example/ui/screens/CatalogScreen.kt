@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.components.RezkaCountryDropdown
 import com.example.ui.effects.subtleCardBounce
 import coil.compose.AsyncImage
 import com.example.data.*
@@ -83,6 +84,7 @@ fun CatalogScreen(
     val catalogState by viewModel.catalogState.collectAsState()
     val isOnline by viewModel.isOnline.collectAsState()
     val currentType by viewModel.currentType.collectAsState()
+    val searchCategoryFilter by viewModel.searchCategoryFilter.collectAsState()
     val currentSection by viewModel.currentSection.collectAsState()
     val currentGenre by viewModel.currentGenre.collectAsState()
     val genresList by viewModel.genresList.collectAsState()
@@ -100,6 +102,11 @@ fun CatalogScreen(
     var searchInput by remember { mutableStateOf(viewModel.searchQuery) }
     val searchHistory by viewModel.searchHistory.collectAsState()
     var isSearchFocused by remember { mutableStateOf(false) }
+
+    val searchSectionFilter by viewModel.searchSectionFilter.collectAsState()
+    val searchGenreFilter by viewModel.searchGenreFilter.collectAsState()
+    val searchYearFilter by viewModel.searchYearFilter.collectAsState()
+    val searchCountryFilter by viewModel.searchCountryFilter.collectAsState()
 
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -239,20 +246,13 @@ fun CatalogScreen(
                         }
 
                         // Компактная кнопка микрофона, встроенная внутрь строки поиска
+                        var isCatalogVoiceFocused by remember { mutableStateOf(false) }
                         Box(
                             modifier = Modifier
                                 .size(36.dp)
-                                .clip(CircleShape)
-                                .tvFocusableItem(
-                                    onClick = {
-                                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                                        launchVoiceSearch()
-                                    },
-                                    scaleFactor = 1.1f,
-                                    focusedBorderColor = CinemaPrimary,
-                                    focusedBorderWidth = 2.dp,
-                                    shape = CircleShape,
-                                    focusRequester = voiceButtonFocusRequester
+                                .background(
+                                    if (isCatalogVoiceFocused) CinemaPrimary.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.08f),
+                                    CircleShape
                                 )
                                 .onKeyEvent { keyEvent ->
                                     if (keyEvent.type == KeyEventType.KeyDown) {
@@ -269,13 +269,25 @@ fun CatalogScreen(
                                         }
                                     } else false
                                 }
+                                .tvFocusableItem(
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                        launchVoiceSearch()
+                                    },
+                                    onFocusChanged = { isCatalogVoiceFocused = it },
+                                    scaleFactor = 1.1f,
+                                    focusedBorderColor = CinemaPrimary,
+                                    focusedBorderWidth = 2.dp,
+                                    shape = CircleShape,
+                                    focusRequester = voiceButtonFocusRequester
+                                )
                                 .testTag("catalog_voice_search_button"),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Mic,
                                 contentDescription = "Голосовой поиск",
-                                tint = CinemaTextWhite.copy(alpha = 0.85f),
+                                tint = if (isCatalogVoiceFocused) CinemaPrimary else CinemaTextWhite,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -481,16 +493,33 @@ fun CatalogScreen(
         }
 
         // ---- FILTERS DROPDOWNS ----
-        val categories = listOf(
-            RezkaType.MOVIE to "Фильмы",
-            RezkaType.SERIES to "Сериалы",
-            RezkaType.ANIME to "Аниме",
-            RezkaType.CARTOON to "Мультики",
-            RezkaType.COLLECTIONS to "Подборки"
-        )
-        val currentCategoryPair = categories.find { it.first == currentType } ?: categories[0]
+        val isSearching = searchInput.isNotEmpty()
+        val categories: List<Pair<RezkaType?, String>> = remember(isSearching) {
+            if (isSearching) {
+                listOf(
+                    null to "Все категории",
+                    RezkaType.MOVIE to "Фильмы",
+                    RezkaType.SERIES to "Сериалы",
+                    RezkaType.ANIME to "Аниме",
+                    RezkaType.CARTOON to "Мультики"
+                )
+            } else {
+                listOf(
+                    RezkaType.MOVIE to "Фильмы",
+                    RezkaType.SERIES to "Сериалы",
+                    RezkaType.ANIME to "Аниме",
+                    RezkaType.CARTOON to "Мультики",
+                    RezkaType.COLLECTIONS to "Подборки"
+                )
+            }
+        }
+        val currentCategoryPair = if (isSearching) {
+            categories.find { it.first == searchCategoryFilter } ?: categories[0]
+        } else {
+            categories.find { it.first == currentType } ?: categories[0]
+        }
 
-        if (currentType == RezkaType.COLLECTIONS) {
+        if (currentType == RezkaType.COLLECTIONS && !isSearching) {
             // Для подборок: список категорий ВСЕГДА активен и виден на телефоне и любом экране
             Row(
                 modifier = Modifier
@@ -503,8 +532,7 @@ fun CatalogScreen(
                     options = categories,
                     selectedOption = currentCategoryPair,
                     onOptionSelected = { pair ->
-                        searchInput = ""
-                        viewModel.loadCatalog(type = pair.first, forceRefresh = true)
+                        viewModel.selectCategoryFilter(pair.first)
                     },
                     getLabel = { it.second },
                     modifier = Modifier.fillMaxWidth()
@@ -523,15 +551,19 @@ fun CatalogScreen(
                     SectionType.WATCHING,
                     SectionType.AWAITING
                 )
+                val activeSection = if (isSearching) searchSectionFilter else currentSection
 
                 // Dropdown 3: Жанры
-                val currentGenreItem = genresList.find { it.slug == currentGenre } ?: genresList.firstOrNull() ?: GenreItem("Без жанра", "")
+                val activeGenreSlug = if (isSearching) searchGenreFilter else currentGenre
+                val currentGenreItem = genresList.find { it.slug == activeGenreSlug } ?: genresList.firstOrNull() ?: GenreItem("Без жанра", "")
 
                 // Dropdown 4: Года (динамически спарсенные с сайта, рядом с жанром)
-                val currentYearItem = yearsList.find { it.year == currentYear } ?: yearsList.firstOrNull() ?: YearItem("Все года", "")
+                val activeYearVal = if (isSearching) searchYearFilter else currentYear
+                val currentYearItem = yearsList.find { it.year == activeYearVal } ?: yearsList.firstOrNull() ?: YearItem("Все года", "")
 
                 // Dropdown 5: Страна
-                val currentCountryItem = countriesList.find { it.query == currentCountry } ?: countriesList.firstOrNull() ?: CountryItem("Все страны", "")
+                val activeCountryQuery = if (isSearching) searchCountryFilter else currentCountry
+                val currentCountryItem = countriesList.find { it.query == activeCountryQuery } ?: countriesList.firstOrNull() ?: CountryItem("Все страны", "")
 
                 if (isLandscape) {
                     // Широкий экран: 5 фильтров в один аккуратный ряд
@@ -546,8 +578,7 @@ fun CatalogScreen(
                             options = categories,
                             selectedOption = currentCategoryPair,
                             onOptionSelected = { pair ->
-                                searchInput = ""
-                                viewModel.loadCatalog(type = pair.first, genre = "", year = "", forceRefresh = true)
+                                viewModel.selectCategoryFilter(pair.first)
                             },
                             getLabel = { it.second },
                             modifier = Modifier.weight(1f)
@@ -556,10 +587,9 @@ fun CatalogScreen(
                         RezkaDropdown(
                             label = "Раздел",
                             options = sections,
-                            selectedOption = currentSection,
+                            selectedOption = activeSection,
                             onOptionSelected = { section ->
-                                searchInput = ""
-                                viewModel.loadCatalog(section = section, forceRefresh = true)
+                                viewModel.selectSectionFilter(section)
                             },
                             getLabel = { it.getDisplayName() },
                             modifier = Modifier.weight(1f)
@@ -570,8 +600,7 @@ fun CatalogScreen(
                             options = genresList,
                             selectedOption = currentGenreItem,
                             onOptionSelected = { genreItem ->
-                                searchInput = ""
-                                viewModel.loadCatalog(genre = genreItem.slug, forceRefresh = true)
+                                viewModel.selectGenreFilter(genreItem.slug)
                             },
                             getLabel = { it.name },
                             modifier = Modifier.weight(1f)
@@ -582,21 +611,19 @@ fun CatalogScreen(
                             options = yearsList,
                             selectedOption = currentYearItem,
                             onOptionSelected = { yearItem ->
-                                searchInput = ""
-                                viewModel.loadCatalog(year = yearItem.year, forceRefresh = true)
+                                viewModel.selectYearFilter(yearItem.year)
                             },
                             getLabel = { it.name },
                             modifier = Modifier.weight(1f)
                         )
 
-                        RezkaDropdown(
+                        RezkaCountryDropdown(
                             label = "Страна",
                             options = countriesList,
                             selectedOption = currentCountryItem,
                             onOptionSelected = { countryItem ->
-                                viewModel.setCountry(countryItem.query)
+                                viewModel.selectCountryFilter(countryItem.query)
                             },
-                            getLabel = { it.name },
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -618,8 +645,7 @@ fun CatalogScreen(
                                 options = categories,
                                 selectedOption = currentCategoryPair,
                                 onOptionSelected = { pair ->
-                                    searchInput = ""
-                                    viewModel.loadCatalog(type = pair.first, genre = "", year = "", forceRefresh = true)
+                                    viewModel.selectCategoryFilter(pair.first)
                                 },
                                 getLabel = { it.second },
                                 modifier = Modifier.weight(1f)
@@ -628,10 +654,9 @@ fun CatalogScreen(
                             RezkaDropdown(
                                 label = "Раздел",
                                 options = sections,
-                                selectedOption = currentSection,
+                                selectedOption = activeSection,
                                 onOptionSelected = { section ->
-                                    searchInput = ""
-                                    viewModel.loadCatalog(section = section, forceRefresh = true)
+                                    viewModel.selectSectionFilter(section)
                                 },
                                 getLabel = { it.getDisplayName() },
                                 modifier = Modifier.weight(1f)
@@ -648,8 +673,7 @@ fun CatalogScreen(
                                 options = genresList,
                                 selectedOption = currentGenreItem,
                                 onOptionSelected = { genreItem ->
-                                    searchInput = ""
-                                    viewModel.loadCatalog(genre = genreItem.slug, forceRefresh = true)
+                                    viewModel.selectGenreFilter(genreItem.slug)
                                 },
                                 getLabel = { it.name },
                                 modifier = Modifier.weight(1f)
@@ -660,21 +684,19 @@ fun CatalogScreen(
                                 options = yearsList,
                                 selectedOption = currentYearItem,
                                 onOptionSelected = { yearItem ->
-                                    searchInput = ""
-                                    viewModel.loadCatalog(year = yearItem.year, forceRefresh = true)
+                                    viewModel.selectYearFilter(yearItem.year)
                                 },
                                 getLabel = { it.name },
                                 modifier = Modifier.weight(1f)
                             )
 
-                            RezkaDropdown(
+                            RezkaCountryDropdown(
                                 label = "Страна",
                                 options = countriesList,
                                 selectedOption = currentCountryItem,
                                 onOptionSelected = { countryItem ->
-                                    viewModel.setCountry(countryItem.query)
+                                    viewModel.selectCountryFilter(countryItem.query)
                                 },
-                                getLabel = { it.name },
                                 modifier = Modifier.weight(1f)
                             )
                         }

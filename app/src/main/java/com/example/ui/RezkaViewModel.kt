@@ -215,10 +215,18 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 val rawEpDigit = latest.episode.filter { it.isDigit() }.toIntOrNull() ?: 0
                 val safeLatestEpisode = if (rawEpDigit > 2500) "1" else latest.episode
 
+                val bestImageInGroup = items.mapNotNull { it.imageUrl.takeIf { img -> img.isNotBlank() } }.firstOrNull()
+                val effectiveImage = when {
+                    !bestImageInGroup.isNullOrBlank() -> bestImageInGroup
+                    (_detailState.value as? DetailState.Success)?.detail?.let { d -> (d.id == itemId || d.numericPostId == itemId) && d.imageUrl.isNotBlank() } == true -> (_detailState.value as DetailState.Success).detail.imageUrl
+                    favorites.value.find { it.id == itemId || it.url == latest.url }?.imageUrl?.isNotBlank() == true -> favorites.value.find { it.id == itemId || it.url == latest.url }!!.imageUrl
+                    else -> latest.imageUrl
+                }
+
                 AggregatedHistoryItem(
                     itemId = itemId,
                     title = latest.title,
-                    imageUrl = latest.imageUrl,
+                    imageUrl = effectiveImage,
                     url = latest.url,
                     latestSeason = latest.season,
                     latestEpisode = safeLatestEpisode,
@@ -283,7 +291,37 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val _countriesList = MutableStateFlow<List<CountryItem>>(CountryFilterList.defaultCountries)
     val countriesList: StateFlow<List<CountryItem>> = _countriesList.asStateFlow()
 
+    // Активный фильтр по категории для результатов поиска (null = все категории, либо конкретный RezkaType)
+    private val _searchCategoryFilter = MutableStateFlow<RezkaType?>(null)
+    val searchCategoryFilter: StateFlow<RezkaType?> = _searchCategoryFilter.asStateFlow()
+
+    private val _searchSectionFilter = MutableStateFlow(SectionType.LATEST)
+    val searchSectionFilter: StateFlow<SectionType> = _searchSectionFilter.asStateFlow()
+
+    private val _searchGenreFilter = MutableStateFlow("")
+    val searchGenreFilter: StateFlow<String> = _searchGenreFilter.asStateFlow()
+
+    private val _searchYearFilter = MutableStateFlow("")
+    val searchYearFilter: StateFlow<String> = _searchYearFilter.asStateFlow()
+
+    private val _searchCountryFilter = MutableStateFlow("")
+    val searchCountryFilter: StateFlow<String> = _searchCountryFilter.asStateFlow()
+
+    // Кэш сырых результатов поиска для мгновенной локальной фильтрации O(N) без лишних сетевых вызовов
+    private var rawSearchResults = listOf<RezkaItem>()
+
     private var countryPrefetchJob: Job? = null
+
+    /**
+     * Сброс независимых фильтров поиска к исходным значениям
+     */
+    fun resetSearchFilters() {
+        _searchCategoryFilter.value = null
+        _searchSectionFilter.value = SectionType.LATEST
+        _searchGenreFilter.value = ""
+        _searchYearFilter.value = ""
+        _searchCountryFilter.value = ""
+    }
 
     fun setCountry(countryQuery: String) {
         if (_currentCountry.value != countryQuery) {
@@ -292,6 +330,111 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             if (countryQuery.isNotEmpty()) {
                 prefetchForCountryFilter(countryQuery)
             }
+        }
+    }
+
+    /**
+     * Высокопроизводительное применение текущих поисковых фильтров (тип, год, страна, жанр, раздел)
+     * к закэшированным результатам поиска в памяти с нулевой задержкой.
+     */
+    fun applySearchFilters() {
+        if (searchQuery.isBlank()) return
+        val raw = rawSearchResults
+        if (raw.isEmpty()) {
+            _catalogState.value = CatalogState.Success(emptyList())
+            return
+        }
+
+        val typeFilter = _searchCategoryFilter.value
+        val yearFilter = _searchYearFilter.value
+        val countryFilter = _searchCountryFilter.value
+        val genreSlugFilter = _searchGenreFilter.value
+        val genreNameFilter = _genresList.value.find { it.slug == genreSlugFilter }?.name ?: ""
+        val sectionFilter = _searchSectionFilter.value
+
+        var filtered = raw.filter { item ->
+            // 1. Фильтр по категории (фильмы, сериалы, аниме, мультики)
+            if (typeFilter != null && !item.matchesType(typeFilter)) return@filter false
+
+            // 2. Фильтр по году
+            if (yearFilter.isNotEmpty() && !item.matchesYear(yearFilter)) return@filter false
+
+            // 3. Фильтр по стране
+            if (countryFilter.isNotEmpty() && !item.matchesCountry(countryFilter)) return@filter false
+
+            // 4. Фильтр по жанру
+            if (genreSlugFilter.isNotEmpty() && !item.matchesGenre(genreSlugFilter, genreNameFilter)) return@filter false
+
+            true
+        }
+
+        // 5. Раздел (сортировка по популярности / дате)
+        filtered = when (sectionFilter) {
+            SectionType.POPULAR -> filtered.sortedByDescending { it.rating.filter { c -> c.isDigit() || c == '.' }.toDoubleOrNull() ?: 0.0 }
+            SectionType.LATEST -> filtered.sortedWith(MovieDateParser.MovieDateComparator)
+            else -> filtered
+        }
+
+        _catalogState.value = CatalogState.Success(filtered)
+    }
+
+    fun selectCategoryFilter(type: RezkaType?) {
+        if (searchQuery.isNotBlank()) {
+            _searchCategoryFilter.value = type
+            requestCatalogScrollToTop()
+            applySearchFilters()
+        } else {
+            if (type != null) {
+                _currentType.value = type
+                requestCatalogScrollToTop()
+                loadCatalog(type = type, genre = "", year = "", forceRefresh = true)
+            }
+        }
+    }
+
+    fun selectSectionFilter(section: SectionType) {
+        if (searchQuery.isNotBlank()) {
+            _searchSectionFilter.value = section
+            requestCatalogScrollToTop()
+            applySearchFilters()
+        } else {
+            _currentSection.value = section
+            requestCatalogScrollToTop()
+            loadCatalog(section = section, forceRefresh = true)
+        }
+    }
+
+    fun selectGenreFilter(genreSlug: String) {
+        if (searchQuery.isNotBlank()) {
+            _searchGenreFilter.value = genreSlug
+            requestCatalogScrollToTop()
+            applySearchFilters()
+        } else {
+            _currentGenre.value = genreSlug
+            requestCatalogScrollToTop()
+            loadCatalog(genre = genreSlug, forceRefresh = true)
+        }
+    }
+
+    fun selectYearFilter(year: String) {
+        if (searchQuery.isNotBlank()) {
+            _searchYearFilter.value = year
+            requestCatalogScrollToTop()
+            applySearchFilters()
+        } else {
+            _currentYear.value = year
+            requestCatalogScrollToTop()
+            loadCatalog(year = year, forceRefresh = true)
+        }
+    }
+
+    fun selectCountryFilter(countryQuery: String) {
+        if (searchQuery.isNotBlank()) {
+            _searchCountryFilter.value = countryQuery
+            requestCatalogScrollToTop()
+            applySearchFilters()
+        } else {
+            setCountry(countryQuery)
         }
     }
 
@@ -522,14 +665,21 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
      * Сброс всех фильтров каталога к значениям по умолчанию
      */
     fun resetCatalogFilters() {
-        _currentCountry.value = ""
-        loadCatalog(
-            type = RezkaService.defaultCatalogType.value,
-            section = RezkaService.defaultCatalogSection.value,
-            genre = "",
-            year = "",
-            forceRefresh = true
-        )
+        if (searchQuery.isNotBlank()) {
+            resetSearchFilters()
+            applySearchFilters()
+        } else {
+            _currentCountry.value = ""
+            _currentGenre.value = ""
+            _currentYear.value = ""
+            loadCatalog(
+                type = RezkaService.defaultCatalogType.value,
+                section = RezkaService.defaultCatalogSection.value,
+                genre = "",
+                year = "",
+                forceRefresh = true
+            )
+        }
     }
 
     /**
@@ -947,8 +1097,15 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
         if (query.isBlank()) {
             lastCommittedQuery = ""
+            rawSearchResults = emptyList()
+            resetSearchFilters() // Полностью сбрасываем фильтры поиска при возврате в каталог!
             loadCatalog(_currentType.value, forceRefresh = true)
             return
+        }
+
+        // Если начали новый поиск из пустого состояния, гарантируем чистые фильтры поиска
+        if (searchQuery.isBlank() && query.isNotBlank()) {
+            resetSearchFilters()
         }
 
         searchJob = viewModelScope.launch {
@@ -958,8 +1115,18 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 val results = RezkaService.search(query)
                     .distinctBy { it.id }
                     .sortedWith(MovieDateParser.MovieDateComparator)
+                rawSearchResults = results
                 _isEndReached.value = true
-                _catalogState.value = CatalogState.Success(results)
+
+                val dynamicCountries = mutableSetOf<String>()
+                for (item in results) {
+                    dynamicCountries.addAll(CountryFlags.extractCountries(item.subtitle))
+                }
+                if (dynamicCountries.isNotEmpty()) {
+                    updateDynamicCountries(dynamicCountries)
+                }
+
+                applySearchFilters()
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 NetworkMonitor.handleNetworkException(e)
@@ -1081,6 +1248,27 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         try {
             val detail = RezkaService.getDetail(url)
             _detailState.value = DetailState.Success(detail)
+
+            if (detail.imageUrl.isNotBlank()) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    try {
+                        val numericId = detail.numericPostId.ifEmpty { RezkaService.extractNumericId(detail.id) }
+                        val urlCleanId = extractIdFromUrl(url)
+                        val fallbackId = fallbackItem?.id ?: ""
+                        val allHist = repository.getAllHistoryList()
+                        val toFix = allHist.filter { h ->
+                            (h.itemId == detail.id || h.itemId == numericId || (fallbackId.isNotEmpty() && h.itemId == fallbackId) || (urlCleanId.isNotEmpty() && h.itemId == urlCleanId) || h.url == url) && h.imageUrl.isBlank()
+                        }
+                        if (toFix.isNotEmpty()) {
+                            val updated = toFix.map { it.copy(imageUrl = detail.imageUrl) }
+                            repository.insertHistoryList(updated)
+                            for (item in updated) {
+                                FirebaseSyncManager.onWatchProgress(item)
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
 
             val initialComments = detail.comments
             val initialTotalPages = maxOf(1, detail.commentsTotalPages)
@@ -1695,6 +1883,25 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             val allHistory = repository.getAllHistoryList()
             if (allHistory.isEmpty()) return@launch
 
+            // Точечная автоматическая проверка и восстановление отсутствующих обложек у всех элементов истории
+            val blankItems = allHistory.filter { it.imageUrl.isBlank() && it.url.isNotBlank() }
+            if (blankItems.isNotEmpty()) {
+                val groupedByUrl = blankItems.groupBy { it.url }
+                for ((rawUrl, hItems) in groupedByUrl) {
+                    try {
+                        val adjusted = RezkaService.adjustUrlToCurrentMirror(rawUrl)
+                        val det = RezkaService.getDetail(adjusted)
+                        if (det.imageUrl.isNotBlank()) {
+                            val fixed = hItems.map { it.copy(imageUrl = det.imageUrl) }
+                            repository.insertHistoryList(fixed)
+                            for (item in fixed) {
+                                FirebaseSyncManager.onWatchProgress(item)
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
             val now = System.currentTimeMillis()
             val grouped = allHistory.groupBy { it.itemId }
             val seriesCandidates = grouped.mapNotNull { (itemId, items) ->
@@ -1936,27 +2143,51 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         if (isOfflineStream || !NetworkMonitor.isOnline.value || url.isBlank() || url.startsWith("file://") || itemId.startsWith("offline_")) {
             return
         }
+
+        var effectiveImageUrl = imageUrl.trim()
+        if (effectiveImageUrl.isEmpty()) {
+            val currentDetail = (_detailState.value as? DetailState.Success)?.detail
+            if (currentDetail != null && currentDetail.imageUrl.isNotBlank() &&
+                (currentDetail.id == itemId || currentDetail.numericPostId == itemId || RezkaService.extractNumericId(currentDetail.id) == RezkaService.extractNumericId(itemId))
+            ) {
+                effectiveImageUrl = currentDetail.imageUrl
+            }
+        }
+        if (effectiveImageUrl.isEmpty()) {
+            val fav = favorites.value.find { it.id == itemId || (url.isNotBlank() && it.url == url) }
+            if (fav != null && fav.imageUrl.isNotBlank()) {
+                effectiveImageUrl = fav.imageUrl
+            }
+        }
+
         val id = "${itemId}_${season}_${episode}"
-        val entity = WatchHistoryEntity(
-            id = id,
-            itemId = itemId,
-            title = title,
-            imageUrl = imageUrl,
-            subtitle = subtitle,
-            url = url,
-            translatorId = translatorId,
-            translatorName = translatorName,
-            season = season,
-            episode = episode,
-            progressMs = progressMs,
-            durationMs = durationMs,
-            totalEpisodes = totalEpisodes,
-            episodeIndex = episodeIndex,
-            totalSeasons = totalSeasons,
-            isFullyWatched = isFullyWatched,
-            timestamp = System.currentTimeMillis()
-        )
         viewModelScope.launch {
+            if (effectiveImageUrl.isEmpty()) {
+                val existingHistory = repository.getWatchHistoryForMovie(itemId)
+                if (existingHistory != null && existingHistory.imageUrl.isNotBlank()) {
+                    effectiveImageUrl = existingHistory.imageUrl
+                }
+            }
+
+            val entity = WatchHistoryEntity(
+                id = id,
+                itemId = itemId,
+                title = title,
+                imageUrl = effectiveImageUrl,
+                subtitle = subtitle,
+                url = url,
+                translatorId = translatorId,
+                translatorName = translatorName,
+                season = season,
+                episode = episode,
+                progressMs = progressMs,
+                durationMs = durationMs,
+                totalEpisodes = totalEpisodes,
+                episodeIndex = episodeIndex,
+                totalSeasons = totalSeasons,
+                isFullyWatched = isFullyWatched,
+                timestamp = System.currentTimeMillis()
+            )
             if (isFullyWatched) {
                 repository.setHistoryWatched(itemId, true)
             } else {

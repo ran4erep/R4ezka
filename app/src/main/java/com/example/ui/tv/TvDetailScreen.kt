@@ -118,16 +118,18 @@ fun TvDetailContent(
         if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
     }
 
-    // Автофокус на кнопке "К просмотру" и сброс скролла наверх только при смене фильма на ТВ
-    var previousDetailId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    // Автофокус на кнопке "К просмотру" и сброс скролла наверх при входе на страницу фильма на ТВ
     LaunchedEffect(detail.id) {
         ImagePreloaderEngine.preloadDetailImages(context, detail)
-        if (previousDetailId != detail.id) {
-            if (previousDetailId != null) {
-                rightScrollState.scrollToItem(0)
-            }
-            scrollToWatchButtonFocusRequester.requestFocusSafe()
-            previousDetailId = detail.id
+        try {
+            rightScrollState.scrollToItem(0)
+        } catch (_: Throwable) {}
+        for (attempt in 0..14) {
+            kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
+            try {
+                scrollToWatchButtonFocusRequester.requestFocus()
+                break
+            } catch (_: Throwable) {}
         }
     }
 
