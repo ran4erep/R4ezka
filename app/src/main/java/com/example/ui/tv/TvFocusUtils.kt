@@ -572,6 +572,7 @@ fun TvRemoteInputField(
     enabled: Boolean = true
 ) {
     var isEditing by remember { mutableStateOf(false) }
+    var wasEditing by remember { mutableStateOf(false) }
     var hasBeenFocused by remember { mutableStateOf(false) }
     var lastActivationTime by remember { mutableLongStateOf(0L) }
 
@@ -584,8 +585,11 @@ fun TvRemoteInputField(
 
     // При входе в режим редактирования активируем поле ввода и открываем IME клавиатуру.
     // При выходе — надежно удерживаем фокус на элементе поля, предотвращая соскакивание на боковое меню.
+    // ВАЖНО: на начальной композиции (когда wasEditing == false) фокус НЕ перехватывается,
+    // чтобы раскрытие аккордеонов (например, «Сеть») не прыгало самопроизвольно на поле ввода!
     LaunchedEffect(isEditing) {
         if (isEditing) {
+            wasEditing = true
             for (attempt in 0..4) {
                 delay(if (attempt == 0) 30L else 50L)
                 try {
@@ -596,7 +600,8 @@ fun TvRemoteInputField(
                     break
                 } catch (_: Throwable) {}
             }
-        } else {
+        } else if (wasEditing) {
+            wasEditing = false
             delay(20L)
             localRequester.requestFocusSafe()
         }
@@ -737,17 +742,17 @@ fun TvRemoteInputField(
                                         }
                                         android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
                                             if (isEditing) {
+                                                wasEditing = false
                                                 isEditing = false
                                                 keyboardController?.hide()
-                                                localRequester.requestFocusSafe()
                                             }
                                             false
                                         }
                                         android.view.KeyEvent.KEYCODE_DPAD_UP -> {
                                             if (isEditing) {
+                                                wasEditing = false
                                                 isEditing = false
                                                 keyboardController?.hide()
-                                                localRequester.requestFocusSafe()
                                             }
                                             false
                                         }
