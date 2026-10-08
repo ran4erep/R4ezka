@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -420,12 +421,46 @@ fun TvDetailContent(
                         translationX = (1f - contentUnfoldProgress.value) * 60.dp.toPx()
                         alpha = contentUnfoldProgress.value
                     }
+                    .onKeyEvent { keyEvent ->
+                        if (keyEvent.type == KeyEventType.KeyDown) {
+                            val repeat = keyEvent.nativeKeyEvent.repeatCount
+                            if (repeat > 0) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                        coroutineScope.launch {
+                                            try {
+                                                rightScrollState.scrollBy(scrollStepPx * 1.4f)
+                                            } catch (_: Throwable) {}
+                                        }
+                                        false
+                                    }
+                                    AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                        coroutineScope.launch {
+                                            try {
+                                                rightScrollState.scrollBy(-scrollStepPx * 1.4f)
+                                            } catch (_: Throwable) {}
+                                        }
+                                        false
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        } else false
+                    }
                     .testTag("tv_detail_right_column"),
                 contentPadding = PaddingValues(bottom = 36.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // ---- 1. Заголовок и мета-чипы ----
                 item {
+                    val scrollToTopHeader: () -> Unit = {
+                        coroutineScope.launch {
+                            try {
+                                rightScrollState.animateScrollToItem(0, 0)
+                            } catch (_: Throwable) {}
+                        }
+                    }
+
                     Column {
                         Text(
                             text = detail.title,
@@ -487,6 +522,7 @@ fun TvDetailContent(
                                                     true
                                                 }
                                                 AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                    scrollToTopHeader()
                                                     true
                                                 }
                                                 else -> false
@@ -501,6 +537,7 @@ fun TvDetailContent(
                                                 }
                                             }
                                         },
+                                        onFocused = scrollToTopHeader,
                                         scaleFactor = 1.05f,
                                         shape = RoundedCornerShape(6.dp),
                                         focusRequester = scrollToWatchButtonFocusRequester,
@@ -549,6 +586,7 @@ fun TvDetailContent(
                                                     true
                                                 }
                                                 AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                    scrollToTopHeader()
                                                     true
                                                 }
                                                 else -> false
@@ -557,6 +595,7 @@ fun TvDetailContent(
                                     }
                                     .tvFocusableItem(
                                         onClick = onToggleFavorite,
+                                        onFocused = scrollToTopHeader,
                                         scaleFactor = 1.05f,
                                         shape = RoundedCornerShape(6.dp),
                                         focusRequester = favoriteButtonFocusRequester,
@@ -594,8 +633,15 @@ fun TvDetailContent(
                                         if (isSubscribed) CinemaPrimary else CinemaSecondary.copy(alpha = 0.3f)
                                     ),
                                     modifier = Modifier
+                                        .onKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_UP) {
+                                                scrollToTopHeader()
+                                                true
+                                            } else false
+                                        }
                                         .tvFocusableItem(
                                             onClick = onToggleSubscription,
+                                            onFocused = scrollToTopHeader,
                                             scaleFactor = 1.05f,
                                             shape = RoundedCornerShape(6.dp),
                                             lazyListState = rightScrollState
@@ -624,6 +670,12 @@ fun TvDetailContent(
                                 modifier = Modifier
                                     .focusProperties {
                                         up = FocusRequester.Cancel
+                                    }
+                                    .onKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_UP) {
+                                            scrollToTopHeader()
+                                            true
+                                        } else false
                                     }
                                     .tvFocusableItem(
                                         onClick = {
@@ -654,6 +706,7 @@ fun TvDetailContent(
                                                 }
                                             }
                                         },
+                                        onFocused = scrollToTopHeader,
                                         scaleFactor = 1.05f,
                                         shape = RoundedCornerShape(6.dp),
                                         focusRequester = shareButtonFocusRequester,
@@ -687,7 +740,19 @@ fun TvDetailContent(
                 // ---- 2. Тот самый блок с информацией (ИДЕНТИЧНО телефону) ----
                 item {
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusProperties {
+                                left = backButtonFocusRequester
+                            }
+                            .tvFocusableItem(
+                                onClick = {},
+                                scaleFactor = 1.0f,
+                                shape = RoundedCornerShape(12.dp),
+                                focusedBorderWidth = 1.5.dp,
+                                focusedBorderColor = CinemaPrimary.copy(alpha = 0.45f),
+                                lazyListState = rightScrollState
+                            ),
                         colors = CardDefaults.cardColors(containerColor = CinemaDark),
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -932,26 +997,55 @@ fun TvDetailContent(
 
                 // ---- 5. Описание ----
                 item {
+                    var isDescriptionExpanded by remember { mutableStateOf(false) }
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusProperties {
+                                left = backButtonFocusRequester
+                            }
+                            .tvFocusableItem(
+                                onClick = { isDescriptionExpanded = !isDescriptionExpanded },
+                                scaleFactor = 1.0f,
+                                shape = RoundedCornerShape(12.dp),
+                                focusedBorderWidth = 1.5.dp,
+                                focusedBorderColor = CinemaPrimary.copy(alpha = 0.45f),
+                                lazyListState = rightScrollState
+                            ),
                         colors = CardDefaults.cardColors(containerColor = CinemaDark),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Column(
                             modifier = Modifier.padding(14.dp)
                         ) {
-                            Text(
-                                text = "Описание",
-                                color = CinemaTextWhite,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Описание",
+                                    color = CinemaTextWhite,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (detail.description.length > 180) {
+                                    Text(
+                                        text = if (isDescriptionExpanded) "Свернуть" else "Развернуть",
+                                        color = CinemaPrimary,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
                                 text = detail.description.ifEmpty { "Описание отсутствует." },
                                 color = CinemaTextGray,
                                 fontSize = 12.sp,
-                                lineHeight = 18.sp
+                                lineHeight = 18.sp,
+                                maxLines = if (isDescriptionExpanded) Int.MAX_VALUE else 5,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }

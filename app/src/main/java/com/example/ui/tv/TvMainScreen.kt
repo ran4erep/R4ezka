@@ -167,12 +167,22 @@ fun TvMainScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                val navigateToCurrentMainContent: () -> Unit = {
+                    when (selectedDestination) {
+                        TvNavDestination.CATALOG -> rightContentFocusRequester.requestFocusSafe()
+                        TvNavDestination.FAVORITES -> favoritesFirstItemRequester.requestFocusSafe()
+                        TvNavDestination.HISTORY -> historyFirstItemRequester.requestFocusSafe()
+                        TvNavDestination.SETTINGS -> settingsFirstCategoryRequester.requestFocusSafe()
+                    }
+                }
+
                 // Account / Login Button
                 TvAccountButton(
                     isLoggedIn = isLoggedIn,
                     currentUser = currentUser,
                     currentUserAvatar = currentUserAvatar,
                     isExpanded = isSidebarFocused,
+                    onRight = navigateToCurrentMainContent,
                     onClick = { showAuthDialog = true }
                 )
 
@@ -190,14 +200,7 @@ fun TvMainScreen(
                         overrideTitle = title,
                         overrideIcon = icon,
                         focusRequester = sidebarFocusRequesters[dest],
-                        onRight = {
-                            when (dest) {
-                                TvNavDestination.CATALOG -> rightContentFocusRequester.requestFocusSafe()
-                                TvNavDestination.FAVORITES -> favoritesFirstItemRequester.requestFocusSafe()
-                                TvNavDestination.HISTORY -> historyFirstItemRequester.requestFocusSafe()
-                                TvNavDestination.SETTINGS -> settingsFirstCategoryRequester.requestFocusSafe()
-                            }
-                        },
+                        onRight = navigateToCurrentMainContent,
                         onClick = { selectedDestination = dest }
                     )
                 }
@@ -211,6 +214,14 @@ fun TvMainScreen(
                 TvUpdateSidebarItem(
                     updateState = updateState,
                     isExpanded = isSidebarFocused,
+                    onRight = {
+                        when (selectedDestination) {
+                            TvNavDestination.CATALOG -> rightContentFocusRequester.requestFocusSafe()
+                            TvNavDestination.FAVORITES -> favoritesFirstItemRequester.requestFocusSafe()
+                            TvNavDestination.HISTORY -> historyFirstItemRequester.requestFocusSafe()
+                            TvNavDestination.SETTINGS -> settingsFirstCategoryRequester.requestFocusSafe()
+                        }
+                    },
                     onClick = {
                         scope.launch {
                             when (val state = updateState) {
@@ -369,7 +380,8 @@ private fun TvAccountButton(
     currentUser: String?,
     currentUserAvatar: String?,
     isExpanded: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onRight: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
@@ -379,6 +391,14 @@ private fun TvAccountButton(
                 if (isLoggedIn) CinemaCard.copy(alpha = 0.5f) else Color.Transparent,
                 RoundedCornerShape(10.dp)
             )
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_RIGHT) {
+                    if (onRight != null) {
+                        onRight()
+                        true
+                    } else false
+                } else false
+            }
             .tvFocusableItem(
                 onClick = onClick,
                 scaleFactor = 1.0f,
@@ -1084,20 +1104,23 @@ private fun TvCatalogFiltersBar(
 ) {
     var isSearchInputFocused by remember { mutableStateOf(false) }
     var focusedHistoryIndex by remember { mutableStateOf<Int?>(null) }
-    val isSearchAreaFocused = isSearchInputFocused || (focusedHistoryIndex != null)
 
-    var isHistoryVisible by remember { mutableStateOf(false) }
-
-    LaunchedEffect(isSearchAreaFocused) {
-        if (isSearchAreaFocused) {
-            isHistoryVisible = true
-        } else {
-            kotlinx.coroutines.delay(2000L)
-            isHistoryVisible = false
-        }
+    val hasSearchHistory = searchHistory.isNotEmpty()
+    val historyFocusRequesters = remember(searchHistory) {
+        searchHistory.take(5).map { FocusRequester() }
+    }
+    val firstHistoryFocusRequester = remember(historyFocusRequesters) {
+        historyFocusRequesters.firstOrNull() ?: FocusRequester()
     }
 
-    val firstHistoryFocusRequester = remember { FocusRequester() }
+    val navigateUpFromFilters: () -> Unit = {
+        if (hasSearchHistory && historyFocusRequesters.isNotEmpty()) {
+            val targetIdx = (focusedHistoryIndex ?: 0).coerceIn(0, historyFocusRequesters.lastIndex)
+            historyFocusRequesters[targetIdx].requestFocusSafe()
+        } else {
+            searchBarFocusRequester.requestFocusSafe()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -1122,8 +1145,9 @@ private fun TvCatalogFiltersBar(
             onVoiceSearchClick = launchTvVoiceSearch,
             onLeft = { sidebarFocusRequester.requestFocusSafe() },
             onDown = {
-                if (searchHistory.isNotEmpty() && isHistoryVisible) {
-                    firstHistoryFocusRequester.requestFocusSafe()
+                if (hasSearchHistory && historyFocusRequesters.isNotEmpty()) {
+                    val targetIdx = (focusedHistoryIndex ?: 0).coerceIn(0, historyFocusRequesters.lastIndex)
+                    historyFocusRequesters[targetIdx].requestFocusSafe()
                 } else {
                     categoryFocusRequester.requestFocusSafe()
                 }
@@ -1133,8 +1157,8 @@ private fun TvCatalogFiltersBar(
             modifier = Modifier.fillMaxWidth()
         )
 
-        // Подсказки недавних запросов из истории поиска для ТВ
-        if (isHistoryVisible && searchHistory.isNotEmpty()) {
+        // Подсказки недавних запросов из истории поиска для ТВ (всегда доступны при наличии истории)
+        if (hasSearchHistory) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1153,16 +1177,41 @@ private fun TvCatalogFiltersBar(
                     fontWeight = FontWeight.Medium
                 )
                 searchHistory.take(5).forEachIndexed { index, histItem ->
+                    val histRequester = historyFocusRequesters.getOrNull(index) ?: remember { FocusRequester() }
                     Surface(
                         color = CinemaDark,
                         shape = RoundedCornerShape(6.dp),
                         border = BorderStroke(1.dp, CinemaBorder),
                         modifier = Modifier
-                            .then(if (index == 0) Modifier.focusRequester(firstHistoryFocusRequester) else Modifier)
+                            .focusRequester(histRequester)
                             .onKeyEvent { keyEvent ->
-                                if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_DOWN) {
-                                    categoryFocusRequester.requestFocusSafe()
-                                    true
+                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                    when (keyEvent.nativeKeyEvent.keyCode) {
+                                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                            searchBarFocusRequester.requestFocusSafe()
+                                            true
+                                        }
+                                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                            categoryFocusRequester.requestFocusSafe()
+                                            true
+                                        }
+                                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                            if (index == 0) {
+                                                sidebarFocusRequester.requestFocusSafe()
+                                                true
+                                            } else {
+                                                historyFocusRequesters.getOrNull(index - 1)?.requestFocusSafe()
+                                                true
+                                            }
+                                        }
+                                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                            if (index < historyFocusRequesters.lastIndex) {
+                                                historyFocusRequesters.getOrNull(index + 1)?.requestFocusSafe()
+                                                true
+                                            } else false
+                                        }
+                                        else -> false
+                                    }
                                 } else false
                             }
                             .tvFocusableItem(
@@ -1233,7 +1282,7 @@ private fun TvCatalogFiltersBar(
                 getLabel = { it.second },
                 modifier = Modifier.weight(1f),
                 focusRequester = categoryFocusRequester,
-                onUp = { searchBarFocusRequester.requestFocusSafe() },
+                onUp = navigateUpFromFilters,
                 onLeft = { sidebarFocusRequester.requestFocusSafe() },
                 onRight = { sectionFocusRequester.requestFocusSafe() },
                 onDown = onFocusGrid
@@ -1257,7 +1306,7 @@ private fun TvCatalogFiltersBar(
                 getLabel = { it.getDisplayName() },
                 modifier = Modifier.weight(1f),
                 focusRequester = sectionFocusRequester,
-                onUp = { searchBarFocusRequester.requestFocusSafe() },
+                onUp = navigateUpFromFilters,
                 onLeft = { categoryFocusRequester.requestFocusSafe() },
                 onRight = { genreFocusRequester.requestFocusSafe() },
                 onDown = onFocusGrid
@@ -1276,7 +1325,7 @@ private fun TvCatalogFiltersBar(
                 getLabel = { it.name },
                 modifier = Modifier.weight(1f),
                 focusRequester = genreFocusRequester,
-                onUp = { searchBarFocusRequester.requestFocusSafe() },
+                onUp = navigateUpFromFilters,
                 onLeft = { sectionFocusRequester.requestFocusSafe() },
                 onRight = { yearFocusRequester.requestFocusSafe() },
                 onDown = onFocusGrid
@@ -1295,7 +1344,7 @@ private fun TvCatalogFiltersBar(
                 getLabel = { it.name },
                 modifier = Modifier.weight(1f),
                 focusRequester = yearFocusRequester,
-                onUp = { searchBarFocusRequester.requestFocusSafe() },
+                onUp = navigateUpFromFilters,
                 onLeft = { genreFocusRequester.requestFocusSafe() },
                 onRight = { countryFocusRequester.requestFocusSafe() },
                 onDown = onFocusGrid
@@ -1312,7 +1361,7 @@ private fun TvCatalogFiltersBar(
                 onCountrySelected = onCountrySelected,
                 modifier = Modifier.weight(1f),
                 focusRequester = countryFocusRequester,
-                onUp = { searchBarFocusRequester.requestFocusSafe() },
+                onUp = navigateUpFromFilters,
                 onLeft = { yearFocusRequester.requestFocusSafe() },
                 onDown = onFocusGrid
             )
@@ -1983,7 +2032,8 @@ private fun TvMovieCard(
 private fun TvUpdateSidebarItem(
     updateState: UpdateState,
     isExpanded: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onRight: (() -> Unit)? = null
 ) {
     val bgColor = when (updateState) {
         is UpdateState.ReadyToInstall -> CinemaPrimary.copy(alpha = 0.3f)
@@ -2002,6 +2052,14 @@ private fun TvUpdateSidebarItem(
             .fillMaxWidth()
             .height(46.dp)
             .background(bgColor, RoundedCornerShape(10.dp))
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_RIGHT) {
+                    if (onRight != null) {
+                        onRight()
+                        true
+                    } else false
+                } else false
+            }
             .tvFocusableItem(
                 onClick = onClick,
                 scaleFactor = 1.0f,
