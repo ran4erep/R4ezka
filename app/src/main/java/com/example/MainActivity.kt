@@ -235,6 +235,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     if (showAuthDialog) {
         AuthDialog(
             viewModel = viewModel,
+            isTvMode = isTvMode,
             onDismiss = { showAuthDialog = false }
         )
     }
