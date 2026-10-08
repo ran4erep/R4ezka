@@ -460,6 +460,8 @@ fun DetailScreen(
 
                 // Immediately update history so active episode is saved as the latest entry (only when online and not offline library)
                 if (!isOfflinePlayback) {
+                    val currentDetailObj = (detailState as? DetailState.Success)?.detail
+                    val effectiveImageUrl = currentDetailObj?.imageUrl?.takeIf { it.isNotBlank() } ?: item.imageUrl
                     if (isSeries) {
                         val priorEpCount = if (curSeason != null) {
                             effectiveSeasons.filter { it.id < curSeason.id }.sumOf { it.episodes.size }
@@ -473,7 +475,7 @@ fun DetailScreen(
                         viewModel.saveWatchProgress(
                             itemId = item.id,
                             title = item.title,
-                            imageUrl = item.imageUrl,
+                            imageUrl = effectiveImageUrl,
                             subtitle = "Сезон ${curSeason?.id ?: effectiveSeason}, Серия $displayEpNumber",
                             url = item.url,
                             translatorId = translator.id,
@@ -490,7 +492,7 @@ fun DetailScreen(
                         viewModel.saveWatchProgress(
                             itemId = item.id,
                             title = item.title,
-                            imageUrl = item.imageUrl,
+                            imageUrl = effectiveImageUrl,
                             subtitle = "Фильм",
                             url = item.url,
                             translatorId = translator.id,
@@ -572,13 +574,24 @@ fun DetailScreen(
         startPlayback(translator, seasonId, episodeId, null)
     }
 
-    val displayState = remember(detailState, item.id) {
+    val displayState = remember(detailState, item.id, item.url) {
         val state = detailState
-        if (state is DetailState.Success &&
-            state.detail.id != item.id &&
-            RezkaService.extractNumericId(state.detail.id) != RezkaService.extractNumericId(item.id)
-        ) {
-            DetailState.Loading
+        if (state is DetailState.Success) {
+            val d = state.detail
+            val itemCleanId = item.id.ifEmpty { RezkaService.extractNumericId(item.url) }
+            val detailCleanId = d.id.ifEmpty { d.numericPostId }
+            val itemNum = RezkaService.extractNumericId(item.id.ifEmpty { item.url })
+            val detailNum = RezkaService.extractNumericId(d.id.ifEmpty { d.numericPostId })
+
+            val isSame = (d.id == item.id && item.id.isNotEmpty()) ||
+                    (itemCleanId.isNotEmpty() && itemCleanId != "0" && (d.id == itemCleanId || detailCleanId == itemCleanId)) ||
+                    (itemNum.isNotEmpty() && detailNum.isNotEmpty() && itemNum == detailNum)
+
+            if (!isSame) {
+                DetailState.Loading
+            } else {
+                state
+            }
         } else {
             state
         }
@@ -594,9 +607,16 @@ fun DetailScreen(
                 Box(
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    if (item.imageUrl.isNotEmpty()) {
+                    val effectiveLoadingPoster = remember(item.imageUrl, item.id, item.url) {
+                        item.imageUrl.ifEmpty {
+                            viewModel.favorites.value.find { it.id == item.id || (item.url.isNotBlank() && it.url == item.url) }?.imageUrl
+                                ?: viewModel.aggregatedWatchHistory.value.find { it.itemId == item.id || (item.url.isNotBlank() && it.url == item.url) }?.imageUrl
+                                ?: ""
+                        }
+                    }
+                    if (effectiveLoadingPoster.isNotEmpty()) {
                         AsyncImage(
-                            model = item.imageUrl,
+                            model = effectiveLoadingPoster,
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
@@ -624,7 +644,7 @@ fun DetailScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        if (item.imageUrl.isNotEmpty()) {
+                        if (effectiveLoadingPoster.isNotEmpty()) {
                             Card(
                                 shape = RoundedCornerShape(12.dp),
                                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
@@ -633,7 +653,7 @@ fun DetailScreen(
                                     .aspectRatio(0.68f)
                             ) {
                                 AsyncImage(
-                                    model = item.imageUrl,
+                                    model = effectiveLoadingPoster,
                                     contentDescription = item.title,
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
@@ -1385,11 +1405,14 @@ fun DetailScreen(
                                                         .clip(RoundedCornerShape(8.dp))
                                                         .background(if (isCurrent) CinemaPrimary.copy(alpha = 0.15f) else Color.Transparent)
                                                         .clickable(enabled = !isCurrent && franchiseItem.url.isNotEmpty()) {
+                                                            val cachedPoster = viewModel.favorites.value.find { it.id == franchiseItem.id || (franchiseItem.url.isNotBlank() && it.url == franchiseItem.url) }?.imageUrl
+                                                                ?: viewModel.aggregatedWatchHistory.value.find { it.itemId == franchiseItem.id || (franchiseItem.url.isNotBlank() && it.url == franchiseItem.url) }?.imageUrl
+                                                                ?: ""
                                                             val targetItem = RezkaItem(
                                                                 id = franchiseItem.id.ifEmpty { franchiseItem.url.hashCode().toString() },
                                                                 title = cleanTitle,
                                                                 subtitle = displayYear,
-                                                                imageUrl = "",
+                                                                imageUrl = cachedPoster,
                                                                 rating = "",
                                                                 url = franchiseItem.url,
                                                                 type = detail.type
@@ -2937,10 +2960,12 @@ fun DetailScreen(
                             viewModel.hasOfflineMedia(item.id)
 
                         if (!isCurrentStreamOffline) {
+                            val currentDetailObj = (detailState as? DetailState.Success)?.detail
+                            val effectiveImageUrl = currentDetailObj?.imageUrl?.takeIf { it.isNotBlank() } ?: item.imageUrl
                             viewModel.saveWatchProgress(
                                 itemId = item.id,
                                 title = item.title,
-                                imageUrl = item.imageUrl,
+                                imageUrl = effectiveImageUrl,
                                 subtitle = if (isSeries) "Сезон ${curSeason?.id ?: selectedSeasonId ?: 1}, Серия $displayEpNumber" else "Фильм",
                                 url = item.url,
                                 translatorId = selectedTranslator?.id ?: "",

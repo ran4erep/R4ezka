@@ -234,7 +234,8 @@ fun Modifier.tvFocusableItem(
     lazyListState: LazyListState? = null,
     targetViewportY: Float = 220f,
     inset: Dp = 0.dp,
-    hideBorder: Boolean = false
+    hideBorder: Boolean = false,
+    watchChildrenFocus: Boolean = false
 ): Modifier = composed {
     var isFocused by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }
@@ -293,7 +294,7 @@ fun Modifier.tvFocusableItem(
             if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier
         )
         .onFocusChanged { focusState ->
-            val hasFocus = focusState.isFocused || focusState.hasFocus
+            val hasFocus = if (watchChildrenFocus) (focusState.isFocused || focusState.hasFocus) else focusState.isFocused
             isFocused = hasFocus
             onFocusChanged?.invoke(hasFocus)
             if (hasFocus) {
@@ -495,6 +496,27 @@ fun FocusRequester.requestFocusSafe() {
     } catch (_: Throwable) {
         // Поглощаем любые исключения неинициализированного/открепленного фокуса для стабильности
     }
+}
+
+/**
+ * Надежная циклическая установка фокуса с интервалами для корректной синхронизации
+ * с рендером и перестроением дерева композиции на Android TV.
+ */
+suspend fun FocusRequester.tvRequestFocusWithRetry(
+    maxAttempts: Int = 12,
+    initialDelayMs: Long = 30L,
+    stepDelayMs: Long = 40L
+): Boolean {
+    for (attempt in 0..maxAttempts) {
+        if (attempt > 0 || initialDelayMs > 0) {
+            kotlinx.coroutines.delay(if (attempt == 0) initialDelayMs else stepDelayMs)
+        }
+        try {
+            this.requestFocus()
+            return true
+        } catch (_: Throwable) {}
+    }
+    return false
 }
 
 /**

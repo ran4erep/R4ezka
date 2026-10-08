@@ -92,6 +92,77 @@ fun RezkaItem.matchesCountry(countryQuery: String): Boolean {
     return CountryFlags.matchesCountry(subtitle, countryQuery)
 }
 
+fun RezkaItem.matchesType(type: RezkaType?): Boolean {
+    if (type == null) return true
+    if (this.type == type) return true
+    return when (type) {
+        RezkaType.MOVIE -> url.contains("/films/") || (!url.contains("/series/") && !url.contains("/animation/") && !url.contains("/cartoons/"))
+        RezkaType.SERIES -> url.contains("/series/")
+        RezkaType.ANIME -> url.contains("/animation/")
+        RezkaType.CARTOON -> url.contains("/cartoons/")
+        RezkaType.COLLECTIONS -> false
+    }
+}
+
+private val YEAR_RANGE_REGEX = Regex("""\b(19\d\d|20\d\d)\s*[-–—]\s*(19\d\d|20\d\d)\b""")
+private val ONGOING_YEAR_REGEX = Regex("""\b(19\d\d|20\d\d)\s*[-–—]\s*(?:\.\.\.|…|по\s*наст|наст|\s*$)""")
+
+fun RezkaItem.matchesYear(yearQuery: String): Boolean {
+    if (yearQuery.isBlank()) return true
+    val targetYear = yearQuery.trim().toIntOrNull() ?: return true
+
+    if (releaseDateNum > 0) {
+        val y = releaseDateNum / 10000
+        if (y == targetYear) return true
+    }
+
+    if (subtitle.isNotEmpty()) {
+        val sub = subtitle
+        if (sub.contains(yearQuery)) return true
+
+        val rangeMatch = YEAR_RANGE_REGEX.find(sub)
+        if (rangeMatch != null) {
+            val startY = rangeMatch.groupValues[1].toIntOrNull() ?: 0
+            val endY = rangeMatch.groupValues[2].toIntOrNull() ?: 0
+            if (startY in 1890..2040 && endY in 1890..2040 && targetYear in startY..endY) {
+                return true
+            }
+        }
+
+        val ongoingMatch = ONGOING_YEAR_REGEX.find(sub)
+        if (ongoingMatch != null) {
+            val startY = ongoingMatch.groupValues[1].toIntOrNull() ?: 0
+            val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+            if (startY in 1890..2040 && targetYear in startY..currentYear) {
+                return true
+            }
+        }
+    }
+
+    return false
+}
+
+fun RezkaItem.matchesGenre(genreSlug: String, genreName: String = ""): Boolean {
+    if (genreSlug.isBlank() && genreName.isBlank()) return true
+
+    if (genreSlug.isNotBlank()) {
+        if (url.contains("/$genreSlug/", ignoreCase = true) || url.contains("/$genreSlug.html", ignoreCase = true)) {
+            return true
+        }
+    }
+
+    if (subtitle.isNotEmpty()) {
+        if (genreName.isNotBlank() && subtitle.contains(genreName, ignoreCase = true)) {
+            return true
+        }
+        if (genreSlug.isNotBlank() && subtitle.contains(genreSlug, ignoreCase = true)) {
+            return true
+        }
+    }
+
+    return false
+}
+
 
 data class RezkaItem(
     val id: String,

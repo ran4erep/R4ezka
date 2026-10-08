@@ -68,6 +68,9 @@ import com.example.ui.tv.TvModePreference
 import com.example.ui.tv.TvRemoteInputField
 import com.example.ui.tv.dpadScrollable
 import com.example.ui.tv.tvFocusableItem
+import com.example.ui.tv.requestFocusSafe
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.key.*
 import androidx.compose.foundation.shape.CircleShape
 import kotlinx.coroutines.launch
 
@@ -77,11 +80,14 @@ private data class QualityOption(
     val subtitle: String? = null
 )
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun SettingsScreen(
     viewModel: RezkaViewModel,
     onBack: (() -> Unit)? = null,
     onNavigateToDetail: ((com.example.data.RezkaItem) -> Unit)? = null,
+    onNavigateLeftToSidebar: (() -> Unit)? = null,
+    firstCategoryFocusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -105,9 +111,6 @@ fun SettingsScreen(
     var dnsDropdownExpanded by remember { mutableStateOf(false) }
     var isTestingDns by remember { mutableStateOf(false) }
     var dnsCheckResult by remember { mutableStateOf<String?>(null) }
-    var isTestingSslFallback by remember { mutableStateOf(false) }
-    var sslFallbackResult by remember { mutableStateOf<String?>(null) }
-    var isForceFallbackActive by remember { mutableStateOf(ResilientSslEngine.forceFallbackMode) }
     val presetMirrors = viewModel.presetMirrors
 
     var customMirrorInput by remember(currentMirror) { mutableStateOf(currentMirror) }
@@ -153,6 +156,23 @@ fun SettingsScreen(
         label = "offlineArrowRotation"
     )
 
+    val networkCategoryRequester = firstCategoryFocusRequester ?: remember { FocusRequester() }
+    val playbackCategoryRequester = remember { FocusRequester() }
+    val tvCategoryRequester = remember { FocusRequester() }
+    val subscriptionsCategoryRequester = remember { FocusRequester() }
+    val offlineCategoryRequester = remember { FocusRequester() }
+
+    // Автофокус по умолчанию на первой категории настроек
+    LaunchedEffect(Unit) {
+        for (attempt in 0..12) {
+            kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
+            try {
+                networkCategoryRequester.requestFocus()
+                break
+            } catch (_: Throwable) {}
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -164,6 +184,11 @@ fun SettingsScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .focusProperties {
+                    up = FocusRequester.Cancel
+                    down = FocusRequester.Cancel
+                    left = FocusRequester.Cancel
+                }
                 .verticalScroll(scrollState)
                 .bounceOverscroll(Orientation.Vertical)
                 .dpadScrollable(scrollState)
@@ -232,10 +257,39 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        if (onNavigateLeftToSidebar != null) {
+                                            onNavigateLeftToSidebar()
+                                            true
+                                        } else false
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                        true
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                        if (!isMirrorsExpanded) {
+                                            playbackCategoryRequester.requestFocusSafe()
+                                            true
+                                        } else false
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        if (!isMirrorsExpanded) {
+                                            isMirrorsExpanded = true
+                                            true
+                                        } else false
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
                         .tvFocusableItem(
                             onClick = { isMirrorsExpanded = !isMirrorsExpanded },
                             shape = RoundedCornerShape(16.dp),
-                            scaleFactor = 1.0f
+                            scaleFactor = 1.0f,
+                            focusRequester = networkCategoryRequester
                         )
                         .padding(16.dp)
                         .testTag("settings_accordion_network")
@@ -890,122 +944,6 @@ fun SettingsScreen(
                                 }
                             }
                         }
-
-                        // Временная кнопка тестирования Fallback SSL
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            val testFallbackAction: () -> Unit = {
-                                HapticEngine.get().perform(HapticType.CONFIRM)
-                                isTestingSslFallback = true
-                                sslFallbackResult = null
-                                coroutineScope.launch {
-                                    try {
-                                        val res = ResilientSslEngine.testFallbackValidation(RezkaService.currentBaseUrl)
-                                        sslFallbackResult = res
-                                    } catch (e: Exception) {
-                                        sslFallbackResult = "Ошибка: ${e.message}"
-                                    } finally {
-                                        isTestingSslFallback = false
-                                    }
-                                }
-                            }
-
-                            Button(
-                                onClick = testFallbackAction,
-                                enabled = !isTestingSslFallback,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = CinemaMuted.copy(alpha = 0.5f),
-                                    contentColor = CinemaTextWhite
-                                ),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .tvFocusableItem(
-                                        onClick = testFallbackAction,
-                                        shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.0f
-                                    )
-                                    .testTag("test_ssl_fallback_button")
-                            ) {
-                                if (isTestingSslFallback) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        color = CinemaTextWhite,
-                                        strokeWidth = 2.dp
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Проверка...", fontSize = 12.sp)
-                                } else {
-                                    Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Тест Fallback SSL", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-
-                            val toggleFallbackAction = {
-                                HapticEngine.get().perform(HapticType.CONFIRM)
-                                val newState = !isForceFallbackActive
-                                isForceFallbackActive = newState
-                                ResilientSslEngine.forceFallbackMode = newState
-                                sslFallbackResult = if (newState) {
-                                    "✓ Принудительный Fallback SSL ВКЛЮЧЁН (системный trust store обойдён)"
-                                } else {
-                                    "Принудительный Fallback SSL ВЫКЛЮЧЕН (штатный режим)"
-                                }
-                            }
-
-                            FilterChip(
-                                selected = isForceFallbackActive,
-                                onClick = toggleFallbackAction,
-                                label = {
-                                    Text(
-                                        if (isForceFallbackActive) "Fallback: ВКЛ" else "Fallback: ВЫКЛ",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = CinemaPrimary,
-                                    selectedLabelColor = CinemaTextWhite
-                                ),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier
-                                    .tvFocusableItem(
-                                        onClick = toggleFallbackAction,
-                                        shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.0f
-                                    )
-                                    .testTag("toggle_force_fallback_chip")
-                            )
-                        }
-
-                        AnimatedVisibility(visible = sslFallbackResult != null) {
-                            sslFallbackResult?.let { text ->
-                                val isOk = text.startsWith("✓") || text.contains("ВКЛЮЧЁН") || text.contains("ВЫКЛЮЧЕН")
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 8.dp)
-                                        .background(
-                                            if (isOk) CinemaGreen.copy(alpha = 0.12f) else CinemaPrimary.copy(alpha = 0.12f),
-                                            RoundedCornerShape(8.dp)
-                                        )
-                                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                                        .testTag("ssl_fallback_result")
-                                ) {
-                                    Text(
-                                        text = text,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = if (isOk) CinemaGreen else CinemaPrimary
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -1029,10 +967,40 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        if (onNavigateLeftToSidebar != null) {
+                                            onNavigateLeftToSidebar()
+                                            true
+                                        } else false
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                        networkCategoryRequester.requestFocusSafe()
+                                        true
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                        if (!isPlaybackExpanded) {
+                                            tvCategoryRequester.requestFocusSafe()
+                                            true
+                                        } else false
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        if (!isPlaybackExpanded) {
+                                            isPlaybackExpanded = true
+                                            true
+                                        } else false
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
                         .tvFocusableItem(
                             onClick = { isPlaybackExpanded = !isPlaybackExpanded },
                             shape = RoundedCornerShape(16.dp),
-                            scaleFactor = 1.0f
+                            scaleFactor = 1.0f,
+                            focusRequester = playbackCategoryRequester
                         )
                         .padding(16.dp)
                         .testTag("settings_accordion_playback")
@@ -1559,10 +1527,40 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        if (onNavigateLeftToSidebar != null) {
+                                            onNavigateLeftToSidebar()
+                                            true
+                                        } else false
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                        playbackCategoryRequester.requestFocusSafe()
+                                        true
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                        if (!isTvExpanded) {
+                                            subscriptionsCategoryRequester.requestFocusSafe()
+                                            true
+                                        } else false
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        if (!isTvExpanded) {
+                                            isTvExpanded = true
+                                            true
+                                        } else false
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
                         .tvFocusableItem(
                             onClick = { isTvExpanded = !isTvExpanded },
                             shape = RoundedCornerShape(16.dp),
-                            scaleFactor = 1.0f
+                            scaleFactor = 1.0f,
+                            focusRequester = tvCategoryRequester
                         )
                         .padding(16.dp)
                         .testTag("settings_accordion_interface")
@@ -2109,10 +2107,40 @@ fun SettingsScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        if (onNavigateLeftToSidebar != null) {
+                                            onNavigateLeftToSidebar()
+                                            true
+                                        } else false
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                        tvCategoryRequester.requestFocusSafe()
+                                        true
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                        if (!isSubscriptionsExpanded) {
+                                            offlineCategoryRequester.requestFocusSafe()
+                                            true
+                                        } else false
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        if (!isSubscriptionsExpanded) {
+                                            isSubscriptionsExpanded = true
+                                            true
+                                        } else false
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
                         .tvFocusableItem(
                             onClick = { isSubscriptionsExpanded = !isSubscriptionsExpanded },
                             shape = RoundedCornerShape(16.dp),
-                            scaleFactor = 1.0f
+                            scaleFactor = 1.0f,
+                            focusRequester = subscriptionsCategoryRequester
                         )
                         .padding(16.dp)
                         .testTag("settings_accordion_subscriptions"),
@@ -2400,13 +2428,40 @@ fun SettingsScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        if (onNavigateLeftToSidebar != null) {
+                                            onNavigateLeftToSidebar()
+                                            true
+                                        } else false
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                        subscriptionsCategoryRequester.requestFocusSafe()
+                                        true
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                        true
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        if (!isOfflineExpanded) {
+                                            isOfflineExpanded = true
+                                            true
+                                        } else false
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
                         .tvFocusableItem(
                             onClick = {
                                 HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                 isOfflineExpanded = !isOfflineExpanded
                             },
                             shape = RoundedCornerShape(16.dp),
-                            scaleFactor = 1.0f
+                            scaleFactor = 1.0f,
+                            focusRequester = offlineCategoryRequester
                         )
                         .padding(16.dp)
                         .testTag("settings_accordion_offline"),

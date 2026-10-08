@@ -65,6 +65,7 @@ import com.example.ui.screens.FavoritesScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.components.AuthDialog
+import com.example.ui.components.TvCountryDropdown
 import com.example.ui.components.UserAvatar
 import com.example.ui.effects.subtleCardBounce
 import com.example.ui.theme.*
@@ -84,6 +85,7 @@ enum class TvNavDestination(val title: String, val icon: ImageVector) {
  * 3. Адаптивная TV-сетка постеров с крупными превью, GPU-масштабированием и неоновой подсветкой.
  * 4. Быстрое переключение категорий (Фильмы, Сериалы, Аниме, Мультфильмы) и разделов.
  */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun TvMainScreen(
     viewModel: RezkaViewModel,
@@ -143,8 +145,13 @@ fun TvMainScreen(
             .background(CinemaBlack)
     ) {
         // ---- 1. TV SIDEBAR (NAVIGATION RAIL) ----
-        val sidebarCatalogFocusRequester = remember { FocusRequester() }
+        val sidebarFocusRequesters = remember {
+            TvNavDestination.values().associateWith { FocusRequester() }
+        }
         val rightContentFocusRequester = remember { FocusRequester() }
+        val favoritesFirstItemRequester = remember { FocusRequester() }
+        val historyFirstItemRequester = remember { FocusRequester() }
+        val settingsFirstCategoryRequester = remember { FocusRequester() }
 
         Column(
             modifier = Modifier
@@ -182,10 +189,15 @@ fun TvMainScreen(
                         isExpanded = isSidebarFocused,
                         overrideTitle = title,
                         overrideIcon = icon,
-                        focusRequester = if (dest == TvNavDestination.CATALOG) sidebarCatalogFocusRequester else null,
-                        onRight = if (dest == TvNavDestination.CATALOG) {
-                            { rightContentFocusRequester.requestFocusSafe() }
-                        } else null,
+                        focusRequester = sidebarFocusRequesters[dest],
+                        onRight = {
+                            when (dest) {
+                                TvNavDestination.CATALOG -> rightContentFocusRequester.requestFocusSafe()
+                                TvNavDestination.FAVORITES -> favoritesFirstItemRequester.requestFocusSafe()
+                                TvNavDestination.HISTORY -> historyFirstItemRequester.requestFocusSafe()
+                                TvNavDestination.SETTINGS -> settingsFirstCategoryRequester.requestFocusSafe()
+                            }
+                        },
                         onClick = { selectedDestination = dest }
                     )
                 }
@@ -220,10 +232,17 @@ fun TvMainScreen(
         }
 
         // ---- 2. MAIN CONTENT AREA ----
+        // Полная изоляция курсора: курсор действует внутри основного окна,
+        // а на боковую панель переходит ИСКЛЮЧИТЕЛЬНО по нажатию влево!
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
+                .focusProperties {
+                    up = FocusRequester.Cancel
+                    down = FocusRequester.Cancel
+                    left = FocusRequester.Cancel
+                }
         ) {
             when (selectedDestination) {
                 TvNavDestination.CATALOG -> {
@@ -243,7 +262,7 @@ fun TvMainScreen(
                         isEndReached = isEndReached,
                         onNavigateToDetail = onNavigateToDetail,
                         onNavigateToThematic = onNavigateToThematic,
-                        sidebarFocusRequester = sidebarCatalogFocusRequester,
+                        sidebarFocusRequester = sidebarFocusRequesters[TvNavDestination.CATALOG] ?: remember { FocusRequester() },
                         entryFocusRequester = rightContentFocusRequester,
                         isTopScreen = isTopScreen
                     )
@@ -251,19 +270,25 @@ fun TvMainScreen(
                 TvNavDestination.FAVORITES -> {
                     FavoritesScreen(
                         viewModel = viewModel,
-                        onNavigateToDetail = onNavigateToDetail
+                        onNavigateToDetail = onNavigateToDetail,
+                        onNavigateLeftToSidebar = { sidebarFocusRequesters[TvNavDestination.FAVORITES]?.requestFocusSafe() },
+                        firstItemFocusRequester = favoritesFirstItemRequester
                     )
                 }
                 TvNavDestination.HISTORY -> {
                     HistoryScreen(
                         viewModel = viewModel,
-                        onNavigateToDetail = onNavigateToDetail
+                        onNavigateToDetail = onNavigateToDetail,
+                        onNavigateLeftToSidebar = { sidebarFocusRequesters[TvNavDestination.HISTORY]?.requestFocusSafe() },
+                        firstItemFocusRequester = historyFirstItemRequester
                     )
                 }
                 TvNavDestination.SETTINGS -> {
                     SettingsScreen(
                         viewModel = viewModel,
-                        onBack = null
+                        onBack = null,
+                        onNavigateLeftToSidebar = { sidebarFocusRequesters[TvNavDestination.SETTINGS]?.requestFocusSafe() },
+                        firstCategoryFocusRequester = settingsFirstCategoryRequester
                     )
                 }
             }
@@ -452,31 +477,12 @@ private fun TvCatalogContent(
     }
     var lastRenderedCatalogKey by rememberSaveable { mutableStateOf(currentCatalogKey) }
 
-    val searchBarFocusRequester = entryFocusRequester
+    val searchBarFocusRequester = remember { FocusRequester() }
     val categoryDropdownFocusRequester = remember { FocusRequester() }
     val sectionDropdownFocusRequester = remember { FocusRequester() }
     val genreDropdownFocusRequester = remember { FocusRequester() }
     val yearDropdownFocusRequester = remember { FocusRequester() }
     val countryDropdownFocusRequester = remember { FocusRequester() }
-
-    LaunchedEffect(currentCatalogKey) {
-        if (currentCatalogKey != lastRenderedCatalogKey) {
-            lastRenderedCatalogKey = currentCatalogKey
-            gridState.scrollToItem(0, 0)
-            lastFocusedIndex = 0
-            viewModel.clearTvCatalogFocusedItem()
-            viewModel.resetScrollPosition("catalog")
-            searchBarFocusRequester.requestFocusSafe()
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        viewModel.catalogScrollResetEvent.collect {
-            gridState.scrollToItem(0, 0)
-            lastFocusedIndex = 0
-            viewModel.clearTvCatalogFocusedItem()
-        }
-    }
 
     val coroutineScope = rememberCoroutineScope()
     val loadingMovieId by viewModel.loadingMovieId.collectAsState()
@@ -485,7 +491,37 @@ private fun TvCatalogContent(
     val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
     val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
     fun getFocusRequesterForIndex(index: Int): FocusRequester {
-        return itemFocusRequesters.getOrPut(index) { FocusRequester() }
+        return if (index == 0) entryFocusRequester else itemFocusRequesters.getOrPut(index) { FocusRequester() }
+    }
+
+    LaunchedEffect(currentCatalogKey) {
+        if (currentCatalogKey != lastRenderedCatalogKey) {
+            lastRenderedCatalogKey = currentCatalogKey
+            gridState.scrollToItem(0, 0)
+            lastFocusedIndex = 0
+            viewModel.clearTvCatalogFocusedItem()
+            viewModel.resetScrollPosition("catalog")
+            coroutineScope.launch {
+                for (attempt in 0..14) {
+                    kotlinx.coroutines.delay(if (attempt == 0) 30L else 50L)
+                    try {
+                        getFocusRequesterForIndex(0).requestFocus()
+                        break
+                    } catch (_: Throwable) {}
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.catalogScrollResetEvent.collect {
+            gridState.scrollToItem(0, 0)
+            lastFocusedIndex = 0
+            viewModel.clearTvCatalogFocusedItem()
+            try {
+                getFocusRequesterForIndex(0).requestFocusSafe()
+            } catch (_: Exception) {}
+        }
     }
 
     val focusGrid: () -> Unit = {
@@ -542,36 +578,34 @@ private fun TvCatalogContent(
                 val targetIndex = when {
                     savedItemId != null -> {
                         val idx = items.indexOfFirst { it.id == savedItemId }
-                        if (idx >= 0) idx else savedIndex?.coerceIn(0, items.lastIndex)
+                        if (idx >= 0) idx else (savedIndex?.coerceIn(0, items.lastIndex) ?: 0)
                     }
                     savedIndex != null -> savedIndex.coerceIn(0, items.lastIndex)
-                    else -> null
+                    else -> 0
                 }
 
-                if (targetIndex != null) {
-                    hasRestoredFocus = true
-                    lastFocusedIndex = targetIndex
+                hasRestoredFocus = true
+                lastFocusedIndex = targetIndex
+                try {
+                    gridState.scrollToItem(targetIndex)
+                } catch (_: Throwable) {}
+
+                var focused = false
+                for (attempt in 0..14) {
+                    kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
                     try {
-                        gridState.scrollToItem(targetIndex)
+                        val requester = getFocusRequesterForIndex(targetIndex)
+                        requester.requestFocus()
+                        focused = true
+                        break
                     } catch (_: Throwable) {}
-
-                    var focused = false
-                    for (attempt in 0..12) {
-                        kotlinx.coroutines.delay(if (attempt == 0) 40L else 60L)
-                        try {
-                            val requester = getFocusRequesterForIndex(targetIndex)
-                            requester.requestFocus()
-                            focused = true
-                            break
-                        } catch (_: Throwable) {}
-                    }
-                    if (!focused) {
-                        try {
-                            searchBarFocusRequester.requestFocusSafe()
-                        } catch (_: Exception) {}
-                    }
-                    return@LaunchedEffect
                 }
+                if (!focused) {
+                    try {
+                        getFocusRequesterForIndex(0).requestFocusSafe()
+                    } catch (_: Exception) {}
+                }
+                return@LaunchedEffect
             }
         } else if (currentType == RezkaType.COLLECTIONS && collectionsState is CollectionsState.Success) {
             val items = collectionsState.items
@@ -588,7 +622,7 @@ private fun TvCatalogContent(
         if (!hasRestoredFocus) {
             hasRestoredFocus = true
             try {
-                searchBarFocusRequester.requestFocusSafe()
+                getFocusRequesterForIndex(0).requestFocusSafe()
             } catch (_: Exception) {}
         }
     }
@@ -630,16 +664,28 @@ private fun TvCatalogContent(
             }
 
             val searchHistory by viewModel.searchHistory.collectAsState()
+            val searchCategoryFilter by viewModel.searchCategoryFilter.collectAsState()
+            val searchSectionFilter by viewModel.searchSectionFilter.collectAsState()
+            val searchGenreFilter by viewModel.searchGenreFilter.collectAsState()
+            val searchYearFilter by viewModel.searchYearFilter.collectAsState()
+            val searchCountryFilter by viewModel.searchCountryFilter.collectAsState()
+
+            val isSearching = searchInput.isNotBlank()
+            val activeSection = if (isSearching) searchSectionFilter else currentSection
+            val activeGenre = if (isSearching) searchGenreFilter else currentGenre
+            val activeYear = if (isSearching) searchYearFilter else currentYear
+            val activeCountry = if (isSearching) searchCountryFilter else currentCountry
 
             // ---- 2. ВЫПАДАЮЩИЕ СПИСКИ И КОМПАКТНЫЙ ПОИСК ДЛЯ ТВ ----
             TvCatalogFiltersBar(
                 currentType = currentType,
-                currentSection = currentSection,
-                currentGenre = currentGenre,
+                searchCategoryFilter = searchCategoryFilter,
+                currentSection = activeSection,
+                currentGenre = activeGenre,
                 genresList = genresList,
-                currentYear = currentYear,
+                currentYear = activeYear,
                 yearsList = yearsList,
-                currentCountry = currentCountry,
+                currentCountry = activeCountry,
                 countriesList = countriesList,
                 searchQuery = searchInput,
                 searchHistory = searchHistory,
@@ -659,23 +705,19 @@ private fun TvCatalogContent(
                     viewModel.commitSearchQuery(searchInput)
                 },
                 onTypeSelected = { type ->
-                    searchInput = ""
-                    viewModel.loadCatalog(type = type, genre = "", forceRefresh = true)
+                    viewModel.selectCategoryFilter(type)
                 },
                 onSectionSelected = { section ->
-                    searchInput = ""
-                    viewModel.loadCatalog(section = section, forceRefresh = true)
+                    viewModel.selectSectionFilter(section)
                 },
                 onGenreSelected = { genreSlug ->
-                    searchInput = ""
-                    viewModel.loadCatalog(genre = genreSlug, forceRefresh = true)
+                    viewModel.selectGenreFilter(genreSlug)
                 },
                 onYearSelected = { yearItem ->
-                    searchInput = ""
-                    viewModel.loadCatalog(year = yearItem.year, forceRefresh = true)
+                    viewModel.selectYearFilter(yearItem.year)
                 },
                 onCountrySelected = { countryItem ->
-                    viewModel.setCountry(countryItem.query)
+                    viewModel.selectCountryFilter(countryItem.query)
                 }
             )
 
@@ -1014,6 +1056,7 @@ private fun TvHeroPreview(
 @Composable
 private fun TvCatalogFiltersBar(
     currentType: RezkaType,
+    searchCategoryFilter: RezkaType? = null,
     currentSection: SectionType,
     currentGenre: String,
     genresList: List<GenreItem>,
@@ -1025,7 +1068,7 @@ private fun TvCatalogFiltersBar(
     searchHistory: List<String> = emptyList(),
     onSearchQueryChanged: (String) -> Unit,
     onSearchCommit: (() -> Unit)? = null,
-    onTypeSelected: (RezkaType) -> Unit,
+    onTypeSelected: (RezkaType?) -> Unit,
     onSectionSelected: (SectionType) -> Unit,
     onGenreSelected: (String) -> Unit,
     onYearSelected: (YearItem) -> Unit,
@@ -1156,16 +1199,31 @@ private fun TvCatalogFiltersBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Dropdown 1: Категория
-            val categories = remember {
-                listOf(
-                    RezkaType.MOVIE to "Фильмы",
-                    RezkaType.SERIES to "Сериалы",
-                    RezkaType.ANIME to "Аниме",
-                    RezkaType.CARTOON to "Мультики",
-                    RezkaType.COLLECTIONS to "Подборки"
-                )
+            val isSearching = searchQuery.isNotBlank()
+            val categories: List<Pair<RezkaType?, String>> = remember(isSearching) {
+                if (isSearching) {
+                    listOf(
+                        null to "Все категории",
+                        RezkaType.MOVIE to "Фильмы",
+                        RezkaType.SERIES to "Сериалы",
+                        RezkaType.ANIME to "Аниме",
+                        RezkaType.CARTOON to "Мультики"
+                    )
+                } else {
+                    listOf(
+                        RezkaType.MOVIE to "Фильмы",
+                        RezkaType.SERIES to "Сериалы",
+                        RezkaType.ANIME to "Аниме",
+                        RezkaType.CARTOON to "Мультики",
+                        RezkaType.COLLECTIONS to "Подборки"
+                    )
+                }
             }
-            val currentCategoryPair = categories.find { it.first == currentType } ?: categories[0]
+            val currentCategoryPair = if (isSearching) {
+                categories.find { it.first == searchCategoryFilter } ?: categories[0]
+            } else {
+                categories.find { it.first == currentType } ?: categories[0]
+            }
 
             TvRezkaDropdown(
                 label = "",
@@ -1248,12 +1306,10 @@ private fun TvCatalogFiltersBar(
                 ?: countriesList.firstOrNull()
                 ?: CountryItem("Все страны", "")
 
-            TvRezkaDropdown(
-                label = "",
-                options = countriesList,
-                selectedOption = currentCountryItem,
-                onOptionSelected = { countryItem -> onCountrySelected(countryItem) },
-                getLabel = { it.name },
+            TvCountryDropdown(
+                selectedCountry = currentCountryItem,
+                countriesList = countriesList,
+                onCountrySelected = onCountrySelected,
                 modifier = Modifier.weight(1f),
                 focusRequester = countryFocusRequester,
                 onUp = { searchBarFocusRequester.requestFocusSafe() },
@@ -1713,21 +1769,14 @@ fun TvCompactSearchBar(
 
             // Встроенная в поисковую строку ТВ кнопка микрофона
             if (onVoiceSearchClick != null) {
-                Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                var isVoiceFocused by remember { mutableStateOf(false) }
                 Box(
                     modifier = Modifier
-                        .size(30.dp)
-                        .clip(CircleShape)
-                        .tvFocusableItem(
-                            onClick = {
-                                com.example.ui.haptics.HapticEngine.get().perform(com.example.ui.haptics.HapticType.GENTLE_TICK)
-                                onVoiceSearchClick()
-                            },
-                            scaleFactor = 1.15f,
-                            focusedBorderColor = CinemaPrimary,
-                            focusedBorderWidth = 2.dp,
-                            shape = CircleShape,
-                            focusRequester = voiceButtonFocusRequester
+                        .size(34.dp)
+                        .background(
+                            if (isVoiceFocused) CinemaPrimary.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.08f),
+                            CircleShape
                         )
                         .onKeyEvent { keyEvent ->
                             if (keyEvent.type == KeyEventType.KeyDown) {
@@ -1740,18 +1789,32 @@ fun TvCompactSearchBar(
                                         onDown?.invoke()
                                         true
                                     }
+                                    AndroidKeyEvent.KEYCODE_DPAD_UP -> true
+                                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> true
                                     else -> false
                                 }
                             } else false
                         }
+                        .tvFocusableItem(
+                            onClick = {
+                                com.example.ui.haptics.HapticEngine.get().perform(com.example.ui.haptics.HapticType.GENTLE_TICK)
+                                onVoiceSearchClick()
+                            },
+                            onFocusChanged = { isVoiceFocused = it },
+                            scaleFactor = 1.1f,
+                            focusedBorderColor = CinemaPrimary,
+                            focusedBorderWidth = 2.dp,
+                            shape = CircleShape,
+                            focusRequester = voiceButtonFocusRequester
+                        )
                         .testTag("tv_voice_search_button"),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Mic,
                         contentDescription = "Голосовой поиск",
-                        tint = CinemaTextWhite.copy(alpha = 0.85f),
-                        modifier = Modifier.size(18.dp)
+                        tint = if (isVoiceFocused) CinemaPrimary else CinemaTextWhite,
+                        modifier = Modifier.size(19.dp)
                     )
                 }
             }
