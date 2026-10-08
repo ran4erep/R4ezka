@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
 import android.util.Log
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,7 +29,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.*
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -38,6 +43,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.example.ui.tv.requestFocusSafe
+import com.example.ui.tv.tvFocusableItem
 import com.example.ui.haptics.HapticEngine
 import com.example.ui.haptics.HapticType
 import com.example.ui.theme.*
@@ -189,8 +196,26 @@ fun AvatarPickerDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        BackHandler(enabled = true) {
+            onDismiss()
+        }
+
+        val closeBtnRequester = remember { FocusRequester() }
+
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .onPreviewKeyEvent { keyEvent ->
+                    if (keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_BACK ||
+                        keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_ESCAPE
+                    ) {
+                        if (keyEvent.type == KeyEventType.KeyUp) {
+                            onDismiss()
+                        }
+                        return@onPreviewKeyEvent true
+                    }
+                    false
+                },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -224,7 +249,16 @@ fun AvatarPickerDialog(
                             HapticEngine.get().perform(HapticType.GENTLE_TICK)
                             onDismiss()
                         },
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier
+                            .size(28.dp)
+                            .tvFocusableItem(
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                    onDismiss()
+                                },
+                                shape = CircleShape,
+                                focusRequester = closeBtnRequester
+                            )
                     ) {
                         Icon(Icons.Default.Close, contentDescription = "Закрыть", tint = CinemaTextGray)
                     }
@@ -246,7 +280,17 @@ fun AvatarPickerDialog(
                         containerColor = CinemaCard,
                         contentColor = CinemaTextWhite
                     ),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .tvFocusableItem(
+                            onClick = {
+                                HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            shape = RoundedCornerShape(12.dp)
+                        )
                 ) {
                     if (isProcessingPhoto) {
                         CircularProgressIndicator(
@@ -305,11 +349,14 @@ fun AvatarPickerDialog(
                                     color = if (isSelected) CinemaPrimary else CinemaBorder,
                                     shape = CircleShape
                                 )
-                                .clickable {
-                                    HapticEngine.get().perform(HapticType.SELECTION)
-                                    onAvatarSelected(preset.id)
-                                    onDismiss()
-                                },
+                                .tvFocusableItem(
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.SELECTION)
+                                        onAvatarSelected(preset.id)
+                                        onDismiss()
+                                    },
+                                    shape = CircleShape
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(text = preset.emoji, fontSize = 24.sp)
@@ -326,7 +373,16 @@ fun AvatarPickerDialog(
                             onAvatarSelected(null)
                             onDismiss()
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .tvFocusableItem(
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                    onAvatarSelected(null)
+                                    onDismiss()
+                                },
+                                shape = RoundedCornerShape(8.dp)
+                            )
                     ) {
                         Icon(
                             imageVector = Icons.Default.Delete,

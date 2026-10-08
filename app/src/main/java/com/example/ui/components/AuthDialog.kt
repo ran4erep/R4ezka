@@ -1,7 +1,10 @@
 package com.example.ui.components
 
+import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
 import android.view.KeyEvent as AndroidKeyEvent
+import android.view.ViewTreeObserver
+import android.view.Window
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -39,7 +42,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -68,6 +70,17 @@ import com.example.ui.tv.tvFocusableItem
 import com.example.ui.tv.tvPulsingFocusBorder
 import kotlinx.coroutines.delay
 
+/**
+ * Идентификатор активного поля ввода в диалоге авторизации для централизованного
+ * управления фокусом и клавиатурой на ТВ.
+ */
+private enum class AuthFieldId {
+    LOGIN,
+    PASSWORD,
+    CONFIRM_PASSWORD
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AuthDialog(
     viewModel: RezkaViewModel,
@@ -94,7 +107,6 @@ fun AuthDialog(
     val currentUser by viewModel.currentUser.collectAsState()
     val currentUserAvatar by viewModel.currentUserAvatar.collectAsState()
     val currentUserRegisteredAt by viewModel.currentUserRegisteredAt.collectAsState()
-    val isSyncing by viewModel.isSyncing.collectAsState()
 
     val favorites by viewModel.favorites.collectAsState()
     val watchHistory by viewModel.aggregatedWatchHistory.collectAsState()
@@ -114,6 +126,85 @@ fun AuthDialog(
     var confirmPasswordVisible by remember { mutableStateOf(false) }
     var isSubmittingAuth by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf<String?>(null) }
+
+    // Фокус-реквестеры элементов управления
+    val closeButtonRequester = remember { FocusRequester() }
+    val loginTabRequester = remember { FocusRequester() }
+    val registerTabRequester = remember { FocusRequester() }
+    val regAvatarRequester = remember { FocusRequester() }
+    val loginFocusRequester = remember { FocusRequester() }
+    val passwordFocusRequester = remember { FocusRequester() }
+    val passwordEyeFocusRequester = remember { FocusRequester() }
+    val confirmPasswordFocusRequester = remember { FocusRequester() }
+    val confirmPasswordEyeFocusRequester = remember { FocusRequester() }
+    val submitButtonRequester = remember { FocusRequester() }
+    val switchButtonRequester = remember { FocusRequester() }
+    val logoutButtonRequester = remember { FocusRequester() }
+    val profileAvatarRequester = remember { FocusRequester() }
+
+    // Централизованное состояние редактирования полей:
+    // null -> режим навигации с пульта (любой Back сразу закрывает окно)
+    // AuthFieldId -> открыта экранная клавиатура для конкретного поля
+    var activeEditingField by remember { mutableStateOf<AuthFieldId?>(null) }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    var lastBackHandledTime by remember { mutableLongStateOf(0L) }
+
+    // Единый алгоритм обработки кнопки "Назад" (Back / Escape) на пульте и в системе
+    val handleBackAction: () -> Unit = remember(
+        activeEditingField,
+        showAvatarPicker,
+        isSubmittingAuth
+    ) {
+        {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastBackHandledTime > 100L) {
+                lastBackHandledTime = now
+                if (showAvatarPicker) {
+                    showAvatarPicker = false
+                } else if (activeEditingField != null) {
+                    // Если пользователь вводил текст — скрываем клавиатуру и возвращаем фокус на поле
+                    keyboardController?.hide()
+                    val field = activeEditingField
+                    activeEditingField = null
+                    when (field) {
+                        AuthFieldId.LOGIN -> loginFocusRequester.requestFocusSafe()
+                        AuthFieldId.PASSWORD -> passwordFocusRequester.requestFocusSafe()
+                        AuthFieldId.CONFIRM_PASSWORD -> confirmPasswordFocusRequester.requestFocusSafe()
+                        null -> {}
+                    }
+                } else {
+                    // Режим ввода не активен — закрываем диалог с первого же нажатия
+                    if (!isSubmittingAuth) {
+                        onDismiss()
+                    }
+                }
+            }
+        }
+    }
+
+    // Системный перехватчик Back в Compose
+    BackHandler(enabled = true) {
+        handleBackAction()
+    }
+
+    // Отслеживание закрытия системной клавиатуры через WindowInsets:
+    // если клавиатура скрылась системно (по кнопке Back на клавиатуре),
+    // мы мгновенно сбрасываем activeEditingField в null, чтобы следующий Back закрыл окно с 1 раза!
+    val isImeVisible = WindowInsets.isImeVisible
+    LaunchedEffect(isImeVisible) {
+        if (!isImeVisible && activeEditingField != null) {
+            val field = activeEditingField
+            activeEditingField = null
+            delay(20L)
+            when (field) {
+                AuthFieldId.LOGIN -> loginFocusRequester.requestFocusSafe()
+                AuthFieldId.PASSWORD -> passwordFocusRequester.requestFocusSafe()
+                AuthFieldId.CONFIRM_PASSWORD -> confirmPasswordFocusRequester.requestFocusSafe()
+                null -> {}
+            }
+        }
+    }
 
     if (showAvatarPicker) {
         AvatarPickerDialog(
@@ -143,29 +234,89 @@ fun AuthDialog(
         )
     ) {
         val currentView = LocalView.current
+
+        // Низкоуровневый перехват клавиатуры и аппаратных клавиш пульта на уровне Window диалога
         DisposableEffect(currentView) {
             var parent = currentView.parent
+            var dialogWindow: Window? = null
+            var originalCallback: Window.Callback? = null
+            var layoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
+
             while (parent != null) {
                 if (parent is DialogWindowProvider) {
                     val window = parent.window
+                    dialogWindow = window
                     window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
                     window.statusBarColor = android.graphics.Color.TRANSPARENT
                     window.navigationBarColor = android.graphics.Color.TRANSPARENT
                     window.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+
+                    // Перехват KeyEvent прямо в Window.Callback: гарантирует мгновенную
+                    // обработку Back/Escape на ЛЮБЫХ ТВ-пультах без потери фокуса
+                    originalCallback = window.callback
+                    window.callback = object : Window.Callback by originalCallback {
+                        override fun dispatchKeyEvent(event: AndroidKeyEvent): Boolean {
+                            if (event.keyCode == AndroidKeyEvent.KEYCODE_BACK ||
+                                event.keyCode == AndroidKeyEvent.KEYCODE_ESCAPE
+                            ) {
+                                if (event.action == AndroidKeyEvent.ACTION_UP) {
+                                    handleBackAction()
+                                }
+                                return true
+                            }
+                            return originalCallback.dispatchKeyEvent(event)
+                        }
+                    }
+
+                    // Слушатель высоты отображения для отслеживания закрытия IME на Android TV
+                    val decorView = window.decorView
+                    layoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+                        val r = Rect()
+                        decorView.getWindowVisibleDisplayFrame(r)
+                        val screenHeight = decorView.rootView.height
+                        val keypadHeight = screenHeight - r.bottom
+                        val isKeyboardOpen = keypadHeight > screenHeight * 0.15
+                        if (!isKeyboardOpen && activeEditingField != null) {
+                            val field = activeEditingField
+                            activeEditingField = null
+                            when (field) {
+                                AuthFieldId.LOGIN -> loginFocusRequester.requestFocusSafe()
+                                AuthFieldId.PASSWORD -> passwordFocusRequester.requestFocusSafe()
+                                AuthFieldId.CONFIRM_PASSWORD -> confirmPasswordFocusRequester.requestFocusSafe()
+                                null -> {}
+                            }
+                        }
+                    }
+                    decorView.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
                     break
                 }
                 parent = parent.parent
             }
-            onDispose {}
+
+            onDispose {
+                dialogWindow?.let { win ->
+                    originalCallback?.let { win.callback = it }
+                    layoutListener?.let { win.decorView.viewTreeObserver.removeOnGlobalLayoutListener(it) }
+                }
+            }
         }
 
-        val closeButtonRequester = remember { FocusRequester() }
-
-        // Полноэкранный полупрозрачный фон без черных полос системных панелей
+        // Полноэкранный полупрозрачный фон с обработкой клавиш пульта
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.65f))
+                .onPreviewKeyEvent { keyEvent ->
+                    if (keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_BACK ||
+                        keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_ESCAPE
+                    ) {
+                        if (keyEvent.type == KeyEventType.KeyUp) {
+                            handleBackAction()
+                        }
+                        return@onPreviewKeyEvent true
+                    }
+                    false
+                }
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
@@ -194,7 +345,7 @@ fun AuthDialog(
                         .bounceOverscroll(Orientation.Vertical)
                         .padding(20.dp)
                 ) {
-                    // Header
+                    // Шапка диалога
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -221,6 +372,16 @@ fun AuthDialog(
                                     shape = CircleShape,
                                     focusRequester = closeButtonRequester
                                 )
+                                .onKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_DOWN) {
+                                        if (isLoggedIn) {
+                                            profileAvatarRequester.requestFocusSafe()
+                                        } else {
+                                            loginTabRequester.requestFocusSafe()
+                                        }
+                                        true
+                                    } else false
+                                }
                                 .testTag("auth_close_button")
                         ) {
                             Icon(Icons.Default.Close, contentDescription = "Закрыть", tint = CinemaTextGray)
@@ -230,7 +391,6 @@ fun AuthDialog(
                     Spacer(modifier = Modifier.height(14.dp))
 
                     if (isLoggedIn) {
-                        val logoutButtonRequester = remember { FocusRequester() }
                         LaunchedEffect(Unit) {
                             delay(50L)
                             logoutButtonRequester.requestFocusSafe()
@@ -253,8 +413,24 @@ fun AuthDialog(
                                             HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                             showAvatarPicker = true
                                         },
-                                        shape = CircleShape
+                                        shape = CircleShape,
+                                        focusRequester = profileAvatarRequester
                                     )
+                                    .onKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyDown) {
+                                            when (event.nativeKeyEvent.keyCode) {
+                                                AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                    closeButtonRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                    logoutButtonRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                else -> false
+                                            }
+                                        } else false
+                                    }
                             ) {
                                 UserAvatar(
                                     avatar = currentUserAvatar,
@@ -341,23 +517,19 @@ fun AuthDialog(
                                     shape = RoundedCornerShape(10.dp),
                                     focusRequester = logoutButtonRequester
                                 )
+                                .onKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_UP) {
+                                        profileAvatarRequester.requestFocusSafe()
+                                        true
+                                    } else false
+                                }
                         ) {
                             Text("Выйти из аккаунта", fontSize = 14.sp)
                         }
                     } else {
-                        val loginTabRequester = remember { FocusRequester() }
-                        val registerTabRequester = remember { FocusRequester() }
-                        val regAvatarRequester = remember { FocusRequester() }
-                        val loginFocusRequester = remember { FocusRequester() }
-                        val passwordFocusRequester = remember { FocusRequester() }
-                        val confirmPasswordFocusRequester = remember { FocusRequester() }
-                        val submitButtonRequester = remember { FocusRequester() }
-                        val switchButtonRequester = remember { FocusRequester() }
-
-                        // При открытии диалога фокус аккуратно встаёт на вкладку "Вход",
-                        // клавиатура гарантированно НЕ открывается сама по себе!
+                        // При открытии диалога фокус аккуратно встаёт на вкладку "Вход"
                         LaunchedEffect(Unit) {
-                            delay(60L)
+                            delay(50L)
                             loginTabRequester.requestFocusSafe()
                         }
 
@@ -378,6 +550,7 @@ fun AuthDialog(
                                             HapticEngine.get().perform(HapticType.TOGGLE)
                                             isRegisterMode = false
                                             authError = null
+                                            activeEditingField = null
                                         },
                                         scaleFactor = 1.02f,
                                         shape = RoundedCornerShape(8.dp),
@@ -429,6 +602,7 @@ fun AuthDialog(
                                             HapticEngine.get().perform(HapticType.TOGGLE)
                                             isRegisterMode = true
                                             authError = null
+                                            activeEditingField = null
                                         },
                                         scaleFactor = 1.02f,
                                         shape = RoundedCornerShape(8.dp),
@@ -532,7 +706,7 @@ fun AuthDialog(
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Логин (работает идентично TvCompactSearchBar на ТВ)
+                        // Логин
                         TvAuthTextField(
                             value = loginInput,
                             onValueChange = {
@@ -540,6 +714,12 @@ fun AuthDialog(
                                 authError = null
                             },
                             placeholderText = "Логин",
+                            isEditing = activeEditingField == AuthFieldId.LOGIN,
+                            onStartEditing = { activeEditingField = AuthFieldId.LOGIN },
+                            onStopEditing = {
+                                activeEditingField = null
+                                loginFocusRequester.requestFocusSafe()
+                            },
                             isTvMode = effectiveTvMode,
                             focusRequester = loginFocusRequester,
                             onUp = {
@@ -569,6 +749,12 @@ fun AuthDialog(
                             },
                             placeholderText = "Пароль",
                             visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            isEditing = activeEditingField == AuthFieldId.PASSWORD,
+                            onStartEditing = { activeEditingField = AuthFieldId.PASSWORD },
+                            onStopEditing = {
+                                activeEditingField = null
+                                passwordFocusRequester.requestFocusSafe()
+                            },
                             trailingIcon = {
                                 IconButton(
                                     onClick = {
@@ -582,8 +768,32 @@ fun AuthDialog(
                                                 HapticEngine.get().perform(HapticType.TOGGLE)
                                                 passwordVisible = !passwordVisible
                                             },
-                                            shape = CircleShape
+                                            shape = CircleShape,
+                                            focusRequester = passwordEyeFocusRequester
                                         )
+                                        .onKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown) {
+                                                when (event.nativeKeyEvent.keyCode) {
+                                                    AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                        passwordFocusRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                        if (isRegisterMode) {
+                                                            confirmPasswordFocusRequester.requestFocusSafe()
+                                                        } else {
+                                                            submitButtonRequester.requestFocusSafe()
+                                                        }
+                                                        true
+                                                    }
+                                                    AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                        loginFocusRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    else -> false
+                                                }
+                                            } else false
+                                        }
                                 ) {
                                     Icon(
                                         imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
@@ -591,6 +801,9 @@ fun AuthDialog(
                                         tint = if (passwordVisible) CinemaPrimary else CinemaTextGray
                                     )
                                 }
+                            },
+                            onRight = {
+                                passwordEyeFocusRequester.requestFocusSafe()
                             },
                             isTvMode = effectiveTvMode,
                             focusRequester = passwordFocusRequester,
@@ -614,84 +827,126 @@ fun AuthDialog(
                             testTag = "auth_password_input"
                         )
 
-                        // Повтор пароля (два раза) для регистрации
+                        // Повтор пароля для регистрации
                         if (isRegisterMode) {
                             Spacer(modifier = Modifier.height(12.dp))
                             TvAuthTextField(
                                 value = confirmPasswordInput,
                                 onValueChange = {
-                                confirmPasswordInput = it
-                                authError = null
-                            },
-                            placeholderText = "Повторите пароль",
-                            visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                            trailingIcon = {
-                                IconButton(
-                                    onClick = {
-                                        HapticEngine.get().perform(HapticType.TOGGLE)
-                                        confirmPasswordVisible = !confirmPasswordVisible
-                                    },
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .tvFocusableItem(
-                                            onClick = {
-                                                HapticEngine.get().perform(HapticType.TOGGLE)
-                                                confirmPasswordVisible = !confirmPasswordVisible
-                                            },
-                                            shape = CircleShape
+                                    confirmPasswordInput = it
+                                    authError = null
+                                },
+                                placeholderText = "Повторите пароль",
+                                visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                isEditing = activeEditingField == AuthFieldId.CONFIRM_PASSWORD,
+                                onStartEditing = { activeEditingField = AuthFieldId.CONFIRM_PASSWORD },
+                                onStopEditing = {
+                                    activeEditingField = null
+                                    confirmPasswordFocusRequester.requestFocusSafe()
+                                },
+                                trailingIcon = {
+                                    IconButton(
+                                        onClick = {
+                                            HapticEngine.get().perform(HapticType.TOGGLE)
+                                            confirmPasswordVisible = !confirmPasswordVisible
+                                        },
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .tvFocusableItem(
+                                                onClick = {
+                                                    HapticEngine.get().perform(HapticType.TOGGLE)
+                                                    confirmPasswordVisible = !confirmPasswordVisible
+                                                },
+                                                shape = CircleShape,
+                                                focusRequester = confirmPasswordEyeFocusRequester
+                                            )
+                                            .onKeyEvent { event ->
+                                                if (event.type == KeyEventType.KeyDown) {
+                                                    when (event.nativeKeyEvent.keyCode) {
+                                                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                            confirmPasswordFocusRequester.requestFocusSafe()
+                                                            true
+                                                        }
+                                                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                            submitButtonRequester.requestFocusSafe()
+                                                            true
+                                                        }
+                                                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                            passwordFocusRequester.requestFocusSafe()
+                                                            true
+                                                        }
+                                                        else -> false
+                                                    }
+                                                } else false
+                                            }
+                                    ) {
+                                        Icon(
+                                            imageVector = if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                            contentDescription = if (confirmPasswordVisible) "Скрыть пароль" else "Показать пароль",
+                                            tint = if (confirmPasswordVisible) CinemaPrimary else CinemaTextGray
                                         )
-                                ) {
-                                    Icon(
-                                        imageVector = if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                        contentDescription = if (confirmPasswordVisible) "Скрыть пароль" else "Показать пароль",
-                                        tint = if (confirmPasswordVisible) CinemaPrimary else CinemaTextGray
-                                    )
+                                    }
+                                },
+                                onRight = {
+                                    confirmPasswordEyeFocusRequester.requestFocusSafe()
+                                },
+                                isTvMode = effectiveTvMode,
+                                focusRequester = confirmPasswordFocusRequester,
+                                onUp = {
+                                    passwordFocusRequester.requestFocusSafe()
+                                },
+                                onDown = {
+                                    submitButtonRequester.requestFocusSafe()
+                                },
+                                onDone = {
+                                    submitButtonRequester.requestFocusSafe()
+                                },
+                                testTag = "auth_confirm_password_input"
+                            )
+                        }
+
+                        if (authError != null) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = authError ?: "",
+                                color = CinemaPrimary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        val doSubmit: () -> Unit = {
+                            HapticEngine.get().perform(HapticType.CONFIRM)
+                            val user = loginInput.trim()
+                            val pass = passwordInput
+                            if (user.isBlank() || pass.isBlank()) {
+                                authError = "Заполните логин и пароль"
+                            } else if (isRegisterMode) {
+                                if (user.length < 3) {
+                                    authError = "Логин должен быть от 3 символов"
+                                } else if (pass.length < 4) {
+                                    authError = "Пароль должен быть от 4 символов"
+                                } else if (pass != confirmPasswordInput) {
+                                    authError = "Пароли не совпадают"
+                                } else {
+                                    isSubmittingAuth = true
+                                    authError = null
+                                    viewModel.register(user, pass, registerAvatar) { success, msg ->
+                                        isSubmittingAuth = false
+                                        if (success) {
+                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                            onDismiss()
+                                        } else {
+                                            authError = msg
+                                        }
+                                    }
                                 }
-                            },
-                            isTvMode = effectiveTvMode,
-                            focusRequester = confirmPasswordFocusRequester,
-                            onUp = {
-                                passwordFocusRequester.requestFocusSafe()
-                            },
-                            onDown = {
-                                submitButtonRequester.requestFocusSafe()
-                            },
-                            onDone = {
-                                submitButtonRequester.requestFocusSafe()
-                            },
-                            testTag = "auth_confirm_password_input"
-                        )
-                    }
-
-                    if (authError != null) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = authError ?: "",
-                            color = CinemaPrimary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    val doSubmit: () -> Unit = {
-                        HapticEngine.get().perform(HapticType.CONFIRM)
-                        val user = loginInput.trim()
-                        val pass = passwordInput
-                        if (user.isBlank() || pass.isBlank()) {
-                            authError = "Заполните логин и пароль"
-                        } else if (isRegisterMode) {
-                            if (user.length < 3) {
-                                authError = "Логин должен быть от 3 символов"
-                            } else if (pass.length < 4) {
-                                authError = "Пароль должен быть от 4 символов"
-                            } else if (pass != confirmPasswordInput) {
-                                authError = "Пароли не совпадают"
                             } else {
                                 isSubmittingAuth = true
                                 authError = null
-                                viewModel.register(user, pass, registerAvatar) { success, msg ->
+                                viewModel.login(user, pass) { success, msg ->
                                     isSubmittingAuth = false
                                     if (success) {
                                         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
@@ -701,119 +956,112 @@ fun AuthDialog(
                                     }
                                 }
                             }
-                        } else {
-                            isSubmittingAuth = true
-                            authError = null
-                            viewModel.login(user, pass) { success, msg ->
-                                isSubmittingAuth = false
-                                if (success) {
-                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                                    onDismiss()
-                                } else {
-                                    authError = msg
-                                }
-                            }
                         }
-                    }
 
-                    // Кнопка действия (Войти / Зарегистрироваться)
-                    Button(
-                        onClick = doSubmit,
-                        enabled = !isSubmittingAuth,
-                        colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .tvFocusableItem(
-                                onClick = doSubmit,
-                                shape = RoundedCornerShape(10.dp),
-                                focusRequester = submitButtonRequester
-                            )
-                            .onKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyDown) {
-                                    when (event.nativeKeyEvent.keyCode) {
-                                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                                            if (isRegisterMode) {
-                                                confirmPasswordFocusRequester.requestFocusSafe()
-                                            } else {
-                                                passwordFocusRequester.requestFocusSafe()
+                        // Кнопка действия (Войти / Зарегистрироваться)
+                        Button(
+                            onClick = doSubmit,
+                            enabled = !isSubmittingAuth,
+                            colors = ButtonDefaults.buttonColors(containerColor = CinemaPrimary),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .tvFocusableItem(
+                                    onClick = doSubmit,
+                                    shape = RoundedCornerShape(10.dp),
+                                    focusRequester = submitButtonRequester
+                                )
+                                .onKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown) {
+                                        when (event.nativeKeyEvent.keyCode) {
+                                            AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                if (isRegisterMode) {
+                                                    confirmPasswordFocusRequester.requestFocusSafe()
+                                                } else {
+                                                    passwordFocusRequester.requestFocusSafe()
+                                                }
+                                                true
                                             }
-                                            true
+                                            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                switchButtonRequester.requestFocusSafe()
+                                                true
+                                            }
+                                            else -> false
                                         }
-                                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                            switchButtonRequester.requestFocusSafe()
-                                            true
-                                        }
-                                        else -> false
-                                    }
-                                } else false
+                                    } else false
+                                }
+                                .testTag("auth_submit_button")
+                        ) {
+                            if (isSubmittingAuth) {
+                                CircularProgressIndicator(color = CinemaBlack, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            } else {
+                                Text(
+                                    text = if (isRegisterMode) "Зарегистрироваться" else "Войти",
+                                    color = CinemaBlack,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
-                            .testTag("auth_submit_button")
-                    ) {
-                        if (isSubmittingAuth) {
-                            CircularProgressIndicator(color = CinemaBlack, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        } else {
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        TextButton(
+                            onClick = {
+                                HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                isRegisterMode = !isRegisterMode
+                                authError = null
+                                activeEditingField = null
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .tvFocusableItem(
+                                    onClick = {
+                                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                        isRegisterMode = !isRegisterMode
+                                        authError = null
+                                        activeEditingField = null
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    focusRequester = switchButtonRequester
+                                )
+                                .onKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_UP) {
+                                        submitButtonRequester.requestFocusSafe()
+                                        true
+                                    } else false
+                                }
+                        ) {
                             Text(
-                                text = if (isRegisterMode) "Зарегистрироваться" else "Войти",
-                                color = CinemaBlack,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
+                                text = if (isRegisterMode) "Уже есть аккаунт? Войти" else "Регистрация",
+                                color = CinemaTextGray,
+                                fontSize = 13.sp
                             )
                         }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    TextButton(
-                        onClick = {
-                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                            isRegisterMode = !isRegisterMode
-                            authError = null
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .tvFocusableItem(
-                                onClick = {
-                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                                    isRegisterMode = !isRegisterMode
-                                    authError = null
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                focusRequester = switchButtonRequester
-                            )
-                            .onKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_UP) {
-                                    submitButtonRequester.requestFocusSafe()
-                                    true
-                                } else false
-                            }
-                    ) {
-                        Text(
-                            text = if (isRegisterMode) "Уже есть аккаунт? Войти" else "Регистрация",
-                            color = CinemaTextGray,
-                            fontSize = 13.sp
-                        )
                     }
                 }
             }
         }
     }
 }
-}
 
 /**
- * Специализированное текстовое поле для ТВ, работающее аналогично строке поиска TvCompactSearchBar:
- * - При наведении курсора D-Pad виртуальная клавиатура НЕ выскакивает!
- * - Поле подсвечивается неоновой рамкой и масштабируется.
- * - Стрелки Вверх/Вниз плавно переводят фокус на соседние поля и кнопки.
- * - Клавиатура открывается СТРОГО по нажатию OK/ENTER или клику.
- * - Кнопка "Назад" пульта закрывает клавиатуру и возвращает фокус на само поле.
+ * Высокопроизводительное поле текстового ввода для диалога авторизации:
+ * - В обычном режиме: отображает стильный блок со значением или плейсхолдером.
+ *   При перемещении стрелок пульта клавиатура НЕ выскакивает, фокус перемещается мгновенно.
+ * - По нажатию OK/ENTER или клику: активируется ввод и плавно открывается клавиатура.
+ * - Кнопка "Назад" на пульте или клавиатуре: мгновенно скрывает клавиатуру, завершает режим ввода
+ *   и сохраняет фокус на этом же поле без потери курсора.
+ * - При скрытой клавиатуре кнопка "Назад" сразу закрывает всё окно диалога.
  */
 @Composable
 private fun TvAuthTextField(
     value: String,
     onValueChange: (String) -> Unit,
     placeholderText: String,
+    isEditing: Boolean,
+    onStartEditing: () -> Unit,
+    onStopEditing: () -> Unit,
     modifier: Modifier = Modifier,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     trailingIcon: @Composable (() -> Unit)? = null,
@@ -821,11 +1069,12 @@ private fun TvAuthTextField(
     focusRequester: FocusRequester? = null,
     onUp: (() -> Unit)? = null,
     onDown: (() -> Unit)? = null,
+    onRight: (() -> Unit)? = null,
     onDone: (() -> Unit)? = null,
     testTag: String = ""
 ) {
     if (!isTvMode) {
-        // Стандартное текстовое поле для смартфонов и сенсорных экранов
+        // Стандартное поле для мобильных устройств
         TextField(
             value = value,
             onValueChange = onValueChange,
@@ -851,42 +1100,17 @@ private fun TvAuthTextField(
                 .testTag(testTag)
         )
     } else {
-        // ТВ-режим: высокопроизводительное поле с надежным сохранением фокуса
-        var isEditing by remember { mutableStateOf(false) }
-        var wasEditing by remember { mutableStateOf(false) }
+        // ТВ-режим: высокопроизводительный движок с точным управлением фокусом D-Pad
         val internalFieldRequester = remember { FocusRequester() }
         val keyboardController = LocalSoftwareKeyboardController.current
         val localRequester = focusRequester ?: remember { FocusRequester() }
 
-        // При входе/выходе из режима редактирования:
-        // При выходе (по кнопке "Назад" на пульте или завершении ввода) через retry с кадровой задержкой
-        // гарантированно восстанавливаем фокус на localRequester, чтобы курсор никуда не пропадал!
         LaunchedEffect(isEditing) {
             if (isEditing) {
-                wasEditing = true
-                for (attempt in 0..6) {
-                    delay(if (attempt == 0) 30L else 40L)
-                    try {
-                        internalFieldRequester.requestFocus()
-                        keyboardController?.show()
-                        break
-                    } catch (_: Throwable) {}
-                }
-            } else if (wasEditing) {
-                wasEditing = false
-                for (attempt in 0..6) {
-                    delay(if (attempt == 0) 30L else 40L)
-                    try {
-                        localRequester.requestFocus()
-                        break
-                    } catch (_: Throwable) {}
-                }
+                delay(25L)
+                internalFieldRequester.requestFocusSafe()
+                keyboardController?.show()
             }
-        }
-
-        BackHandler(enabled = isEditing) {
-            isEditing = false
-            keyboardController?.hide()
         }
 
         Surface(
@@ -917,14 +1141,18 @@ private fun TvAuthTextField(
                                                 true
                                             } else false
                                         }
+                                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                            if (onRight != null) {
+                                                onRight()
+                                                true
+                                            } else false
+                                        }
                                         else -> false
                                     }
                                 } else false
                             }
                             .tvFocusableItem(
-                                onClick = {
-                                    isEditing = true
-                                },
+                                onClick = onStartEditing,
                                 scaleFactor = 1.02f,
                                 focusedBorderWidth = 2.dp,
                                 shape = RoundedCornerShape(10.dp),
@@ -980,8 +1208,8 @@ private fun TvAuthTextField(
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                             keyboardActions = KeyboardActions(
                                 onDone = {
-                                    isEditing = false
                                     keyboardController?.hide()
+                                    onStopEditing()
                                     onDone?.invoke()
                                 }
                             ),
@@ -994,23 +1222,27 @@ private fun TvAuthTextField(
                                             AndroidKeyEvent.KEYCODE_ENTER,
                                             AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
                                             AndroidKeyEvent.KEYCODE_DPAD_CENTER -> {
-                                                isEditing = false
                                                 keyboardController?.hide()
+                                                onStopEditing()
                                                 onDone?.invoke()
                                                 true
                                             }
                                             AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                                                wasEditing = false
-                                                isEditing = false
                                                 keyboardController?.hide()
-                                                onUp?.invoke() ?: localRequester.requestFocusSafe()
+                                                onStopEditing()
+                                                onUp?.invoke()
                                                 true
                                             }
                                             AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                                wasEditing = false
-                                                isEditing = false
                                                 keyboardController?.hide()
-                                                onDown?.invoke() ?: localRequester.requestFocusSafe()
+                                                onStopEditing()
+                                                onDown?.invoke()
+                                                true
+                                            }
+                                            AndroidKeyEvent.KEYCODE_BACK,
+                                            AndroidKeyEvent.KEYCODE_ESCAPE -> {
+                                                keyboardController?.hide()
+                                                onStopEditing()
                                                 true
                                             }
                                             else -> false

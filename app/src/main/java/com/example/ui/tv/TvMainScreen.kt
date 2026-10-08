@@ -109,11 +109,16 @@ fun TvMainScreen(
     val currentUser by viewModel.currentUser.collectAsState()
     val currentUserAvatar by viewModel.currentUserAvatar.collectAsState()
     var showAuthDialog by remember { mutableStateOf(false) }
+    val accountButtonFocusRequester = remember { FocusRequester() }
 
     if (showAuthDialog) {
         AuthDialog(
             viewModel = viewModel,
-            onDismiss = { showAuthDialog = false }
+            isTvMode = true,
+            onDismiss = {
+                showAuthDialog = false
+                accountButtonFocusRequester.requestFocusSafe()
+            }
         )
     }
 
@@ -183,6 +188,7 @@ fun TvMainScreen(
                     currentUser = currentUser,
                     currentUserAvatar = currentUserAvatar,
                     isExpanded = isSidebarFocused,
+                    focusRequester = accountButtonFocusRequester,
                     onRight = navigateToCurrentMainContent,
                     onClick = { showAuthDialog = true }
                 )
@@ -382,6 +388,7 @@ private fun TvAccountButton(
     currentUserAvatar: String?,
     isExpanded: Boolean,
     onClick: () -> Unit,
+    focusRequester: FocusRequester? = null,
     onRight: (() -> Unit)? = null
 ) {
     Row(
@@ -404,7 +411,8 @@ private fun TvAccountButton(
                 onClick = onClick,
                 scaleFactor = 1.0f,
                 focusedBorderWidth = 2.dp,
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(10.dp),
+                focusRequester = focusRequester
             )
             .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically
