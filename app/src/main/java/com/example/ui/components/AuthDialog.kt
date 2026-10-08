@@ -851,17 +851,42 @@ private fun TvAuthTextField(
                 .testTag(testTag)
         )
     } else {
-        // ТВ-режим: архитектура на базе TvCompactSearchBar
+        // ТВ-режим: высокопроизводительное поле с надежным сохранением фокуса
         var isEditing by remember { mutableStateOf(false) }
+        var wasEditing by remember { mutableStateOf(false) }
         val internalFieldRequester = remember { FocusRequester() }
         val keyboardController = LocalSoftwareKeyboardController.current
-        val focusManager = LocalFocusManager.current
         val localRequester = focusRequester ?: remember { FocusRequester() }
+
+        // При входе/выходе из режима редактирования:
+        // При выходе (по кнопке "Назад" на пульте или завершении ввода) через retry с кадровой задержкой
+        // гарантированно восстанавливаем фокус на localRequester, чтобы курсор никуда не пропадал!
+        LaunchedEffect(isEditing) {
+            if (isEditing) {
+                wasEditing = true
+                for (attempt in 0..6) {
+                    delay(if (attempt == 0) 30L else 40L)
+                    try {
+                        internalFieldRequester.requestFocus()
+                        keyboardController?.show()
+                        break
+                    } catch (_: Throwable) {}
+                }
+            } else if (wasEditing) {
+                wasEditing = false
+                for (attempt in 0..6) {
+                    delay(if (attempt == 0) 30L else 40L)
+                    try {
+                        localRequester.requestFocus()
+                        break
+                    } catch (_: Throwable) {}
+                }
+            }
+        }
 
         BackHandler(enabled = isEditing) {
             isEditing = false
             keyboardController?.hide()
-            localRequester.requestFocusSafe()
         }
 
         Surface(
@@ -873,6 +898,7 @@ private fun TvAuthTextField(
             ),
             modifier = modifier
                 .fillMaxWidth()
+                .focusRequester(localRequester)
                 .then(
                     if (!isEditing) {
                         Modifier
@@ -940,12 +966,6 @@ private fun TvAuthTextField(
                             overflow = TextOverflow.Ellipsis
                         )
                     } else {
-                        LaunchedEffect(Unit) {
-                            delay(40L)
-                            internalFieldRequester.requestFocusSafe()
-                            keyboardController?.show()
-                        }
-
                         BasicTextField(
                             value = value,
                             onValueChange = onValueChange,
@@ -962,8 +982,6 @@ private fun TvAuthTextField(
                                 onDone = {
                                     isEditing = false
                                     keyboardController?.hide()
-                                    focusManager.clearFocus()
-                                    localRequester.requestFocusSafe()
                                     onDone?.invoke()
                                 }
                             ),
@@ -978,22 +996,20 @@ private fun TvAuthTextField(
                                             AndroidKeyEvent.KEYCODE_DPAD_CENTER -> {
                                                 isEditing = false
                                                 keyboardController?.hide()
-                                                focusManager.clearFocus()
-                                                localRequester.requestFocusSafe()
                                                 onDone?.invoke()
                                                 true
                                             }
                                             AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                wasEditing = false
                                                 isEditing = false
                                                 keyboardController?.hide()
-                                                focusManager.clearFocus()
                                                 onUp?.invoke() ?: localRequester.requestFocusSafe()
                                                 true
                                             }
                                             AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                wasEditing = false
                                                 isEditing = false
                                                 keyboardController?.hide()
-                                                focusManager.clearFocus()
                                                 onDown?.invoke() ?: localRequester.requestFocusSafe()
                                                 true
                                             }

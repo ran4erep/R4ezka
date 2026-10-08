@@ -602,8 +602,13 @@ fun TvRemoteInputField(
             }
         } else if (wasEditing) {
             wasEditing = false
-            delay(20L)
-            localRequester.requestFocusSafe()
+            for (attempt in 0..6) {
+                delay(if (attempt == 0) 30L else 40L)
+                try {
+                    localRequester.requestFocus()
+                    break
+                } catch (_: Throwable) {}
+            }
         }
     }
 
@@ -611,13 +616,13 @@ fun TvRemoteInputField(
     BackHandler(enabled = isEditing) {
         isEditing = false
         keyboardController?.hide()
-        localRequester.requestFocusSafe()
     }
 
     Box(
         modifier = modifier
             .clip(shape)
             .background(containerColor)
+            .focusRequester(localRequester)
             .then(
                 if (testTag.isNotEmpty()) Modifier.testTag(testTag) else Modifier
             )
