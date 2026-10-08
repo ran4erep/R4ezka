@@ -67,8 +67,9 @@ import com.example.ui.tv.TvDetector
 import com.example.ui.tv.TvModePreference
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusableItem
-import com.example.ui.tv.tvPulsingFocusBorder
+import com.example.ui.tv.tvRequestFocusWithRetry
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Идентификатор активного поля ввода в диалоге авторизации для централизованного
@@ -88,6 +89,7 @@ fun AuthDialog(
     isTvMode: Boolean = false
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val tvModePrefString by viewModel.tvModePreference.collectAsState()
     val effectiveTvMode = isTvMode || remember(context, tvModePrefString) {
         val pref = when (tvModePrefString) {
@@ -146,9 +148,25 @@ fun AuthDialog(
     // null -> режим навигации с пульта (любой Back сразу закрывает окно)
     // AuthFieldId -> открыта экранная клавиатура для конкретного поля
     var activeEditingField by remember { mutableStateOf<AuthFieldId?>(null) }
+    var lastActiveField by remember { mutableStateOf<AuthFieldId?>(null) }
     val keyboardController = LocalSoftwareKeyboardController.current
 
     var lastBackHandledTime by remember { mutableLongStateOf(0L) }
+
+    // При выходе из режима редактирования надежно удерживаем и восстанавливаем фокус на поле ввода
+    LaunchedEffect(activeEditingField) {
+        if (activeEditingField != null) {
+            lastActiveField = activeEditingField
+        } else if (lastActiveField != null) {
+            val target = when (lastActiveField) {
+                AuthFieldId.LOGIN -> loginFocusRequester
+                AuthFieldId.PASSWORD -> passwordFocusRequester
+                AuthFieldId.CONFIRM_PASSWORD -> confirmPasswordFocusRequester
+                null -> null
+            }
+            target?.tvRequestFocusWithRetry(maxAttempts = 8, initialDelayMs = 20L, stepDelayMs = 30L)
+        }
+    }
 
     // Единый алгоритм обработки кнопки "Назад" (Back / Escape) на пульте и в системе
     val handleBackAction: () -> Unit = remember(
@@ -167,11 +185,14 @@ fun AuthDialog(
                     keyboardController?.hide()
                     val field = activeEditingField
                     activeEditingField = null
-                    when (field) {
-                        AuthFieldId.LOGIN -> loginFocusRequester.requestFocusSafe()
-                        AuthFieldId.PASSWORD -> passwordFocusRequester.requestFocusSafe()
-                        AuthFieldId.CONFIRM_PASSWORD -> confirmPasswordFocusRequester.requestFocusSafe()
-                        null -> {}
+                    coroutineScope.launch {
+                        val target = when (field) {
+                            AuthFieldId.LOGIN -> loginFocusRequester
+                            AuthFieldId.PASSWORD -> passwordFocusRequester
+                            AuthFieldId.CONFIRM_PASSWORD -> confirmPasswordFocusRequester
+                            null -> null
+                        }
+                        target?.tvRequestFocusWithRetry(maxAttempts = 8, initialDelayMs = 20L, stepDelayMs = 30L)
                     }
                 } else {
                     // Режим ввода не активен — закрываем диалог с первого же нажатия
@@ -190,19 +211,19 @@ fun AuthDialog(
 
     // Отслеживание закрытия системной клавиатуры через WindowInsets:
     // если клавиатура скрылась системно (по кнопке Back на клавиатуре),
-    // мы мгновенно сбрасываем activeEditingField в null, чтобы следующий Back закрыл окно с 1 раза!
+    // мы мгновенно сбрасываем activeEditingField в null и восстанавливаем фокус на поле!
     val isImeVisible = WindowInsets.isImeVisible
     LaunchedEffect(isImeVisible) {
         if (!isImeVisible && activeEditingField != null) {
             val field = activeEditingField
             activeEditingField = null
-            delay(20L)
-            when (field) {
-                AuthFieldId.LOGIN -> loginFocusRequester.requestFocusSafe()
-                AuthFieldId.PASSWORD -> passwordFocusRequester.requestFocusSafe()
-                AuthFieldId.CONFIRM_PASSWORD -> confirmPasswordFocusRequester.requestFocusSafe()
-                null -> {}
+            val target = when (field) {
+                AuthFieldId.LOGIN -> loginFocusRequester
+                AuthFieldId.PASSWORD -> passwordFocusRequester
+                AuthFieldId.CONFIRM_PASSWORD -> confirmPasswordFocusRequester
+                null -> null
             }
+            target?.tvRequestFocusWithRetry(maxAttempts = 8, initialDelayMs = 20L, stepDelayMs = 30L)
         }
     }
 
@@ -279,11 +300,14 @@ fun AuthDialog(
                         if (!isKeyboardOpen && activeEditingField != null) {
                             val field = activeEditingField
                             activeEditingField = null
-                            when (field) {
-                                AuthFieldId.LOGIN -> loginFocusRequester.requestFocusSafe()
-                                AuthFieldId.PASSWORD -> passwordFocusRequester.requestFocusSafe()
-                                AuthFieldId.CONFIRM_PASSWORD -> confirmPasswordFocusRequester.requestFocusSafe()
-                                null -> {}
+                            coroutineScope.launch {
+                                val target = when (field) {
+                                    AuthFieldId.LOGIN -> loginFocusRequester
+                                    AuthFieldId.PASSWORD -> passwordFocusRequester
+                                    AuthFieldId.CONFIRM_PASSWORD -> confirmPasswordFocusRequester
+                                    null -> null
+                                }
+                                target?.tvRequestFocusWithRetry(maxAttempts = 8, initialDelayMs = 20L, stepDelayMs = 30L)
                             }
                         }
                     }
@@ -718,7 +742,9 @@ fun AuthDialog(
                             onStartEditing = { activeEditingField = AuthFieldId.LOGIN },
                             onStopEditing = {
                                 activeEditingField = null
-                                loginFocusRequester.requestFocusSafe()
+                                coroutineScope.launch {
+                                    loginFocusRequester.tvRequestFocusWithRetry(maxAttempts = 8, initialDelayMs = 20L, stepDelayMs = 30L)
+                                }
                             },
                             isTvMode = effectiveTvMode,
                             focusRequester = loginFocusRequester,
@@ -753,7 +779,9 @@ fun AuthDialog(
                             onStartEditing = { activeEditingField = AuthFieldId.PASSWORD },
                             onStopEditing = {
                                 activeEditingField = null
-                                passwordFocusRequester.requestFocusSafe()
+                                coroutineScope.launch {
+                                    passwordFocusRequester.tvRequestFocusWithRetry(maxAttempts = 8, initialDelayMs = 20L, stepDelayMs = 30L)
+                                }
                             },
                             trailingIcon = {
                                 IconButton(
@@ -842,7 +870,9 @@ fun AuthDialog(
                                 onStartEditing = { activeEditingField = AuthFieldId.CONFIRM_PASSWORD },
                                 onStopEditing = {
                                     activeEditingField = null
-                                    confirmPasswordFocusRequester.requestFocusSafe()
+                                    coroutineScope.launch {
+                                        confirmPasswordFocusRequester.tvRequestFocusWithRetry(maxAttempts = 8, initialDelayMs = 20L, stepDelayMs = 30L)
+                                    }
                                 },
                                 trailingIcon = {
                                     IconButton(
@@ -1047,12 +1077,11 @@ fun AuthDialog(
 
 /**
  * Высокопроизводительное поле текстового ввода для диалога авторизации:
- * - В обычном режиме: отображает стильный блок со значением или плейсхолдером.
- *   При перемещении стрелок пульта клавиатура НЕ выскакивает, фокус перемещается мгновенно.
- * - По нажатию OK/ENTER или клику: активируется ввод и плавно открывается клавиатура.
- * - Кнопка "Назад" на пульте или клавиатуре: мгновенно скрывает клавиатуру, завершает режим ввода
- *   и сохраняет фокус на этом же поле без потери курсора.
- * - При скрытой клавиатуре кнопка "Назад" сразу закрывает всё окно диалога.
+ * - Контейнер Surface ВСЕГДА сохраняет tvFocusableItem и фокусабельность,
+ *   предотвращая разрушение и потерю FocusNode при переходе между режимами набора текста и навигации!
+ * - watchChildrenFocus = true гарантирует, что неоновая подсветка курсора НЕ исчезает ни во время ввода,
+ *   ни при закрытии клавиатуры по кнопке "Назад".
+ * - Циклический tvRequestFocusWithRetry мгновенно восстанавливает аппаратный фокус D-Pad на поле.
  */
 @Composable
 private fun TvAuthTextField(
@@ -1100,15 +1129,15 @@ private fun TvAuthTextField(
                 .testTag(testTag)
         )
     } else {
-        // ТВ-режим: высокопроизводительный движок с точным управлением фокусом D-Pad
+        // ТВ-режим: контейнер ВСЕГДА удерживает фокус и неоновый курсор
         val internalFieldRequester = remember { FocusRequester() }
         val keyboardController = LocalSoftwareKeyboardController.current
         val localRequester = focusRequester ?: remember { FocusRequester() }
+        var isContainerFocused by remember { mutableStateOf(false) }
 
         LaunchedEffect(isEditing) {
             if (isEditing) {
-                delay(25L)
-                internalFieldRequester.requestFocusSafe()
+                internalFieldRequester.tvRequestFocusWithRetry(maxAttempts = 6, initialDelayMs = 20L, stepDelayMs = 30L)
                 keyboardController?.show()
             }
         }
@@ -1118,55 +1147,50 @@ private fun TvAuthTextField(
             shape = RoundedCornerShape(10.dp),
             border = BorderStroke(
                 1.dp,
-                if (isEditing) CinemaPrimary else CinemaSecondary.copy(alpha = 0.35f)
+                if (isEditing || isContainerFocused) CinemaPrimary else CinemaSecondary.copy(alpha = 0.35f)
             ),
             modifier = modifier
                 .fillMaxWidth()
-                .focusRequester(localRequester)
-                .then(
-                    if (!isEditing) {
-                        Modifier
-                            .onKeyEvent { keyEvent ->
-                                if (keyEvent.type == KeyEventType.KeyDown) {
-                                    when (keyEvent.nativeKeyEvent.keyCode) {
-                                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                                            if (onUp != null) {
-                                                onUp()
-                                                true
-                                            } else false
-                                        }
-                                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                            if (onDown != null) {
-                                                onDown()
-                                                true
-                                            } else false
-                                        }
-                                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                            if (onRight != null) {
-                                                onRight()
-                                                true
-                                            } else false
-                                        }
-                                        else -> false
-                                    }
+                .tvFocusableItem(
+                    onClick = {
+                        if (!isEditing) {
+                            onStartEditing()
+                        }
+                    },
+                    onFocusChanged = { focused ->
+                        isContainerFocused = focused
+                    },
+                    scaleFactor = 1.02f,
+                    focusedBorderWidth = 2.dp,
+                    shape = RoundedCornerShape(10.dp),
+                    focusRequester = localRequester,
+                    watchChildrenFocus = true
+                )
+                .onKeyEvent { keyEvent ->
+                    if (!isEditing && keyEvent.type == KeyEventType.KeyDown) {
+                        when (keyEvent.nativeKeyEvent.keyCode) {
+                            AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                if (onUp != null) {
+                                    onUp()
+                                    true
                                 } else false
                             }
-                            .tvFocusableItem(
-                                onClick = onStartEditing,
-                                scaleFactor = 1.02f,
-                                focusedBorderWidth = 2.dp,
-                                shape = RoundedCornerShape(10.dp),
-                                focusRequester = localRequester
-                            )
-                    } else {
-                        Modifier.tvPulsingFocusBorder(
-                            isFocused = true,
-                            focusedBorderColor = CinemaPrimary,
-                            shape = RoundedCornerShape(10.dp),
-                            baseBorderWidth = 2.dp
-                        )
-                    }
-                )
+                            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                if (onDown != null) {
+                                    onDown()
+                                    true
+                                } else false
+                            }
+                            AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                if (onRight != null) {
+                                    onRight()
+                                    true
+                                } else false
+                            }
+                            else -> false
+                        }
+                    } else false
+                }
                 .testTag(testTag)
         ) {
             Row(

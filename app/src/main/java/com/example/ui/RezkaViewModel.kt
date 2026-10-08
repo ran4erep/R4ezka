@@ -2605,8 +2605,15 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         auditJob?.cancel()
         isFirstLaunchAuditSession = isFirstLaunch
 
+        val currentSaved = RezkaService.getMirror()
         val mirrors = buildList {
-            add(RezkaService.PRIMARY_MIRROR)
+            // Текущее настроенное зеркало пользователя проверяем в первую очередь
+            if (currentSaved.isNotBlank()) {
+                add(currentSaved)
+            }
+            if (!contains(RezkaService.PRIMARY_MIRROR)) {
+                add(RezkaService.PRIMARY_MIRROR)
+            }
             for (m in RezkaService.PRESET_MIRRORS) {
                 if (!contains(m)) add(m)
             }
@@ -2614,7 +2621,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         val totalCount = mirrors.size
         var checkedCount = 0
 
-        val primaryHost = RezkaService.PRIMARY_MIRROR.removePrefix("https://").removePrefix("http://").trimEnd('/')
+        val primaryHost = mirrors.firstOrNull()?.removePrefix("https://")?.removePrefix("http://")?.trimEnd('/').orEmpty()
         _mirrorAuditState.value = MirrorAuditUiState.Checking(
             checkedCount = 0,
             totalCount = totalCount,
@@ -2650,9 +2657,9 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                         withContext(Dispatchers.Main) {
                             checkedCount++
                             val statusMsg = when {
-                                checkRes.streamSuccess -> "$host: успешно (поток работает)"
-                                checkRes.catalogSuccess -> "$host: каталог OK"
-                                else -> "$host: недоступно"
+                                checkRes.streamSuccess -> "$host: отлично (поток и каталог)"
+                                checkRes.catalogSuccess -> "$host: каталог доступен"
+                                else -> "$host: ${checkRes.errorMessage ?: "недоступно"}"
                             }
                             _mirrorAuditState.value = MirrorAuditUiState.Checking(
                                 checkedCount = checkedCount,
@@ -2686,6 +2693,13 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Если найдено приоритетное зеркало с работающим потоком — завершаем поиск
                 if (selectedWorkingMirror != null) {
+                    break
+                }
+
+                // Если в пачке было текущее настроенное зеркало пользователя и его каталог подтвержден — не мучаем проверкой дальше
+                if (firstCatalogOnlyMirror != null && chunk.contains(currentSaved) && firstCatalogOnlyMirror == currentSaved) {
+                    selectedWorkingMirror = currentSaved
+                    selectedCatalogItems = firstCatalogOnlyItems
                     break
                 }
             }

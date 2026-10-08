@@ -140,35 +140,26 @@ fun MirrorAuditOverlay(
 
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        // Статус проверяемого зеркала (успешно / сбой)
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = CinemaBlack.copy(alpha = 0.4f),
-                            border = CardDefaults.outlinedCardBorder().copy(
-                                brush = androidx.compose.ui.graphics.SolidColor(CinemaCard)
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            val statusColor = when (state.lastCheckedSuccess) {
-                                true -> Color(0xFF4CAF50)
-                                false -> CinemaTextGray
-                                null -> CinemaPrimary
-                            }
-                            val displayStatus = state.lastCheckedStatus.ifEmpty { "Проверка доступности и видеопотока..." }
-
-                            Text(
-                                text = displayStatus,
-                                fontSize = 12.sp,
-                                fontWeight = if (state.lastCheckedSuccess == true) FontWeight.Bold else FontWeight.Normal,
-                                color = statusColor,
-                                textAlign = TextAlign.Center,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 10.dp)
-                            )
+                        // Статус проверяемого зеркала (успешно / сбой) - чистый текст без фона
+                        val statusColor = when (state.lastCheckedSuccess) {
+                            true -> Color(0xFF4CAF50)
+                            false -> CinemaTextGray
+                            null -> CinemaPrimary
                         }
+                        val displayStatus = state.lastCheckedStatus.ifEmpty { "Проверка доступности и видеопотока..." }
+
+                        Text(
+                            text = displayStatus,
+                            fontSize = 12.sp,
+                            fontWeight = if (state.lastCheckedSuccess == true) FontWeight.Bold else FontWeight.Normal,
+                            color = statusColor,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
 
                         Spacer(modifier = Modifier.height(20.dp))
 
