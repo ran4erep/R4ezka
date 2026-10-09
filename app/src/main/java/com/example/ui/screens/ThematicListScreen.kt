@@ -377,11 +377,12 @@ fun ThematicListScreen(
                         }
                     } else {
                         val gridState = rememberSavedLazyGridState("thematic_${effectiveUrl}", viewModel)
-                        val shouldLoadMore by remember {
+                        val shouldLoadMore by remember(loadedItems.size) {
                             derivedStateOf {
-                                val totalItems = gridState.layoutInfo.totalItemsCount
+                                val totalItems = loadedItems.size
+                                if (totalItems == 0) return@derivedStateOf false
                                 val lastVisibleIndex = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                                totalItems >= 12 && lastVisibleIndex >= totalItems - 4 && gridState.canScrollForward
+                                lastVisibleIndex >= totalItems - 6
                             }
                         }
 
@@ -464,7 +465,7 @@ fun ThematicListScreen(
                                     )
                                 }
 
-                                if (isLoadingMore && loadedItems.size >= 8) {
+                                if (isLoadingMore) {
                                     item(span = { GridItemSpan(maxLineSpan) }) {
                                         Box(
                                             modifier = Modifier
