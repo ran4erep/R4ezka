@@ -929,20 +929,11 @@ fun CatalogScreen(
                                         .padding(24.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        CircularProgressIndicator(
-                                            color = CinemaPrimary,
-                                            modifier = Modifier.size(38.dp),
-                                            strokeWidth = 3.dp
-                                        )
-                                        Spacer(modifier = Modifier.height(14.dp))
-                                        Text(
-                                            text = "Поиск фильмов по выбранной стране...",
-                                            color = CinemaTextWhite,
-                                            fontSize = 15.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                    }
+                                    CircularProgressIndicator(
+                                        color = CinemaPrimary,
+                                        modifier = Modifier.size(36.dp),
+                                        strokeWidth = 3.dp
+                                    )
                                 }
                             } else {
                                 Column(
@@ -1067,60 +1058,15 @@ fun CatalogScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .padding(vertical = 20.dp),
+                                                    .padding(vertical = 16.dp),
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                                ) {
-                                                    CircularProgressIndicator(
-                                                        color = CinemaPrimary,
-                                                        modifier = Modifier.size(28.dp),
-                                                        strokeWidth = 3.dp
-                                                    )
-                                                    Text(
-                                                        text = if (currentCountry.isNotEmpty()) "Поиск фильмов по стране..." else "Загрузка карточек...",
-                                                        color = CinemaTextGray,
-                                                        fontSize = 13.sp
-                                                    )
-                                                }
+                                                CircularProgressIndicator(
+                                                    color = CinemaPrimary,
+                                                    modifier = Modifier.size(32.dp),
+                                                    strokeWidth = 3.dp
+                                                )
                                             }
-                                        }
-                                    }
-                                }
-
-                                // Floating Loading Indicator for Country Filter
-                                androidx.compose.animation.AnimatedVisibility(
-                                    visible = currentCountry.isNotEmpty() && isLoadingMore,
-                                    enter = fadeIn() + slideInVertically { it },
-                                    exit = fadeOut() + slideOutVertically { it },
-                                    modifier = Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .padding(bottom = if (isLandscape) 16.dp else 84.dp)
-                                ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(24.dp),
-                                        color = CinemaDark.copy(alpha = 0.94f),
-                                        border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.6f)),
-                                        shadowElevation = 8.dp
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            CircularProgressIndicator(
-                                                color = CinemaPrimary,
-                                                modifier = Modifier.size(18.dp),
-                                                strokeWidth = 2.dp
-                                            )
-                                            Text(
-                                                text = "Ищем фильмы по выбранной стране...",
-                                                color = CinemaTextWhite,
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Medium
-                                            )
                                         }
                                     }
                                 }
