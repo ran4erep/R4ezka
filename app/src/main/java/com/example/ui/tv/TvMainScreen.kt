@@ -48,6 +48,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -688,12 +689,14 @@ private fun TvCatalogContent(
         }
     }
 
-    // Пагинация для ТВ-сетки
-    val shouldLoadMore by remember {
+    // Пагинация для ТВ-сетки без ошибочного canScrollForward и с поддержкой фильтра по странам
+    val shouldLoadMore by remember(displayedItems.size, currentCountry) {
         derivedStateOf {
-            val totalItems = gridState.layoutInfo.totalItemsCount
+            val totalItems = displayedItems.size
+            if (totalItems == 0) return@derivedStateOf false
             val lastVisibleIndex = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            totalItems >= 12 && lastVisibleIndex >= totalItems - 6 && gridState.canScrollForward
+            val threshold = if (currentCountry.isNotEmpty()) 10 else 6
+            lastVisibleIndex >= totalItems - threshold
         }
     }
 
@@ -915,90 +918,198 @@ private fun TvCatalogContent(
                             }
                         }
                         is CatalogState.Success -> {
-                            val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight) {
-                                CardGridEngine.calculate(
-                                    cardGridMode = cardGridMode,
-                                    availableWidth = maxWidth,
-                                    availableHeight = maxHeight,
-                                    isLandscapeOrTv = true
-                                )
-                            }
-
-                            val tvGridCols = resolvedGrid.columns
-                            val tvCardHeight = resolvedGrid.cardHeight
                             val items = displayedItems
 
-                            LazyVerticalGrid(
-                                columns = GridCells.Fixed(tvGridCols),
-                                state = gridState,
-                                contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
-                                verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
-                                    .testTag("tv_catalog_grid")
-                            ) {
-                                itemsIndexed(
-                                    items = items,
-                                    key = { _, item -> item.id }
-                                ) { index, item ->
-                                    val navigateToItem: (Int) -> Unit = { targetIndex ->
-                                        val total = items.size
-                                        if (total > 0) {
-                                            val clampedIndex = targetIndex.coerceIn(0, total - 1)
-                                            coroutineScope.launch {
-                                                try {
-                                                    val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
-                                                    if (!isVisible) {
-                                                        gridState.scrollToItem(clampedIndex)
-                                                    }
-                                                } catch (_: Exception) {}
-                                                getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
-                                            }
+                            if (items.isEmpty()) {
+                                if (isLoadingMore || (currentCountry.isNotEmpty() && !isEndReached)) {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center
+                                        ) {
+                                            CircularProgressIndicator(
+                                                color = CinemaPrimary,
+                                                modifier = Modifier.size(48.dp),
+                                                strokeWidth = 3.5.dp
+                                            )
+                                            Spacer(modifier = Modifier.height(16.dp))
+                                            Text(
+                                                text = if (currentCountry.isNotEmpty()) "Поиск фильмов по выбранной стране..." else "Загрузка каталога...",
+                                                color = CinemaTextWhite,
+                                                fontSize = 16.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
                                         }
                                     }
-
-                                    TvMovieCard(
-                                        item = item,
-                                        index = index,
-                                        totalItems = items.size,
-                                        columnCount = tvGridCols,
-                                        cardHeight = tvCardHeight,
-                                        cardWidth = resolvedGrid.estimatedCardWidth,
-                                        seriesBadgeMode = seriesBadgeMode,
-                                        isBouncing = item.id == loadingMovieId,
-                                        onClick = {
-                                            viewModel.commitSearchQuery(searchInput)
-                                            viewModel.setTvCatalogFocusedItem(item.id, index)
-                                            lastFocusedIndex = index
-                                            onNavigateToDetail(item)
-                                        },
-                                        onFocused = {
-                                            isFiltersAreaFocused = false
-                                            lastFocusedIndex = index
-                                            viewModel.setTvCatalogFocusedItem(item.id, index)
-                                            if (searchInput.isNotBlank()) {
-                                                viewModel.commitSearchQuery(searchInput)
-                                            }
-                                        },
-                                        focusRequester = getFocusRequesterForIndex(index),
-                                        onNavigateIndex = navigateToItem,
-                                        onUp = { categoryDropdownFocusRequester.requestFocusSafe() },
-                                        onLeft = { sidebarFocusRequester.requestFocusSafe() }
+                                } else {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(32.dp),
+                                        verticalArrangement = Arrangement.Center,
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Icon(Icons.Default.SearchOff, contentDescription = null, tint = CinemaMuted, modifier = Modifier.size(64.dp))
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Text(
+                                            text = if (currentCountry.isNotEmpty()) "Фильмы по данной стране не найдены" else "Ничего не найдено",
+                                            color = CinemaTextGray,
+                                            fontSize = 16.sp,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            } else {
+                                val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight) {
+                                    CardGridEngine.calculate(
+                                        cardGridMode = cardGridMode,
+                                        availableWidth = maxWidth,
+                                        availableHeight = maxHeight,
+                                        isLandscapeOrTv = true
                                     )
                                 }
 
-                                if (isLoadingMore && items.size >= 8) {
-                                    item(span = { GridItemSpan(maxLineSpan) }) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(vertical = 16.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            CircularProgressIndicator(color = CinemaPrimary, modifier = Modifier.size(32.dp))
+                                val tvGridCols = resolvedGrid.columns
+                                val tvCardHeight = resolvedGrid.cardHeight
+
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(tvGridCols),
+                                    state = gridState,
+                                    contentPadding = PaddingValues(top = 12.dp, bottom = 48.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
+                                    verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
+                                        .testTag("tv_catalog_grid")
+                                ) {
+                                    itemsIndexed(
+                                        items = items,
+                                        key = { _, item -> item.id }
+                                    ) { index, item ->
+                                        val navigateToItem: (Int) -> Unit = { targetIndex ->
+                                            val total = items.size
+                                            if (total > 0) {
+                                                val clampedIndex = targetIndex.coerceIn(0, total - 1)
+                                                coroutineScope.launch {
+                                                    try {
+                                                        val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
+                                                        if (!isVisible) {
+                                                            gridState.scrollToItem(clampedIndex)
+                                                        }
+                                                        if (isLoadingMore && clampedIndex >= total - tvGridCols) {
+                                                            try {
+                                                                gridState.animateScrollToItem(items.size)
+                                                            } catch (_: Exception) {}
+                                                        }
+                                                    } catch (_: Exception) {}
+                                                    getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
+                                                }
+                                            }
                                         }
+
+                                        TvMovieCard(
+                                            item = item,
+                                            index = index,
+                                            totalItems = items.size,
+                                            columnCount = tvGridCols,
+                                            cardHeight = tvCardHeight,
+                                            cardWidth = resolvedGrid.estimatedCardWidth,
+                                            seriesBadgeMode = seriesBadgeMode,
+                                            isBouncing = item.id == loadingMovieId,
+                                            onClick = {
+                                                viewModel.commitSearchQuery(searchInput)
+                                                viewModel.setTvCatalogFocusedItem(item.id, index)
+                                                lastFocusedIndex = index
+                                                onNavigateToDetail(item)
+                                            },
+                                            onFocused = {
+                                                isFiltersAreaFocused = false
+                                                lastFocusedIndex = index
+                                                viewModel.setTvCatalogFocusedItem(item.id, index)
+                                                if (searchInput.isNotBlank()) {
+                                                    viewModel.commitSearchQuery(searchInput)
+                                                }
+                                            },
+                                            focusRequester = getFocusRequesterForIndex(index),
+                                            onNavigateIndex = navigateToItem,
+                                            onUp = { categoryDropdownFocusRequester.requestFocusSafe() },
+                                            onLeft = { sidebarFocusRequester.requestFocusSafe() },
+                                            onDownAtEnd = {
+                                                if (isLoadingMore) {
+                                                    coroutineScope.launch {
+                                                        try {
+                                                            gridState.animateScrollToItem(items.size)
+                                                        } catch (_: Exception) {}
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    }
+
+                                    if (isLoadingMore) {
+                                        item(span = { GridItemSpan(maxLineSpan) }) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 24.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                                ) {
+                                                    CircularProgressIndicator(
+                                                        color = CinemaPrimary,
+                                                        modifier = Modifier.size(32.dp),
+                                                        strokeWidth = 3.dp
+                                                    )
+                                                    Text(
+                                                        text = if (currentCountry.isNotEmpty()) "Поиск фильмов по стране..." else "Загрузка карточек...",
+                                                        color = CinemaTextGray,
+                                                        fontSize = 14.sp
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Floating TV Loading Indicator
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = isLoadingMore,
+                                enter = fadeIn() + slideInVertically { it / 2 },
+                                exit = fadeOut() + slideOutVertically { it / 2 },
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(bottom = 24.dp, end = 24.dp)
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(20.dp),
+                                    color = CinemaDark.copy(alpha = 0.94f),
+                                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+                                    shadowElevation = 8.dp
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        CircularProgressIndicator(
+                                            color = CinemaPrimary,
+                                            modifier = Modifier.size(18.dp),
+                                            strokeWidth = 2.dp
+                                        )
+                                        Text(
+                                            text = if (currentCountry.isNotEmpty()) "Поиск фильмов..." else "Подгрузка карточек...",
+                                            color = CinemaTextWhite,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
                                     }
                                 }
                             }
@@ -2123,7 +2234,8 @@ private fun TvMovieCard(
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
     onUp: (() -> Unit)? = null,
-    onLeft: (() -> Unit)? = null
+    onLeft: (() -> Unit)? = null,
+    onDownAtEnd: (() -> Unit)? = null
 ) {
     val safeCols = if (columnCount > 0) columnCount else 4
     val isFirstColumn = index % safeCols == 0
@@ -2150,7 +2262,12 @@ private fun TvMovieCard(
                             } else if (index < totalItems - 1) {
                                 onNavigateIndex(totalItems - 1)
                                 true
-                            } else true
+                            } else {
+                                if (onDownAtEnd != null) {
+                                    onDownAtEnd()
+                                    true
+                                } else true
+                            }
                         }
                         AndroidKeyEvent.KEYCODE_DPAD_UP -> {
                             if (index >= safeCols) {
