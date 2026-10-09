@@ -926,23 +926,11 @@ private fun TvCatalogContent(
                                         modifier = Modifier.fillMaxSize(),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            verticalArrangement = Arrangement.Center
-                                        ) {
-                                            CircularProgressIndicator(
-                                                color = CinemaPrimary,
-                                                modifier = Modifier.size(48.dp),
-                                                strokeWidth = 3.5.dp
-                                            )
-                                            Spacer(modifier = Modifier.height(16.dp))
-                                            Text(
-                                                text = if (currentCountry.isNotEmpty()) "Поиск фильмов по выбранной стране..." else "Загрузка каталога...",
-                                                color = CinemaTextWhite,
-                                                fontSize = 16.sp,
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        }
+                                        CircularProgressIndicator(
+                                            color = CinemaPrimary,
+                                            modifier = Modifier.size(48.dp),
+                                            strokeWidth = 3.5.dp
+                                        )
                                     }
                                 } else {
                                     Column(
@@ -1055,61 +1043,16 @@ private fun TvCatalogContent(
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .padding(vertical = 24.dp),
+                                                    .padding(vertical = 16.dp),
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                                ) {
-                                                    CircularProgressIndicator(
-                                                        color = CinemaPrimary,
-                                                        modifier = Modifier.size(32.dp),
-                                                        strokeWidth = 3.dp
-                                                    )
-                                                    Text(
-                                                        text = if (currentCountry.isNotEmpty()) "Поиск фильмов по стране..." else "Загрузка карточек...",
-                                                        color = CinemaTextGray,
-                                                        fontSize = 14.sp
-                                                    )
-                                                }
+                                                CircularProgressIndicator(
+                                                    color = CinemaPrimary,
+                                                    modifier = Modifier.size(32.dp),
+                                                    strokeWidth = 3.dp
+                                                )
                                             }
                                         }
-                                    }
-                                }
-                            }
-
-                            // Floating TV Loading Indicator
-                            androidx.compose.animation.AnimatedVisibility(
-                                visible = isLoadingMore,
-                                enter = fadeIn() + slideInVertically { it / 2 },
-                                exit = fadeOut() + slideOutVertically { it / 2 },
-                                modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(bottom = 24.dp, end = 24.dp)
-                            ) {
-                                Surface(
-                                    shape = RoundedCornerShape(20.dp),
-                                    color = CinemaDark.copy(alpha = 0.94f),
-                                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
-                                    shadowElevation = 8.dp
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        CircularProgressIndicator(
-                                            color = CinemaPrimary,
-                                            modifier = Modifier.size(18.dp),
-                                            strokeWidth = 2.dp
-                                        )
-                                        Text(
-                                            text = if (currentCountry.isNotEmpty()) "Поиск фильмов..." else "Подгрузка карточек...",
-                                            color = CinemaTextWhite,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
                                     }
                                 }
                             }
