@@ -43,7 +43,11 @@ enum class SectionType {
 
 data class GenreItem(val name: String, val slug: String) : Serializable
 
-data class CountryItem(val name: String, val query: String) : Serializable
+data class CountryItem(
+    val name: String,
+    val query: String,
+    val searchKey: String = "${CountryFlags.stripFlags(name).trim().lowercase()} ${CountryFlags.cleanCountryName(query).lowercase()} ${name.lowercase()} ${query.lowercase()}"
+) : Serializable
 
 object CountryFilterList {
     val defaultCountries: List<CountryItem> by lazy {
@@ -68,7 +72,7 @@ object CountryFilterList {
         map["ГДР"] = "ГДР"
 
         for (c in Locale.getISOCountries()) {
-            val loc = Locale.Builder().setRegion(c).build()
+            val loc = Locale("", c)
             var name = loc.getDisplayCountry(ruLocale) ?: continue
             if (name.isBlank()) continue
             name = name.replace(" (САР)", "").replace(" САР", "").trim()
@@ -89,7 +93,10 @@ object CountryFilterList {
 }
 
 fun RezkaItem.matchesCountry(countryQuery: String): Boolean {
-    return CountryFlags.matchesCountry(subtitle, countryQuery)
+    if (countryQuery.isBlank()) return true
+    val filterCode = CountryFlags.getCanonicalCountryCode(countryQuery)
+    if (filterCode.isEmpty()) return true
+    return CountryFlags.isMatchingCountryCodes(countryCodes, filterCode)
 }
 
 fun RezkaItem.matchesType(type: RezkaType?): Boolean {
@@ -173,7 +180,8 @@ data class RezkaItem(
     val url: String,
     val type: RezkaType,
     val releaseDateNum: Int = MovieDateParser.extractReleaseDateNum(subtitle, url),
-    val numericId: Long = MovieDateParser.extractNumericId(id, url)
+    val numericId: Long = MovieDateParser.extractNumericId(id, url),
+    val countryCodes: Set<String> = CountryFlags.extractCanonicalCountryCodes(subtitle)
 ) : Serializable
 
 data class RatingInfo(

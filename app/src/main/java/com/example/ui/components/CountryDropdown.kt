@@ -7,6 +7,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -54,20 +58,23 @@ import kotlinx.coroutines.launch
 
 /**
  * Высокопроизводительная фильтрация списка стран по поисковому запросу.
- * Выполняется в памяти за доли миллисекунды без лишних аллокаций.
+ * Выполняется в памяти за микросекунды с предвычисленными поисковыми ключами без лишних аллокаций.
  */
 fun filterCountryItems(countries: List<CountryItem>, query: String): List<CountryItem> {
     val trimmed = query.trim()
     if (trimmed.isEmpty()) return countries
 
     val cleanSearch = CountryFlags.cleanCountryName(trimmed).lowercase()
+    val rawSearchLower = trimmed.lowercase()
+    val isSame = cleanSearch == rawSearchLower
+
     return countries.filter { item ->
-        val cleanName = CountryFlags.stripFlags(item.name).trim().lowercase()
-        val cleanItemQuery = CountryFlags.cleanCountryName(item.query).lowercase()
-        cleanName.contains(cleanSearch) ||
-                cleanItemQuery.contains(cleanSearch) ||
-                item.name.contains(trimmed, ignoreCase = true) ||
-                item.query.contains(trimmed, ignoreCase = true)
+        val key = item.searchKey
+        if (isSame) {
+            key.contains(cleanSearch)
+        } else {
+            key.contains(cleanSearch) || key.contains(rawSearchLower)
+        }
     }
 }
 
@@ -146,8 +153,11 @@ fun TvCountryDropdown(
         countriesList.firstOrNull { it.query.isEmpty() } ?: CountryItem("Все страны", "")
     }
 
-    val filteredCountries = remember(countriesList, searchQuery) {
-        val rawCountries = countriesList.filter { it.query.isNotEmpty() }
+    val rawCountries = remember(countriesList) {
+        countriesList.filter { it.query.isNotEmpty() }
+    }
+
+    val filteredCountries = remember(rawCountries, searchQuery) {
         if (searchQuery.isBlank()) {
             rawCountries
         } else {
@@ -155,11 +165,11 @@ fun TvCountryDropdown(
         }
     }
 
-    val countriesScrollState = rememberScrollState()
+    val countriesLazyListState = rememberLazyListState()
 
     // Как только меняется поисковый запрос, МГНОВЕННО сбрасываем скролл списка в самое начало
     LaunchedEffect(searchQuery) {
-        countriesScrollState.scrollTo(0)
+        countriesLazyListState.scrollToItem(0)
     }
 
     // При закрытии выпадающего списка очищаем поиск
@@ -523,12 +533,14 @@ fun TvCountryDropdown(
                                     )
                                 }
                             } else {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .verticalScroll(countriesScrollState)
+                                LazyColumn(
+                                    state = countriesLazyListState,
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    filteredCountries.forEachIndexed { index, countryItem ->
+                                    itemsIndexed(
+                                        items = filteredCountries,
+                                        key = { _, item -> item.query.ifEmpty { item.name } }
+                                    ) { index, countryItem ->
                                         val isSelected = countryItem.query == selectedCountry.query
                                         val itemRequester = if (index == 0) firstCountryRequester else null
 
@@ -620,8 +632,11 @@ fun RezkaCountryDropdown(
         options.firstOrNull { it.query.isEmpty() } ?: CountryItem("Все страны", "")
     }
 
-    val filteredCountries = remember(options, searchQuery) {
-        val rawCountries = options.filter { it.query.isNotEmpty() }
+    val rawCountries = remember(options) {
+        options.filter { it.query.isNotEmpty() }
+    }
+
+    val filteredCountries = remember(rawCountries, searchQuery) {
         if (searchQuery.isBlank()) {
             rawCountries
         } else {
@@ -629,11 +644,11 @@ fun RezkaCountryDropdown(
         }
     }
 
-    val countriesScrollState = rememberScrollState()
+    val countriesLazyListState = rememberLazyListState()
 
     // При вводе поискового запроса сбрасываем скролл в 0, чтобы результаты отображались сразу под полем ввода
     LaunchedEffect(searchQuery) {
-        countriesScrollState.scrollTo(0)
+        countriesLazyListState.scrollToItem(0)
     }
 
     LaunchedEffect(expanded) {
@@ -824,12 +839,14 @@ fun RezkaCountryDropdown(
                                     )
                                 }
                             } else {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .verticalScroll(countriesScrollState)
+                                LazyColumn(
+                                    state = countriesLazyListState,
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    filteredCountries.forEach { countryItem ->
+                                    items(
+                                        items = filteredCountries,
+                                        key = { it.query.ifEmpty { it.name } }
+                                    ) { countryItem ->
                                         val isSelected = countryItem.query == selectedOption.query
                                         Row(
                                             modifier = Modifier

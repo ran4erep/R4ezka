@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.RezkaApplication
 import com.example.data.*
 import java.text.Collator
+import java.util.Collections
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -294,6 +295,10 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val _countriesList = MutableStateFlow<List<CountryItem>>(CountryFilterList.defaultCountries)
     val countriesList: StateFlow<List<CountryItem>> = _countriesList.asStateFlow()
 
+    private val knownCleanCountryQueries = Collections.synchronizedSet(
+        CountryFilterList.defaultCountries.map { CountryFlags.cleanCountryName(it.query) }.filter { it.isNotEmpty() }.toMutableSet()
+    )
+
     // Активный фильтр по категории для результатов поиска (null = все категории, либо конкретный RezkaType)
     private val _searchCategoryFilter = MutableStateFlow<RezkaType?>(null)
     val searchCategoryFilter: StateFlow<RezkaType?> = _searchCategoryFilter.asStateFlow()
@@ -443,47 +448,78 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun prefetchForCountryFilter(countryQuery: String = _currentCountry.value) {
         if (countryQuery.isBlank() || _isEndReached.value) return
+        paginationJob?.cancel()
         countryPrefetchJob?.cancel()
-        countryPrefetchJob = viewModelScope.launch {
-            var matching = loadedMap.values.count { it.matchesCountry(countryQuery) }
-            if (matching >= 24) return@launch
+        countryPrefetchJob = viewModelScope.launch(Dispatchers.IO) {
+            val matching = loadedMap.values.count { it.matchesCountry(countryQuery) }
+            // Если на экране уже есть достаточный набор карточек, мгновенный возврат без лишней нагрузки
+            if (matching >= 8) return@launch
+
             _isLoadingMore.value = true
             try {
-                var consecutiveEmptyPages = 0
-                while (matching < 24 && !_isEndReached.value && consecutiveEmptyPages < 8) {
-                    val nextPage = currentCatalogPage + 1
-                    val items = RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, _currentYear.value, nextPage)
-                    val newUniqueItems = items.filterNot { loadedMap.containsKey(it.id) }
-                    if (newUniqueItems.isEmpty() || items.size < 32) {
+                val page1 = currentCatalogPage + 1
+                val items1 = try {
+                    RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, _currentYear.value, page1)
+                } catch (_: Exception) {
+                    emptyList()
+                }
+
+                var newlyAddedMatching = 0
+                if (items1.isNotEmpty()) {
+                    val newUnique1 = items1.filterNot { loadedMap.containsKey(it.id) }
+                    if (items1.size < 32 || newUnique1.isEmpty()) {
                         _isEndReached.value = true
                     }
-                    if (newUniqueItems.isNotEmpty()) {
-                        val addedMatching = newUniqueItems.count { it.matchesCountry(countryQuery) }
-                        if (addedMatching > 0) {
-                            consecutiveEmptyPages = 0
-                        } else {
-                            consecutiveEmptyPages++
-                        }
-                        val dynamicCountries = mutableSetOf<String>()
-                        for (item in newUniqueItems) {
-                            dynamicCountries.addAll(CountryFlags.extractCountries(item.subtitle))
-                        }
-                        if (dynamicCountries.isNotEmpty()) {
-                            updateDynamicCountries(dynamicCountries)
-                        }
+                    if (newUnique1.isNotEmpty()) {
+                        currentCatalogPage = page1
+                        newUnique1.forEach { loadedMap[it.id] = it }
+                        newlyAddedMatching += newUnique1.count { it.matchesCountry(countryQuery) }
 
-                        newUniqueItems.forEach { loadedMap[it.id] = it }
-                        currentCatalogPage = nextPage
-                        matching += addedMatching
-                        _catalogState.value = CatalogState.Success(loadedMap.values.toList())
-                    } else {
-                        break
+                        val dynamicCountries1 = mutableSetOf<String>()
+                        for (item in newUnique1) {
+                            dynamicCountries1.addAll(CountryFlags.extractCountries(item.subtitle))
+                        }
+                        if (dynamicCountries1.isNotEmpty()) {
+                            updateDynamicCountries(dynamicCountries1)
+                        }
                     }
-                    delay(50)
+                } else {
+                    _isEndReached.value = true
+                }
+
+                // Если карточек всё ещё мало (< 4) и каталог не подошел к концу, добираем максимум ещё одну страницу
+                if ((matching + newlyAddedMatching) < 4 && !_isEndReached.value) {
+                    val page2 = currentCatalogPage + 1
+                    val items2 = try {
+                        RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, _currentYear.value, page2)
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                    if (items2.isNotEmpty()) {
+                        val newUnique2 = items2.filterNot { loadedMap.containsKey(it.id) }
+                        if (items2.size < 32 || newUnique2.isEmpty()) {
+                            _isEndReached.value = true
+                        }
+                        if (newUnique2.isNotEmpty()) {
+                            currentCatalogPage = page2
+                            newUnique2.forEach { loadedMap[it.id] = it }
+
+                            val dynamicCountries2 = mutableSetOf<String>()
+                            for (item in newUnique2) {
+                                dynamicCountries2.addAll(CountryFlags.extractCountries(item.subtitle))
+                            }
+                            if (dynamicCountries2.isNotEmpty()) {
+                                updateDynamicCountries(dynamicCountries2)
+                            }
+                        }
+                    } else {
+                        _isEndReached.value = true
+                    }
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
             } finally {
+                _catalogState.value = CatalogState.Success(loadedMap.values.toList())
                 _isLoadingMore.value = false
             }
         }
@@ -491,13 +527,24 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateDynamicCountries(parsedCountries: Set<String>) {
         if (parsedCountries.isEmpty()) return
+        // Быстрая проверка: если все страны уже известны, мгновенный выход без каких-либо аллокаций
+        var hasNew = false
+        for (country in parsedCountries) {
+            val q = country.trim()
+            val clean = CountryFlags.cleanCountryName(q)
+            if (clean.isNotEmpty() && !knownCleanCountryQueries.contains(clean)) {
+                hasNew = true
+                break
+            }
+        }
+        if (!hasNew) return
+
         val currentList = _countriesList.value
-        val existingCleanQueries = currentList.map { CountryFlags.cleanCountryName(it.query) }.toSet()
         val newItems = ArrayList<CountryItem>()
         for (country in parsedCountries) {
             val q = country.trim()
             val clean = CountryFlags.cleanCountryName(q)
-            if (clean.isNotEmpty() && !existingCleanQueries.contains(clean)) {
+            if (clean.isNotEmpty() && knownCleanCountryQueries.add(clean)) {
                 val flag = CountryFlags.getFlag(q, fallbackToDefault = false)
                 if (flag.isNotEmpty()) {
                     val capitalized = q.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
@@ -997,49 +1044,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
         val country = _currentCountry.value
         if (country.isNotEmpty()) {
-            paginationJob?.cancel()
-            paginationJob = viewModelScope.launch {
-                _isLoadingMore.value = true
-                try {
-                    var found = 0
-                    var pagesScanned = 0
-                    while (found == 0 && !_isEndReached.value && pagesScanned < 6) {
-                        pagesScanned++
-                        val nextPage = currentCatalogPage + 1
-                        val items = RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, _currentYear.value, nextPage)
-                        val newUniqueItems = items.filterNot { loadedMap.containsKey(it.id) }
-                        if (newUniqueItems.isEmpty() || items.size < 32) {
-                            _isEndReached.value = true
-                        }
-                        if (newUniqueItems.isNotEmpty()) {
-                            val addedMatching = newUniqueItems.count { it.matchesCountry(country) }
-                            found += addedMatching
-
-                            val dynamicCountries = mutableSetOf<String>()
-                            for (item in newUniqueItems) {
-                                dynamicCountries.addAll(CountryFlags.extractCountries(item.subtitle))
-                            }
-                            if (dynamicCountries.isNotEmpty()) {
-                                updateDynamicCountries(dynamicCountries)
-                            }
-
-                            newUniqueItems.forEach { loadedMap[it.id] = it }
-                            currentCatalogPage = nextPage
-                            _catalogState.value = CatalogState.Success(loadedMap.values.toList())
-                        } else {
-                            break
-                        }
-                        if (found == 0 && !_isEndReached.value) {
-                            delay(50)
-                        }
-                    }
-                } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    _isEndReached.value = true
-                } finally {
-                    _isLoadingMore.value = false
-                }
-            }
+            if (countryPrefetchJob?.isActive == true) return
+            prefetchForCountryFilter(country)
             return
         }
 
