@@ -7,6 +7,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.*
@@ -733,6 +735,12 @@ private fun TvCatalogContent(
                 onSearchCommit = {
                     viewModel.commitSearchQuery(searchInput)
                 },
+                onRemoveSearchQuery = { query ->
+                    viewModel.removeSearchQueryFromHistory(query)
+                },
+                onClearSearchHistory = {
+                    viewModel.clearSearchHistory()
+                },
                 onTypeSelected = { type ->
                     viewModel.selectCategoryFilter(type)
                 },
@@ -1097,6 +1105,8 @@ private fun TvCatalogFiltersBar(
     searchHistory: List<String> = emptyList(),
     onSearchQueryChanged: (String) -> Unit,
     onSearchCommit: (() -> Unit)? = null,
+    onRemoveSearchQuery: ((String) -> Unit)? = null,
+    onClearSearchHistory: (() -> Unit)? = null,
     onTypeSelected: (RezkaType?) -> Unit,
     onSectionSelected: (SectionType) -> Unit,
     onGenreSelected: (String) -> Unit,
@@ -1114,13 +1124,15 @@ private fun TvCatalogFiltersBar(
     var isSearchInputFocused by remember { mutableStateOf(false) }
     var focusedHistoryIndex by remember { mutableStateOf<Int?>(null) }
 
-    val hasSearchHistory = searchHistory.isNotEmpty()
-    val historyFocusRequesters = remember(searchHistory) {
-        searchHistory.take(5).map { FocusRequester() }
+    val recentQueries = remember(searchHistory) { searchHistory.take(5) }
+    val hasSearchHistory = recentQueries.isNotEmpty()
+    val historyFocusRequesters = remember(recentQueries) {
+        recentQueries.map { FocusRequester() }
     }
-    val firstHistoryFocusRequester = remember(historyFocusRequesters) {
-        historyFocusRequesters.firstOrNull() ?: FocusRequester()
+    val deleteFocusRequesters = remember(recentQueries) {
+        recentQueries.map { FocusRequester() }
     }
+    val clearAllFocusRequester = remember { FocusRequester() }
 
     val navigateUpFromFilters: () -> Unit = {
         if (hasSearchHistory && historyFocusRequesters.isNotEmpty()) {
@@ -1129,6 +1141,22 @@ private fun TvCatalogFiltersBar(
         } else {
             searchBarFocusRequester.requestFocusSafe()
         }
+    }
+
+    val handleRemoveQuery: (Int, String) -> Unit = { index, query ->
+        if (recentQueries.size <= 1) {
+            searchBarFocusRequester.requestFocusSafe()
+        } else if (index < recentQueries.lastIndex) {
+            historyFocusRequesters.getOrNull(index + 1)?.requestFocusSafe()
+        } else {
+            historyFocusRequesters.getOrNull(index - 1)?.requestFocusSafe()
+        }
+        onRemoveSearchQuery?.invoke(query)
+    }
+
+    val handleClearAllHistory: () -> Unit = {
+        searchBarFocusRequester.requestFocusSafe()
+        onClearSearchHistory?.invoke()
     }
 
     Column(
@@ -1166,84 +1194,231 @@ private fun TvCatalogFiltersBar(
             modifier = Modifier.fillMaxWidth()
         )
 
-        // Подсказки недавних запросов из истории поиска для ТВ (всегда доступны при наличии истории)
+        // Подсказки недавних запросов из истории поиска для ТВ с возможностью удаления элементов и полной очистки
         if (hasSearchHistory) {
+            val historyScrollState = rememberScrollState()
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(historyScrollState),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.History,
-                    contentDescription = null,
-                    tint = CinemaPrimary,
-                    modifier = Modifier.size(13.dp)
-                )
-                Text(
-                    text = "История:",
-                    color = CinemaTextGray,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                searchHistory.take(5).forEachIndexed { index, histItem ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(end = 2.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.History,
+                        contentDescription = null,
+                        tint = CinemaPrimary,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Text(
+                        text = "История:",
+                        color = CinemaTextGray,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                recentQueries.forEachIndexed { index, histItem ->
                     val histRequester = historyFocusRequesters.getOrNull(index) ?: remember { FocusRequester() }
+                    val delRequester = deleteFocusRequesters.getOrNull(index) ?: remember { FocusRequester() }
+
                     Surface(
                         color = CinemaDark,
-                        shape = RoundedCornerShape(6.dp),
+                        shape = RoundedCornerShape(7.dp),
                         border = BorderStroke(1.dp, CinemaBorder),
-                        modifier = Modifier
-                            .focusRequester(histRequester)
-                            .onKeyEvent { keyEvent ->
-                                if (keyEvent.type == KeyEventType.KeyDown) {
-                                    when (keyEvent.nativeKeyEvent.keyCode) {
-                                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                                            searchBarFocusRequester.requestFocusSafe()
-                                            true
-                                        }
-                                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                            categoryFocusRequester.requestFocusSafe()
-                                            true
-                                        }
-                                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                                            if (index == 0) {
-                                                sidebarFocusRequester.requestFocusSafe()
-                                                true
-                                            } else {
-                                                historyFocusRequesters.getOrNull(index - 1)?.requestFocusSafe()
-                                                true
-                                            }
-                                        }
-                                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                            if (index < historyFocusRequesters.lastIndex) {
-                                                historyFocusRequesters.getOrNull(index + 1)?.requestFocusSafe()
-                                                true
-                                            } else false
-                                        }
-                                        else -> false
-                                    }
-                                } else false
-                            }
-                            .tvFocusableItem(
-                                onClick = {
-                                    onSearchQueryChanged(histItem)
-                                    onSearchCommit?.invoke()
-                                },
-                                onFocusChanged = { focused ->
-                                    if (focused) {
-                                        focusedHistoryIndex = index
-                                    } else if (focusedHistoryIndex == index) {
-                                        focusedHistoryIndex = null
-                                    }
-                                },
-                                scaleFactor = 1.05f,
-                                shape = RoundedCornerShape(6.dp)
-                            )
+                        modifier = Modifier.padding(vertical = 1.dp)
                     ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Кнопка выбора запроса из истории
+                            Box(
+                                modifier = Modifier
+                                    .focusRequester(histRequester)
+                                    .onKeyEvent { keyEvent ->
+                                        if (keyEvent.type == KeyEventType.KeyDown) {
+                                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                                AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                    searchBarFocusRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                    categoryFocusRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                    if (index == 0) {
+                                                        sidebarFocusRequester.requestFocusSafe()
+                                                        true
+                                                    } else {
+                                                        deleteFocusRequesters.getOrNull(index - 1)?.requestFocusSafe()
+                                                        true
+                                                    }
+                                                }
+                                                AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                                    delRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                AndroidKeyEvent.KEYCODE_FORWARD_DEL,
+                                                AndroidKeyEvent.KEYCODE_DEL -> {
+                                                    handleRemoveQuery(index, histItem)
+                                                    true
+                                                }
+                                                else -> false
+                                            }
+                                        } else false
+                                    }
+                                    .tvFocusableItem(
+                                        onClick = {
+                                            onSearchQueryChanged(histItem)
+                                            onSearchCommit?.invoke()
+                                        },
+                                        onFocusChanged = { focused ->
+                                            if (focused) focusedHistoryIndex = index
+                                        },
+                                        scaleFactor = 1.04f,
+                                        shape = RoundedCornerShape(topStart = 7.dp, bottomStart = 7.dp),
+                                        focusedBorderColor = CinemaPrimary
+                                    )
+                                    .testTag("tv_search_history_item_$index")
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = histItem,
+                                    color = CinemaTextWhite,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 160.dp)
+                                )
+                            }
+
+                            // Тонкий вертикальный разделитель
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .height(14.dp)
+                                    .background(CinemaBorder.copy(alpha = 0.5f))
+                            )
+
+                            // Кнопка удаления конкретного запроса
+                            Box(
+                                modifier = Modifier
+                                    .focusRequester(delRequester)
+                                    .onKeyEvent { keyEvent ->
+                                        if (keyEvent.type == KeyEventType.KeyDown) {
+                                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                                AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                    searchBarFocusRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                    categoryFocusRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                    histRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                                    if (index < recentQueries.lastIndex) {
+                                                        historyFocusRequesters.getOrNull(index + 1)?.requestFocusSafe()
+                                                        true
+                                                    } else {
+                                                        clearAllFocusRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                }
+                                                else -> false
+                                            }
+                                        } else false
+                                    }
+                                    .tvFocusableItem(
+                                        onClick = {
+                                            handleRemoveQuery(index, histItem)
+                                        },
+                                        onFocusChanged = { focused ->
+                                            if (focused) focusedHistoryIndex = index
+                                        },
+                                        scaleFactor = 1.15f,
+                                        shape = RoundedCornerShape(topEnd = 7.dp, bottomEnd = 7.dp),
+                                        focusedBorderColor = Color(0xFFFF5252)
+                                    )
+                                    .testTag("tv_search_history_delete_$index")
+                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Удалить запрос",
+                                    tint = CinemaTextGray,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Кнопка очистки всей истории поиска
+                Surface(
+                    color = CinemaDark.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(7.dp),
+                    border = BorderStroke(1.dp, CinemaBorder.copy(alpha = 0.6f)),
+                    modifier = Modifier
+                        .focusRequester(clearAllFocusRequester)
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                        searchBarFocusRequester.requestFocusSafe()
+                                        true
+                                    }
+                                    AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                        categoryFocusRequester.requestFocusSafe()
+                                        true
+                                    }
+                                    AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        deleteFocusRequesters.lastOrNull()?.requestFocusSafe()
+                                            ?: historyFocusRequesters.lastOrNull()?.requestFocusSafe()
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
+                        .tvFocusableItem(
+                            onClick = {
+                                handleClearAllHistory()
+                            },
+                            scaleFactor = 1.05f,
+                            shape = RoundedCornerShape(7.dp),
+                            focusedBorderColor = Color(0xFFFF5252)
+                        )
+                        .testTag("tv_clear_search_history_btn")
+                        .padding(vertical = 1.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteSweep,
+                            contentDescription = "Очистить всю историю",
+                            tint = CinemaTextGray,
+                            modifier = Modifier.size(12.dp)
+                        )
                         Text(
-                            text = histItem,
-                            color = CinemaTextWhite,
+                            text = "Очистить",
+                            color = CinemaTextGray,
                             fontSize = 11.sp,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 }
