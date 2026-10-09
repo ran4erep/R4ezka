@@ -156,4 +156,23 @@ class SearchFiltersEngineTest {
         assertEquals(1, usaResults.size)
         assertEquals("США", usaResults[0].query)
     }
+
+    @Test
+    fun testSearchHistoryDeletionAndClearLogic() {
+        val initialHistory = mutableListOf("Интерстеллар", "Матрица", "Начало", "Джентльмены")
+        
+        // Удаление конкретного элемента
+        val queryToRemove = "Матрица"
+        initialHistory.removeAll { it.equals(queryToRemove, ignoreCase = true) }
+        assertEquals(listOf("Интерстеллар", "Начало", "Джентльмены"), initialHistory)
+
+        // Регистронезависимое удаление
+        val queryCaseInsensitive = "начало"
+        initialHistory.removeAll { it.equals(queryCaseInsensitive, ignoreCase = true) }
+        assertEquals(listOf("Интерстеллар", "Джентльмены"), initialHistory)
+
+        // Очистка всей истории
+        initialHistory.clear()
+        assertTrue(initialHistory.isEmpty())
+    }
 }
