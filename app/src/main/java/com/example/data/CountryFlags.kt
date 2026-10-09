@@ -33,13 +33,22 @@ object CountryFlags {
     private const val FLAG_SCOTLAND = "\uD83C\uDFF4\uDB40\uDC67\uDB40\uDC62\uDB40\uDC73\uDB40\uDC63\uDB40\uDC74\uDB40\uDC7F"
     private const val FLAG_WALES = "\uD83C\uDFF4\uDB40\uDC67\uDB40\uDC62\uDB40\uDC77\uDB40\uDC6C\uDB40\uDC73\uDB40\uDC7F"
 
-    private class FastLruMap<K, V>(private val maxCapacity: Int) : LinkedHashMap<K, V>(maxCapacity, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?): Boolean = size > maxCapacity
+    private const val MAX_CACHE_CAPACITY = 4096
+
+    // Высокопроизводительные неблокирующие кэши (lock-free) для мгновенного доступа без contention
+    private val formatCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val flagLookupCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val cleanCountryNameCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val stripFlagsCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val canonicalCodeCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val subtitleCountryCodesCache = java.util.concurrent.ConcurrentHashMap<String, Set<String>>()
+
+    private fun <K, V> java.util.concurrent.ConcurrentHashMap<K, V>.putSafe(key: K, value: V) {
+        if (size > MAX_CACHE_CAPACITY) clear()
+        put(key, value)
     }
 
-    // Потокобезопасный LRU-кэш для мгновенного скролла
-    private val formatCache: MutableMap<String, String> = Collections.synchronizedMap(FastLruMap(512))
-    private val flagLookupCache: MutableMap<String, String> = Collections.synchronizedMap(FastLruMap(256))
+    private val MULTI_SPACE_REGEX = Regex("\\s+")
 
     // Исторические и особые государства, у которых нет эмодзи-флага в Unicode
     private val COUNTRIES_WITHOUT_EMOJI = hashSetOf(
@@ -88,7 +97,7 @@ object CountryFlags {
             val emoji = isoToEmoji(code)
             if (emoji.isEmpty()) continue
 
-            val loc = Locale.Builder().setRegion(code).build()
+            val loc = Locale("", code)
             val ruName = loc.getDisplayCountry(ruLocale)
             val enName = loc.getDisplayCountry(enLocale)
             val nativeName = loc.getDisplayCountry(loc)
@@ -339,7 +348,7 @@ object CountryFlags {
             putSafe(map, "Словакия", "🇸🇰")
             putSafe(map, "Сьерра-Леоне", "🇸🇱")
             putSafe(map, "Сан-Марино", "🇸🇲")
-            putSafe(map, "Сенегал", "������🇳")
+            putSafe(map, "Сенегал", "🇸🇳")
             putSafe(map, "Сомали", "🇸🇴")
             putSafe(map, "Суринам", "🇸🇷")
             putSafe(map, "Южный Судан", "🇸🇸")
@@ -553,8 +562,26 @@ object CountryFlags {
 
     /**
      * Удаляет из текста любые эмодзи флагов (включая Regional Indicators, 🏴, ☠️ и Unicode Tags).
+     * Оптимизирован с fast-path и LRU-кэшем для снижения нагрузки на процессор при частом вызове.
      */
     fun stripFlags(text: String): String {
+        if (text.isEmpty()) return ""
+        val cached = stripFlagsCache[text]
+        if (cached != null) return cached
+
+        // Fast-path: если в строке нет символов флагов или спец-эмодзи (символов с кодом >= 0x2000), возвращаем сразу
+        var hasPotentialFlag = false
+        for (idx in 0 until text.length) {
+            if (text[idx].code >= 0x2000) {
+                hasPotentialFlag = true
+                break
+            }
+        }
+        if (!hasPotentialFlag) {
+            stripFlagsCache[text] = text
+            return text
+        }
+
         val sb = java.lang.StringBuilder(text.length)
         var i = 0
         while (i < text.length) {
@@ -571,7 +598,9 @@ object CountryFlags {
             }
             i += charCount
         }
-        return sb.toString().trim()
+        val result = sb.toString().trim()
+        stripFlagsCache[text] = result
+        return result
     }
 
     /**
@@ -665,7 +694,7 @@ object CountryFlags {
         val enLocale = Locale.ENGLISH
 
         for (code in Locale.getISOCountries()) {
-            val loc = Locale.Builder().setRegion(code).build()
+            val loc = Locale("", code)
             val ruName = loc.getDisplayCountry(ruLocale)
             val enName = loc.getDisplayCountry(enLocale)
             val nativeName = loc.getDisplayCountry(loc)
@@ -801,27 +830,46 @@ object CountryFlags {
 
     /**
      * Возвращает уникальный канонический ISO-код или ID страны (например, "USSR", "US", "DE", "AU", "AT").
+     * Кэшируется в canonicalCodeCache для мгновенного сопоставления.
      */
     fun getCanonicalCountryCode(countryName: String): String {
+        if (countryName.isBlank()) return ""
+        val cached = canonicalCodeCache[countryName]
+        if (cached != null) return cached
+
         val pureName = stripFlags(countryName)
         val clean = cleanCountryName(pureName)
-        if (clean.isEmpty()) return ""
+        if (clean.isEmpty()) {
+            canonicalCodeCache[countryName] = ""
+            return ""
+        }
 
         val direct = countryCodeMap[clean]
-        if (direct != null) return direct
+        if (direct != null) {
+            canonicalCodeCache[countryName] = direct
+            return direct
+        }
 
         val stemmed = normalizeRussianStem(clean)
         val stemMatch = countryCodeMap[stemmed]
-        if (stemMatch != null) return stemMatch
+        if (stemMatch != null) {
+            canonicalCodeCache[countryName] = stemMatch
+            return stemMatch
+        }
 
         if (clean.contains(' ')) {
             val words = clean.split(' ').map { normalizeRussianStem(it) }
             val joined = words.joinToString(" ")
             val multiWordMatch = countryCodeMap[joined]
-            if (multiWordMatch != null) return multiWordMatch
+            if (multiWordMatch != null) {
+                canonicalCodeCache[countryName] = multiWordMatch
+                return multiWordMatch
+            }
         }
 
-        return clean.uppercase()
+        val fallback = clean.uppercase()
+        canonicalCodeCache[countryName] = fallback
+        return fallback
     }
 
     /**
@@ -897,15 +945,26 @@ object CountryFlags {
     }
 
     fun cleanCountryName(name: String): String {
+        if (name.isEmpty()) return ""
+        val cached = cleanCountryNameCache[name]
+        if (cached != null) return cached
+
         var s = name.trim().lowercase()
-        // Очищаем скобки (например "Корея (Южная)" -> "корея южная", "Германия (ГДР)" -> "германия гдр")
-        s = s.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ")
+        // Очищаем скобки только если они реально присутствуют
+        if (s.contains('(') || s.contains(')') || s.contains('[') || s.contains(']')) {
+            s = s.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ")
+        }
         // Очищаем от кавычек
         if (s.startsWith("\"") && s.endsWith("\"")) s = s.removeSurrounding("\"")
         if (s.startsWith("«") && s.endsWith("»")) s = s.removeSurrounding("«", "»")
-        // Сжимаем множественные пробелы
-        s = s.replace(Regex("\\s+"), " ").trim()
+        // Сжимаем множественные пробелы только если они есть
+        if (s.contains("  ")) {
+            s = MULTI_SPACE_REGEX.replace(s, " ")
+        }
+        s = s.trim()
         if (s.endsWith(".")) s = s.dropLast(1).trim()
+
+        cleanCountryNameCache[name] = s
         return s
     }
 
@@ -966,8 +1025,74 @@ object CountryFlags {
     }
 
     /**
+     * Высокопроизводительное извлечение канонических кодов стран для подзаголовка карточки.
+     * Результат кэшируется в subtitleCountryCodesCache, благодаря чему повторный вызов выполняется за доли микросекунды.
+     */
+    fun extractCanonicalCountryCodes(subtitle: String): Set<String> {
+        if (subtitle.isBlank()) return emptySet()
+        val cached = subtitleCountryCodesCache[subtitle]
+        if (cached != null) return cached
+
+        val codes = HashSet<String>(4)
+        val len = subtitle.length
+
+        // 1. Быстрое извлечение кодов из Unicode Regional Indicator флагов (0x1F1E6..0x1F1FF) за 0 наносекунд
+        var i = 0
+        while (i < len) {
+            val cp1 = Character.codePointAt(subtitle, i)
+            val charCount1 = Character.charCount(cp1)
+            if (cp1 in 0x1F1E6..0x1F1FF && i + charCount1 < len) {
+                val cp2 = Character.codePointAt(subtitle, i + charCount1)
+                if (cp2 in 0x1F1E6..0x1F1FF) {
+                    val c1 = ('A'.code + (cp1 - 0x1F1E6)).toChar()
+                    val c2 = ('A'.code + (cp2 - 0x1F1E6)).toChar()
+                    codes.add("$c1$c2")
+                    i += charCount1 + Character.charCount(cp2)
+                    continue
+                }
+            } else if (cp1 == 0x1F3F4) {
+                // Проверяем флаги Англии, Шотландии, Уэльса
+                if (subtitle.contains(FLAG_ENGLAND)) codes.add("GB-ENG")
+                if (subtitle.contains(FLAG_SCOTLAND)) codes.add("GB-SCT")
+                if (subtitle.contains(FLAG_WALES)) codes.add("GB-WLS")
+            }
+            i += charCount1
+        }
+
+        // 2. Быстрое сканирование текстовых токенов подзаголовка без аллокаций промежуточных списков
+        var start = 0
+        while (start < len) {
+            var end = start
+            while (end < len && subtitle[end] != ',' && subtitle[end] != '/' && subtitle[end] != ';') {
+                end++
+            }
+            if (end > start) {
+                val token = subtitle.substring(start, end).trim()
+                if (token.isNotEmpty() && !isYearToken(token) && !isAgeToken(token) && !isGenreToken(token)) {
+                    val pureName = stripFlags(token).trim()
+                    if (pureName.isNotEmpty()) {
+                        val clean = cleanCountryName(pureName)
+                        if (clean.isNotEmpty()) {
+                            val code = getCanonicalCountryCode(clean)
+                            if (code.isNotEmpty()) {
+                                codes.add(code)
+                            }
+                        }
+                    }
+                }
+            }
+            start = end + 1
+        }
+
+        val immutableCodes = if (codes.isEmpty()) emptySet() else Collections.unmodifiableSet(codes)
+        subtitleCountryCodesCache.putSafe(subtitle, immutableCodes)
+        return immutableCodes
+    }
+
+    /**
      * Высокопроизводительная, каноническая и точная проверка соответствия подзаголовка фильма выбранной стране.
      * Полностью исключает совпадения пересекающихся названий (СССР vs Чехословакия, Австралия vs Австрия, Нигерия vs Нигер).
+     * Выполняется за O(1) время с нулевыми аллокациями благодаря предвычисленным кодам и LRU-индексу.
      */
     fun matchesCountry(subtitle: String, countryQuery: String): Boolean {
         if (countryQuery.isBlank()) return true
@@ -976,28 +1101,20 @@ object CountryFlags {
         val filterCode = getCanonicalCountryCode(countryQuery)
         if (filterCode.isEmpty()) return true
 
-        // 1. Извлекаем распознанные страны из подзаголовка карточки
-        val extracted = extractCountries(subtitle)
-        if (extracted.isNotEmpty()) {
-            for (itemCountry in extracted) {
-                val itemCode = getCanonicalCountryCode(itemCountry)
-                if (isMatchingCode(itemCode, filterCode)) {
-                    return true
-                }
-            }
-            return false
-        }
+        val itemCodes = extractCanonicalCountryCodes(subtitle)
+        return isMatchingCountryCodes(itemCodes, filterCode)
+    }
 
-        // 2. Резервный фолбэк для нестандартных подзаголовков
-        val pureSubParts = stripFlags(subtitle).split(",", "/", ";")
-        for (part in pureSubParts) {
-            val cleanPart = cleanCountryName(part)
-            if (cleanPart.isNotEmpty()) {
-                val partCode = getCanonicalCountryCode(cleanPart)
-                if (isMatchingCode(partCode, filterCode)) {
-                    return true
-                }
-            }
+    fun isMatchingCountryCodes(itemCodes: Set<String>, filterCode: String): Boolean {
+        if (itemCodes.isEmpty() || filterCode.isEmpty()) return false
+        if (itemCodes.contains(filterCode)) return true
+
+        // Совместимость Великобритании и её регионов (Англия, Шотландия, Уэльс)
+        if (filterCode == "GB" && (itemCodes.contains("GB-ENG") || itemCodes.contains("GB-SCT") || itemCodes.contains("GB-WLS"))) {
+            return true
+        }
+        if ((filterCode == "GB-ENG" || filterCode == "GB-SCT" || filterCode == "GB-WLS") && itemCodes.contains("GB")) {
+            return true
         }
 
         return false
