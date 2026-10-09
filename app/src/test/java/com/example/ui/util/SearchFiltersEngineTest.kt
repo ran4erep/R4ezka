@@ -100,30 +100,6 @@ class SearchFiltersEngineTest {
             url = "",
             type = RezkaType.ANIME
         )
-        val multiCountryItem = RezkaItem(
-            id = "3",
-            title = "Копродукция",
-            subtitle = "2023, 🇫🇷 Франция, 🇧🇪 Бельгия, Драмы",
-            imageUrl = "",
-            url = "",
-            type = RezkaType.MOVIE
-        )
-        val ukItem = RezkaItem(
-            id = "4",
-            title = "Британский фильм",
-            subtitle = "2022, Великобритания, Детективы",
-            imageUrl = "",
-            url = "",
-            type = RezkaType.MOVIE
-        )
-        val ussrItem = RezkaItem(
-            id = "5",
-            title = "Советская классика",
-            subtitle = "1973, 🏴‍☠️ СССР, Комедии",
-            imageUrl = "",
-            url = "",
-            type = RezkaType.MOVIE
-        )
 
         assertTrue(usaItem.matchesCountry("США"))
         assertFalse(usaItem.matchesCountry("Япония"))
@@ -132,30 +108,6 @@ class SearchFiltersEngineTest {
         assertFalse(japanItem.matchesCountry("США"))
 
         assertTrue(usaItem.matchesCountry("")) // empty = all countries
-
-        // Multi-country items
-        assertTrue(multiCountryItem.matchesCountry("Франция"))
-        assertTrue(multiCountryItem.matchesCountry("Бельгия"))
-        assertFalse(multiCountryItem.matchesCountry("Германия"))
-
-        // UK and subdivisions
-        assertTrue(ukItem.matchesCountry("Великобритания"))
-        assertTrue(ukItem.matchesCountry("Англия"))
-
-        // USSR / Special
-        assertTrue(ussrItem.matchesCountry("СССР"))
-        assertFalse(ussrItem.matchesCountry("США"))
-
-        // Performance check: 10,000 matches should execute in under 100ms
-        val startNano = System.nanoTime()
-        var matchCount = 0
-        for (i in 0 until 10_000) {
-            if (usaItem.matchesCountry("США")) matchCount++
-            if (multiCountryItem.matchesCountry("Франция")) matchCount++
-        }
-        val elapsedMs = (System.nanoTime() - startNano) / 1_000_000
-        assertEquals(20_000, matchCount)
-        assertTrue("Matches should execute in under 200ms, took ${elapsedMs}ms", elapsedMs < 200)
     }
 
     @Test

@@ -617,6 +617,12 @@ private fun TvCatalogContent(
         } else emptyList()
     }
 
+    LaunchedEffect(displayedItems.size, currentCountry, isEndReached, isLoadingMore) {
+        if (currentCountry.isNotEmpty() && displayedItems.size < 20 && !isEndReached && !isLoadingMore && viewModel.searchQuery.isEmpty()) {
+            viewModel.loadNextPage()
+        }
+    }
+
     var hasRestoredFocus by remember { mutableStateOf(false) }
 
     LaunchedEffect(catalogState, collectionsState, isTopScreen) {

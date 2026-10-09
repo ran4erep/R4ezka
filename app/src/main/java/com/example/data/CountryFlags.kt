@@ -33,20 +33,17 @@ object CountryFlags {
     private const val FLAG_SCOTLAND = "\uD83C\uDFF4\uDB40\uDC67\uDB40\uDC62\uDB40\uDC73\uDB40\uDC63\uDB40\uDC74\uDB40\uDC7F"
     private const val FLAG_WALES = "\uD83C\uDFF4\uDB40\uDC67\uDB40\uDC62\uDB40\uDC77\uDB40\uDC6C\uDB40\uDC73\uDB40\uDC7F"
 
-    private const val MAX_CACHE_CAPACITY = 4096
-
-    // Высокопроизводительные неблокирующие кэши (lock-free) для мгновенного доступа без contention
-    private val formatCache = java.util.concurrent.ConcurrentHashMap<String, String>()
-    private val flagLookupCache = java.util.concurrent.ConcurrentHashMap<String, String>()
-    private val cleanCountryNameCache = java.util.concurrent.ConcurrentHashMap<String, String>()
-    private val stripFlagsCache = java.util.concurrent.ConcurrentHashMap<String, String>()
-    private val canonicalCodeCache = java.util.concurrent.ConcurrentHashMap<String, String>()
-    private val subtitleCountryCodesCache = java.util.concurrent.ConcurrentHashMap<String, Set<String>>()
-
-    private fun <K, V> java.util.concurrent.ConcurrentHashMap<K, V>.putSafe(key: K, value: V) {
-        if (size > MAX_CACHE_CAPACITY) clear()
-        put(key, value)
+    private class FastLruMap<K, V>(private val maxCapacity: Int) : LinkedHashMap<K, V>(maxCapacity, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?): Boolean = size > maxCapacity
     }
+
+    // Потокобезопасный LRU-кэш для мгновенного скролла
+    private val formatCache: MutableMap<String, String> = Collections.synchronizedMap(FastLruMap(512))
+    private val flagLookupCache: MutableMap<String, String> = Collections.synchronizedMap(FastLruMap(512))
+    private val cleanCountryNameCache: MutableMap<String, String> = Collections.synchronizedMap(FastLruMap(1024))
+    private val stripFlagsCache: MutableMap<String, String> = Collections.synchronizedMap(FastLruMap(1024))
+    private val canonicalCodeCache: MutableMap<String, String> = Collections.synchronizedMap(FastLruMap(512))
+    private val subtitleCountryCodesCache: MutableMap<String, Set<String>> = Collections.synchronizedMap(FastLruMap(2048))
 
     private val MULTI_SPACE_REGEX = Regex("\\s+")
 
@@ -1033,59 +1030,30 @@ object CountryFlags {
         val cached = subtitleCountryCodesCache[subtitle]
         if (cached != null) return cached
 
-        val codes = HashSet<String>(4)
-        val len = subtitle.length
-
-        // 1. Быстрое извлечение кодов из Unicode Regional Indicator флагов (0x1F1E6..0x1F1FF) за 0 наносекунд
-        var i = 0
-        while (i < len) {
-            val cp1 = Character.codePointAt(subtitle, i)
-            val charCount1 = Character.charCount(cp1)
-            if (cp1 in 0x1F1E6..0x1F1FF && i + charCount1 < len) {
-                val cp2 = Character.codePointAt(subtitle, i + charCount1)
-                if (cp2 in 0x1F1E6..0x1F1FF) {
-                    val c1 = ('A'.code + (cp1 - 0x1F1E6)).toChar()
-                    val c2 = ('A'.code + (cp2 - 0x1F1E6)).toChar()
-                    codes.add("$c1$c2")
-                    i += charCount1 + Character.charCount(cp2)
-                    continue
+        val extracted = extractCountries(subtitle)
+        val codes = HashSet<String>(extracted.size + 2)
+        if (extracted.isNotEmpty()) {
+            for (country in extracted) {
+                val code = getCanonicalCountryCode(country)
+                if (code.isNotEmpty()) {
+                    codes.add(code)
                 }
-            } else if (cp1 == 0x1F3F4) {
-                // Проверяем флаги Англии, Шотландии, Уэльса
-                if (subtitle.contains(FLAG_ENGLAND)) codes.add("GB-ENG")
-                if (subtitle.contains(FLAG_SCOTLAND)) codes.add("GB-SCT")
-                if (subtitle.contains(FLAG_WALES)) codes.add("GB-WLS")
             }
-            i += charCount1
-        }
-
-        // 2. Быстрое сканирование текстовых токенов подзаголовка без аллокаций промежуточных списков
-        var start = 0
-        while (start < len) {
-            var end = start
-            while (end < len && subtitle[end] != ',' && subtitle[end] != '/' && subtitle[end] != ';') {
-                end++
-            }
-            if (end > start) {
-                val token = subtitle.substring(start, end).trim()
-                if (token.isNotEmpty() && !isYearToken(token) && !isAgeToken(token) && !isGenreToken(token)) {
-                    val pureName = stripFlags(token).trim()
-                    if (pureName.isNotEmpty()) {
-                        val clean = cleanCountryName(pureName)
-                        if (clean.isNotEmpty()) {
-                            val code = getCanonicalCountryCode(clean)
-                            if (code.isNotEmpty()) {
-                                codes.add(code)
-                            }
-                        }
+        } else {
+            val pureSubParts = stripFlags(subtitle).split(",", "/", ";")
+            for (part in pureSubParts) {
+                val cleanPart = cleanCountryName(part)
+                if (cleanPart.isNotEmpty()) {
+                    val code = getCanonicalCountryCode(cleanPart)
+                    if (code.isNotEmpty()) {
+                        codes.add(code)
                     }
                 }
             }
-            start = end + 1
         }
 
         val immutableCodes = if (codes.isEmpty()) emptySet() else Collections.unmodifiableSet(codes)
-        subtitleCountryCodesCache.putSafe(subtitle, immutableCodes)
+        subtitleCountryCodesCache[subtitle] = immutableCodes
         return immutableCodes
     }
 

@@ -451,58 +451,58 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         paginationJob?.cancel()
         countryPrefetchJob?.cancel()
         countryPrefetchJob = viewModelScope.launch(Dispatchers.IO) {
-            val matching = loadedMap.values.count { it.matchesCountry(countryQuery) }
-            // Если на экране уже есть достаточный набор карточек, мгновенный возврат без лишней нагрузки
-            if (matching >= 8) return@launch
-
+            var matching = loadedMap.values.count { it.matchesCountry(countryQuery) }
+            if (matching >= 24) return@launch
             _isLoadingMore.value = true
             try {
-                val page1 = currentCatalogPage + 1
-                val items1 = try {
-                    RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, _currentYear.value, page1)
-                } catch (_: Exception) {
-                    emptyList()
-                }
+                var consecutiveEmptyBatches = 0
+                while (matching < 24 && !_isEndReached.value && consecutiveEmptyBatches < 5) {
+                    val page1 = currentCatalogPage + 1
+                    val page2 = currentCatalogPage + 2
 
-                var newlyAddedMatching = 0
-                if (items1.isNotEmpty()) {
-                    val newUnique1 = items1.filterNot { loadedMap.containsKey(it.id) }
-                    if (items1.size < 32 || newUnique1.isEmpty()) {
-                        _isEndReached.value = true
-                    }
-                    if (newUnique1.isNotEmpty()) {
-                        currentCatalogPage = page1
-                        newUnique1.forEach { loadedMap[it.id] = it }
-                        newlyAddedMatching += newUnique1.count { it.matchesCountry(countryQuery) }
+                    // Параллельная загрузка двух страниц с IO диспетчером для быстрого отклика
+                    val deferred1 = async { RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, _currentYear.value, page1) }
+                    val deferred2 = async { RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, _currentYear.value, page2) }
 
-                        val dynamicCountries1 = mutableSetOf<String>()
-                        for (item in newUnique1) {
-                            dynamicCountries1.addAll(CountryFlags.extractCountries(item.subtitle))
+                    val items1 = try { deferred1.await() } catch (_: Exception) { emptyList() }
+                    val items2 = try { deferred2.await() } catch (_: Exception) { emptyList() }
+
+                    var newFoundInBatch = 0
+                    var batchHasEnd = false
+
+                    // Обработка страницы 1
+                    if (items1.isNotEmpty()) {
+                        val newUnique1 = items1.filterNot { loadedMap.containsKey(it.id) }
+                        if (items1.size < 32 || newUnique1.isEmpty()) batchHasEnd = true
+                        if (newUnique1.isNotEmpty()) {
+                            val added1 = newUnique1.count { it.matchesCountry(countryQuery) }
+                            newFoundInBatch += added1
+                            newUnique1.forEach { loadedMap[it.id] = it }
+                            currentCatalogPage = page1
+                            matching += added1
+
+                            val dynamicCountries1 = mutableSetOf<String>()
+                            for (item in newUnique1) {
+                                dynamicCountries1.addAll(CountryFlags.extractCountries(item.subtitle))
+                            }
+                            if (dynamicCountries1.isNotEmpty()) {
+                                updateDynamicCountries(dynamicCountries1)
+                            }
                         }
-                        if (dynamicCountries1.isNotEmpty()) {
-                            updateDynamicCountries(dynamicCountries1)
-                        }
+                    } else {
+                        batchHasEnd = true
                     }
-                } else {
-                    _isEndReached.value = true
-                }
 
-                // Если карточек всё ещё мало (< 4) и каталог не подошел к концу, добираем максимум ещё одну страницу
-                if ((matching + newlyAddedMatching) < 4 && !_isEndReached.value) {
-                    val page2 = currentCatalogPage + 1
-                    val items2 = try {
-                        RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, _currentYear.value, page2)
-                    } catch (_: Exception) {
-                        emptyList()
-                    }
-                    if (items2.isNotEmpty()) {
+                    // Обработка страницы 2 (только если первая страница была полной)
+                    if (!batchHasEnd && items2.isNotEmpty()) {
                         val newUnique2 = items2.filterNot { loadedMap.containsKey(it.id) }
-                        if (items2.size < 32 || newUnique2.isEmpty()) {
-                            _isEndReached.value = true
-                        }
+                        if (items2.size < 32 || newUnique2.isEmpty()) batchHasEnd = true
                         if (newUnique2.isNotEmpty()) {
-                            currentCatalogPage = page2
+                            val added2 = newUnique2.count { it.matchesCountry(countryQuery) }
+                            newFoundInBatch += added2
                             newUnique2.forEach { loadedMap[it.id] = it }
+                            currentCatalogPage = page2
+                            matching += added2
 
                             val dynamicCountries2 = mutableSetOf<String>()
                             for (item in newUnique2) {
@@ -512,9 +512,24 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                                 updateDynamicCountries(dynamicCountries2)
                             }
                         }
-                    } else {
+                    } else if (items1.isNotEmpty() && !batchHasEnd) {
+                        batchHasEnd = true
+                    }
+
+                    if (batchHasEnd) {
                         _isEndReached.value = true
                     }
+
+                    if (newFoundInBatch > 0) {
+                        consecutiveEmptyBatches = 0
+                        // Обновляем состояние UI только если реально добавлены фильмы нужной страны
+                        _catalogState.value = CatalogState.Success(loadedMap.values.toList())
+                    } else {
+                        consecutiveEmptyBatches++
+                    }
+
+                    if (batchHasEnd || matching >= 24) break
+                    delay(30)
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
