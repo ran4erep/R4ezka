@@ -57,6 +57,7 @@ fun FavoritesScreen(
     onNavigateToDetail: (RezkaItem) -> Unit,
     onNavigateLeftToSidebar: (() -> Unit)? = null,
     firstItemFocusRequester: FocusRequester? = null,
+    isTopScreen: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val favorites by viewModel.favorites.collectAsState()
@@ -179,10 +180,15 @@ fun FavoritesScreen(
                     }
 
                     // Автофокус на последний выбранный или первый элемент в избранном
-                    var hasSetInitialFocus by remember { mutableStateOf(false) }
-                    LaunchedEffect(favorites.size) {
-                        if (!hasSetInitialFocus && favorites.isNotEmpty()) {
-                            hasSetInitialFocus = true
+                    var hasRestoredFocus by remember { mutableStateOf(false) }
+                    LaunchedEffect(isTopScreen, favorites.size) {
+                        if (!isTopScreen) {
+                            hasRestoredFocus = false
+                            return@LaunchedEffect
+                        }
+                        if (hasRestoredFocus) return@LaunchedEffect
+                        if (favorites.isNotEmpty()) {
+                            hasRestoredFocus = true
                             val savedItemId = viewModel.getTvFavoritesFocusedItemId()
                             val savedIndex = viewModel.getTvFavoritesFocusedIndex()
                             val targetIndex = when {
@@ -196,11 +202,19 @@ fun FavoritesScreen(
                             try {
                                 gridState.scrollToItem(targetIndex)
                             } catch (_: Throwable) {}
-                            for (attempt in 0..14) {
-                                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
+
+                            var focused = false
+                            for (attempt in 0..19) {
+                                kotlinx.coroutines.delay(if (attempt == 0) 40L else 45L)
                                 try {
                                     getFocusRequesterForIndex(targetIndex).requestFocus()
+                                    focused = true
                                     break
+                                } catch (_: Throwable) {}
+                            }
+                            if (!focused) {
+                                try {
+                                    getFocusRequesterForIndex(0).requestFocusSafe()
                                 } catch (_: Throwable) {}
                             }
                         }
