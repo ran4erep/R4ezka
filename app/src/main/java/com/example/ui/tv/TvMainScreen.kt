@@ -341,7 +341,8 @@ fun TvMainScreen(
                         onNavigateLeftToSidebar = { sidebarFocusRequesters[TvNavDestination.FAVORITES]?.requestFocusSafe() },
                         firstItemFocusRequester = favoritesFirstItemRequester,
                         isTopScreen = isTopScreen,
-                        onRegisterFocusRestorer = { restorer -> favoritesFocusRestorer = restorer }
+                        onRegisterFocusRestorer = { restorer -> favoritesFocusRestorer = restorer },
+                        isTvMode = true
                     )
                 }
                 TvNavDestination.HISTORY -> {
@@ -351,7 +352,8 @@ fun TvMainScreen(
                         onNavigateLeftToSidebar = { sidebarFocusRequesters[TvNavDestination.HISTORY]?.requestFocusSafe() },
                         firstItemFocusRequester = historyFirstItemRequester,
                         isTopScreen = isTopScreen,
-                        onRegisterFocusRestorer = { restorer -> historyFocusRestorer = restorer }
+                        onRegisterFocusRestorer = { restorer -> historyFocusRestorer = restorer },
+                        isTvMode = true
                     )
                 }
                 TvNavDestination.SETTINGS -> {
