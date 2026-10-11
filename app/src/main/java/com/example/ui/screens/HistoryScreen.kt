@@ -90,11 +90,70 @@ fun HistoryScreen(
     }
 
     val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+    val deleteItemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
     fun getFocusRequesterForIndex(idx: Int): FocusRequester {
         return if (idx == 0 && firstItemFocusRequester != null) {
             firstItemFocusRequester
         } else {
             itemFocusRequesters.getOrPut(idx) { FocusRequester() }
+        }
+    }
+
+    val safeDeleteHistory: (Int, String) -> Unit = { index, itemId ->
+        val haptic = HapticEngine.get()
+        haptic.perform(HapticType.WARNING)
+        val total = historyList.size
+        if (total <= 1) {
+            viewModel.setTvHistoryFocusedItem(null, 0)
+            emptyFocusRequester.requestFocusSafe()
+            viewModel.deleteHistoryByItemId(itemId)
+        } else {
+            val targetIndex = if (index < total - 1) index else index - 1
+            val neighborIndex = if (index < total - 1) index + 1 else index - 1
+            val nextHistory = historyList[neighborIndex]
+
+            viewModel.setTvHistoryFocusedItem(nextHistory.itemId, targetIndex)
+
+            // Переносим фокус на существующий элемент-сосед до удаления
+            getFocusRequesterForIndex(neighborIndex).requestFocusSafe()
+
+            viewModel.deleteHistoryByItemId(itemId)
+
+            coroutineScope.launch {
+                kotlinx.coroutines.delay(40L)
+                try {
+                    deleteItemFocusRequesters[targetIndex]?.requestFocus()
+                        ?: getFocusRequesterForIndex(targetIndex).requestFocus()
+                } catch (_: Throwable) {
+                    getFocusRequesterForIndex(targetIndex).requestFocusSafe()
+                }
+            }
+        }
+    }
+
+    val safeToggleWatched: (Int, AggregatedHistoryItem) -> Unit = { index, historyItem ->
+        val haptic = HapticEngine.get()
+        haptic.perform(HapticType.SELECTION)
+        val cardRequester = getFocusRequesterForIndex(index)
+        val deleteRequester = deleteItemFocusRequesters.getOrPut(index) { FocusRequester() }
+
+        // 1. СРАЗУ переносим фокус на стабильную карточку фильма (она не пересоздается при смене статуса)
+        cardRequester.requestFocusSafe()
+
+        // 2. Сохраняем фокусный элемент
+        viewModel.setTvHistoryFocusedItem(historyItem.itemId, index)
+
+        // 3. Вызываем переключение статуса
+        viewModel.toggleHistoryWatched(historyItem.itemId)
+
+        // 4. После рекомпозиции кнопок переводим фокус на кнопку "Удалить" этой же карточки
+        coroutineScope.launch {
+            kotlinx.coroutines.delay(50L)
+            try {
+                deleteRequester.requestFocus()
+            } catch (_: Throwable) {
+                cardRequester.requestFocusSafe()
+            }
         }
     }
 
@@ -145,7 +204,7 @@ fun HistoryScreen(
     }
 
     var hasSetFocusOnTop by remember { mutableStateOf(false) }
-    LaunchedEffect(isTopScreen, historyList.size) {
+    LaunchedEffect(isTopScreen) {
         if (!isTopScreen) {
             hasSetFocusOnTop = false
             return@LaunchedEffect
@@ -204,7 +263,10 @@ fun HistoryScreen(
                     modifier = Modifier
                         .size(40.dp)
                         .tvFocusableItem(
-                            onClick = { viewModel.clearAllHistory() },
+                            onClick = {
+                                emptyFocusRequester.requestFocusSafe()
+                                viewModel.clearAllHistory()
+                            },
                             scaleFactor = 1.1f,
                             shape = RoundedCornerShape(8.dp)
                         )
@@ -294,7 +356,6 @@ fun HistoryScreen(
                     val itemCardHeight = resolvedGrid.cardHeight
 
                     val markWatchedFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
-                    val deleteItemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
 
                     val navigateToHistoryItem: (Int, Boolean) -> Unit = { targetIndex, focusButton ->
                         val total = historyList.size
@@ -479,8 +540,7 @@ fun HistoryScreen(
                                             }
                                             .tvFocusableItem(
                                                 onClick = {
-                                                    haptic.perform(HapticType.WARNING)
-                                                    viewModel.deleteHistoryByItemId(history.itemId)
+                                                    safeDeleteHistory(index, history.itemId)
                                                 },
                                                 scaleFactor = 1.0f,
                                                 focusedBorderColor = CinemaPrimary,
@@ -563,7 +623,7 @@ fun HistoryScreen(
                                                 }
                                                 .tvFocusableItem(
                                                     onClick = {
-                                                        viewModel.toggleHistoryWatched(history.itemId)
+                                                        safeToggleWatched(index, history)
                                                     },
                                                     scaleFactor = 1.0f,
                                                     focusedBorderColor = CinemaPrimary,
@@ -637,8 +697,7 @@ fun HistoryScreen(
                                                 }
                                                 .tvFocusableItem(
                                                     onClick = {
-                                                        haptic.perform(HapticType.WARNING)
-                                                        viewModel.deleteHistoryByItemId(history.itemId)
+                                                        safeDeleteHistory(index, history.itemId)
                                                     },
                                                     scaleFactor = 1.0f,
                                                     focusedBorderColor = CinemaPrimary,
@@ -723,8 +782,8 @@ fun HistoryScreen(
                                 )
                                 onNavigateToDetail(item)
                             },
-                            onMarkWatched = { viewModel.toggleHistoryWatched(history.itemId) },
-                            onDelete = { viewModel.deleteHistoryByItemId(history.itemId) }
+                            onMarkWatched = { safeToggleWatched(index, history) },
+                            onDelete = { safeDeleteHistory(index, history.itemId) }
                         )
                     }
                 }
