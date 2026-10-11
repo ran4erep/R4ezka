@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -143,6 +144,7 @@ fun TvCountryDropdown(
     val allCountriesRequester = remember { FocusRequester() }
     val searchFieldRequester = remember { FocusRequester() }
     val searchInputRequester = remember { FocusRequester() }
+    val clearButtonRequester = remember { FocusRequester() }
     val firstCountryRequester = remember { FocusRequester() }
 
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -375,6 +377,12 @@ fun TvCountryDropdown(
                                                     true
                                                 } else false
                                             }
+                                            AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                                if (!isEditingSearch && searchQuery.isNotEmpty()) {
+                                                    clearButtonRequester.requestFocusSafe()
+                                                    true
+                                                } else false
+                                            }
                                             AndroidKeyEvent.KEYCODE_DPAD_UP -> {
                                                 if (!isEditingSearch) {
                                                     allCountriesRequester.requestFocusSafe()
@@ -474,6 +482,14 @@ fun TvCountryDropdown(
                                                                 searchFieldRequester.requestFocusSafe()
                                                                 true
                                                             }
+                                                            AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                                                if (searchQuery.isNotEmpty()) {
+                                                                    isEditingSearch = false
+                                                                    keyboardController?.hide()
+                                                                    clearButtonRequester.requestFocusSafe()
+                                                                    true
+                                                                } else false
+                                                            }
                                                             AndroidKeyEvent.KEYCODE_ENTER,
                                                             AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
                                                             AndroidKeyEvent.KEYCODE_DPAD_CENTER,
@@ -505,17 +521,56 @@ fun TvCountryDropdown(
                                 }
 
                                 if (searchQuery.isNotEmpty()) {
-                                    IconButton(
-                                        onClick = {
-                                            searchQuery = ""
-                                            isEditingSearch = false
-                                        },
-                                        modifier = Modifier.size(24.dp)
+                                    var isClearFocused by remember { mutableStateOf(false) }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(26.dp)
+                                            .clip(CircleShape)
+                                            .then(
+                                                if (isClearFocused) Modifier.background(CinemaPrimary.copy(alpha = 0.25f), CircleShape) else Modifier
+                                            )
+                                            .onKeyEvent { keyEvent ->
+                                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                                    when (keyEvent.nativeKeyEvent.keyCode) {
+                                                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                            searchFieldRequester.requestFocusSafe()
+                                                            true
+                                                        }
+                                                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                            if (filteredCountries.isNotEmpty()) {
+                                                                firstCountryRequester.requestFocusSafe()
+                                                                true
+                                                            } else false
+                                                        }
+                                                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                            allCountriesRequester.requestFocusSafe()
+                                                            true
+                                                        }
+                                                        else -> false
+                                                    }
+                                                } else false
+                                            }
+                                            .tvFocusableItem(
+                                                onClick = {
+                                                    searchQuery = ""
+                                                    isEditingSearch = false
+                                                    keyboardController?.hide()
+                                                    searchFieldRequester.requestFocusSafe()
+                                                },
+                                                onFocusChanged = { isClearFocused = it },
+                                                scaleFactor = 1.15f,
+                                                focusedBorderColor = CinemaPrimary,
+                                                focusedBorderWidth = 1.5.dp,
+                                                shape = CircleShape,
+                                                focusRequester = clearButtonRequester
+                                            )
+                                            .testTag("tv_country_clear_button"),
+                                        contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Close,
-                                            contentDescription = "Очистить",
-                                            tint = CinemaTextGray,
+                                            contentDescription = "Очистить поиск",
+                                            tint = if (isClearFocused) CinemaPrimary else CinemaTextGray,
                                             modifier = Modifier.size(14.dp)
                                         )
                                     }

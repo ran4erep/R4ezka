@@ -129,8 +129,19 @@ fun TvDetailContent(
         idx // translators dropdown index
     }
 
-    val watchMovieButtonIndex = remember(tvTranslatorsWatchIndex, detail) {
+    val moviePlayButtonIndex = remember(tvTranslatorsWatchIndex, detail) {
         if (detail.translators.isNotEmpty()) tvTranslatorsWatchIndex + 1 else tvTranslatorsWatchIndex
+    }
+
+    val seriesEpisodesIndex = remember(tvTranslatorsWatchIndex, detail, effectiveSeasons) {
+        var idx = tvTranslatorsWatchIndex
+        if (detail.translators.isNotEmpty()) idx++
+        if (!detail.isReleased || effectiveSeasons.isEmpty()) {
+            idx // unreleased message
+        } else {
+            idx++ // Seasons dropdown
+            idx // Episodes list
+        }
     }
 
     val displayComments = remember(commentsState.comments, detail.comments) {
@@ -156,17 +167,12 @@ fun TvDetailContent(
     var wasPlayerOpen by remember { mutableStateOf(false) }
     LaunchedEffect(isPlayerOpen) {
         if (wasPlayerOpen && !isPlayerOpen) {
-            if (detail.type == RezkaType.SERIES) {
-                try {
-                    rightScrollState.scrollToItem(watchMovieButtonIndex.coerceAtLeast(2))
-                } catch (_: Throwable) {}
-            } else {
-                try {
-                    rightScrollState.scrollToItem(watchMovieButtonIndex.coerceAtLeast(1))
-                } catch (_: Throwable) {}
-            }
-            for (attempt in 0..10) {
-                kotlinx.coroutines.delay(if (attempt == 0) 30L else 40L)
+            val targetScrollIndex = if (detail.type == RezkaType.SERIES) seriesEpisodesIndex else moviePlayButtonIndex
+            try {
+                rightScrollState.scrollToItem(targetScrollIndex)
+            } catch (_: Throwable) {}
+            for (attempt in 0..18) {
+                kotlinx.coroutines.delay(if (attempt == 0) 25L else 35L)
                 try {
                     mainActionFocusRequester.requestFocus()
                     break
@@ -583,7 +589,7 @@ fun TvDetailContent(
                                                 val targetIndex = if (isSeries) {
                                                     tvTranslatorsWatchIndex
                                                 } else {
-                                                    watchMovieButtonIndex
+                                                    moviePlayButtonIndex
                                                 }
                                                 if (targetIndex >= 0) {
                                                     try {

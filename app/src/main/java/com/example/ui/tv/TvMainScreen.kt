@@ -166,6 +166,8 @@ fun TvMainScreen(
         val historyFirstItemRequester = remember { FocusRequester() }
         val settingsFirstCategoryRequester = remember { FocusRequester() }
         var catalogFocusRestorer by remember { mutableStateOf<(() -> Unit)?>(null) }
+        var favoritesFocusRestorer by remember { mutableStateOf<(() -> Unit)?>(null) }
+        var historyFocusRestorer by remember { mutableStateOf<(() -> Unit)?>(null) }
 
         val navigateToCurrentMainContent: () -> Unit = {
             when (selectedDestination) {
@@ -176,8 +178,20 @@ fun TvMainScreen(
                         rightContentFocusRequester.requestFocusSafe()
                     }
                 }
-                TvNavDestination.FAVORITES -> favoritesFirstItemRequester.requestFocusSafe()
-                TvNavDestination.HISTORY -> historyFirstItemRequester.requestFocusSafe()
+                TvNavDestination.FAVORITES -> {
+                    if (favoritesFocusRestorer != null) {
+                        favoritesFocusRestorer?.invoke()
+                    } else {
+                        favoritesFirstItemRequester.requestFocusSafe()
+                    }
+                }
+                TvNavDestination.HISTORY -> {
+                    if (historyFocusRestorer != null) {
+                        historyFocusRestorer?.invoke()
+                    } else {
+                        historyFirstItemRequester.requestFocusSafe()
+                    }
+                }
                 TvNavDestination.SETTINGS -> settingsFirstCategoryRequester.requestFocusSafe()
             }
         }
@@ -193,8 +207,20 @@ fun TvMainScreen(
                             rightContentFocusRequester.requestFocusSafe()
                         }
                     }
-                    TvNavDestination.FAVORITES -> favoritesFirstItemRequester.requestFocusSafe()
-                    TvNavDestination.HISTORY -> historyFirstItemRequester.requestFocusSafe()
+                    TvNavDestination.FAVORITES -> {
+                        if (favoritesFocusRestorer != null) {
+                            favoritesFocusRestorer?.invoke()
+                        } else {
+                            favoritesFirstItemRequester.requestFocusSafe()
+                        }
+                    }
+                    TvNavDestination.HISTORY -> {
+                        if (historyFocusRestorer != null) {
+                            historyFocusRestorer?.invoke()
+                        } else {
+                            historyFirstItemRequester.requestFocusSafe()
+                        }
+                    }
                     TvNavDestination.SETTINGS -> settingsFirstCategoryRequester.requestFocusSafe()
                 }
             }
@@ -282,11 +308,6 @@ fun TvMainScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .focusProperties {
-                    up = FocusRequester.Cancel
-                    down = FocusRequester.Cancel
-                    left = FocusRequester.Cancel
-                }
         ) {
             when (selectedDestination) {
                 TvNavDestination.CATALOG -> {
@@ -318,7 +339,8 @@ fun TvMainScreen(
                         onNavigateToDetail = onNavigateToDetail,
                         onNavigateLeftToSidebar = { sidebarFocusRequesters[TvNavDestination.FAVORITES]?.requestFocusSafe() },
                         firstItemFocusRequester = favoritesFirstItemRequester,
-                        isTopScreen = isTopScreen
+                        isTopScreen = isTopScreen,
+                        onRegisterFocusRestorer = { restorer -> favoritesFocusRestorer = restorer }
                     )
                 }
                 TvNavDestination.HISTORY -> {
@@ -327,7 +349,8 @@ fun TvMainScreen(
                         onNavigateToDetail = onNavigateToDetail,
                         onNavigateLeftToSidebar = { sidebarFocusRequesters[TvNavDestination.HISTORY]?.requestFocusSafe() },
                         firstItemFocusRequester = historyFirstItemRequester,
-                        isTopScreen = isTopScreen
+                        isTopScreen = isTopScreen,
+                        onRegisterFocusRestorer = { restorer -> historyFocusRestorer = restorer }
                     )
                 }
                 TvNavDestination.SETTINGS -> {
@@ -2116,15 +2139,52 @@ fun TvCompactSearchBar(
                             .fillMaxWidth()
                             .focusRequester(textFieldFocusRequester)
                             .onKeyEvent { keyEvent ->
-                                if (keyEvent.type == KeyEventType.KeyDown &&
-                                    (keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
-                                     keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
-                                     keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER)
-                                ) {
-                                    onSearchCommit?.invoke(query)
-                                    isEditing = false
-                                    keyboardController?.hide()
-                                    true
+                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                    when (keyEvent.nativeKeyEvent.keyCode) {
+                                        AndroidKeyEvent.KEYCODE_BACK -> {
+                                            isEditing = false
+                                            keyboardController?.hide()
+                                            searchBarFocusRequester?.requestFocusSafe()
+                                            true
+                                        }
+                                        AndroidKeyEvent.KEYCODE_ENTER,
+                                        AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
+                                        AndroidKeyEvent.KEYCODE_DPAD_CENTER -> {
+                                            onSearchCommit?.invoke(query)
+                                            isEditing = false
+                                            keyboardController?.hide()
+                                            searchBarFocusRequester?.requestFocusSafe()
+                                            true
+                                        }
+                                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                            if (query.isNotEmpty()) {
+                                                isEditing = false
+                                                keyboardController?.hide()
+                                                clearButtonFocusRequester.requestFocusSafe()
+                                                true
+                                            } else if (voiceButtonFocusRequester != null && onVoiceSearchClick != null) {
+                                                isEditing = false
+                                                keyboardController?.hide()
+                                                voiceButtonFocusRequester.requestFocusSafe()
+                                                true
+                                            } else false
+                                        }
+                                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                            isEditing = false
+                                            keyboardController?.hide()
+                                            onDown?.invoke()
+                                            true
+                                        }
+                                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                            if (onLeft != null) {
+                                                isEditing = false
+                                                keyboardController?.hide()
+                                                onLeft()
+                                                true
+                                            } else false
+                                        }
+                                        else -> false
+                                    }
                                 } else false
                             },
                         decorationBox = { innerTextField ->
