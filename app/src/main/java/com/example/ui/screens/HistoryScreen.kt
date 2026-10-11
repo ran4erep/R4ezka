@@ -20,12 +20,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.input.key.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,11 +59,15 @@ fun HistoryScreen(
     onNavigateLeftToSidebar: (() -> Unit)? = null,
     firstItemFocusRequester: FocusRequester? = null,
     isTopScreen: Boolean = true,
+    onRegisterFocusRestorer: (((() -> Unit)) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val historyList by viewModel.aggregatedWatchHistory.collectAsStateWithLifecycle()
     val isCheckingUpdates by viewModel.isCheckingSeriesUpdates.collectAsStateWithLifecycle()
     val loadingMovieId by viewModel.loadingMovieId.collectAsStateWithLifecycle()
+    val coroutineScope = rememberCoroutineScope()
+    val listState = rememberSavedLazyListState("history", viewModel)
+    val emptyFocusRequester = firstItemFocusRequester ?: remember { FocusRequester() }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.checkHistorySeriesUpdates(force = true)
@@ -76,6 +82,45 @@ fun HistoryScreen(
         }
     }
 
+    val restoreFocus: () -> Unit = {
+        coroutineScope.launch {
+            if (historyList.isNotEmpty()) {
+                val savedItemId = viewModel.getTvHistoryFocusedItemId()
+                val savedIndex = viewModel.getTvHistoryFocusedIndex()
+                val targetIndex = when {
+                    savedItemId != null -> {
+                        val idx = historyList.indexOfFirst { it.itemId == savedItemId }
+                        if (idx >= 0) idx else (savedIndex?.coerceIn(0, historyList.lastIndex) ?: 0)
+                    }
+                    savedIndex != null -> savedIndex.coerceIn(0, historyList.lastIndex)
+                    else -> 0
+                }
+                try {
+                    listState.scrollToItem(targetIndex)
+                } catch (_: Throwable) {}
+                for (attempt in 0..16) {
+                    kotlinx.coroutines.delay(if (attempt == 0) 25L else 35L)
+                    try {
+                        getFocusRequesterForIndex(targetIndex).requestFocus()
+                        break
+                    } catch (_: Throwable) {}
+                }
+            } else {
+                for (attempt in 0..10) {
+                    kotlinx.coroutines.delay(if (attempt == 0) 25L else 35L)
+                    try {
+                        emptyFocusRequester.requestFocus()
+                        break
+                    } catch (_: Throwable) {}
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(restoreFocus) {
+        onRegisterFocusRestorer?.invoke(restoreFocus)
+    }
+
     var hasSetFocusOnTop by remember { mutableStateOf(false) }
     LaunchedEffect(isTopScreen, historyList.size) {
         if (!isTopScreen) {
@@ -83,36 +128,11 @@ fun HistoryScreen(
             return@LaunchedEffect
         }
         if (hasSetFocusOnTop) return@LaunchedEffect
-
-        if (historyList.isNotEmpty()) {
-            hasSetFocusOnTop = true
-            val savedItemId = viewModel.getTvHistoryFocusedItemId()
-            val savedIndex = viewModel.getTvHistoryFocusedIndex()
-            val targetIndex = when {
-                savedItemId != null -> {
-                    val idx = historyList.indexOfFirst { it.itemId == savedItemId }
-                    if (idx >= 0) idx else (savedIndex?.coerceIn(0, historyList.lastIndex) ?: 0)
-                }
-                savedIndex != null -> savedIndex.coerceIn(0, historyList.lastIndex)
-                else -> 0
-            }
-            for (attempt in 0..14) {
-                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
-                try {
-                    getFocusRequesterForIndex(targetIndex).requestFocus()
-                    break
-                } catch (_: Throwable) {}
-            }
-        } else {
-            hasSetFocusOnTop = true
-            for (attempt in 0..14) {
-                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
-                try {
-                    (firstItemFocusRequester ?: FocusRequester()).requestFocus()
-                    break
-                } catch (_: Throwable) {}
-            }
-        }
+        hasSetFocusOnTop = true
+        restoreFocus()
+        // Повторный вызов через 450мс гарантирует восстановление после схлопывания экрана фильма в AnimatedContent (420мс)
+        kotlinx.coroutines.delay(450L)
+        restoreFocus()
     }
 
     Column(
@@ -186,17 +206,8 @@ fun HistoryScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .focusProperties {
-                    up = FocusRequester.Cancel
-                    down = FocusRequester.Cancel
-                    left = FocusRequester.Cancel
-                }
         ) {
             if (historyList.isEmpty()) {
-                val emptyFocusRequester = firstItemFocusRequester ?: remember { FocusRequester() }
-                LaunchedEffect(Unit) {
-                    emptyFocusRequester.requestFocusSafe()
-                }
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -238,7 +249,6 @@ fun HistoryScreen(
                     )
                 }
             } else {
-                val listState = rememberSavedLazyListState("history", viewModel)
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),

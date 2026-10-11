@@ -58,6 +58,7 @@ fun FavoritesScreen(
     onNavigateLeftToSidebar: (() -> Unit)? = null,
     firstItemFocusRequester: FocusRequester? = null,
     isTopScreen: Boolean = true,
+    onRegisterFocusRestorer: (((() -> Unit)) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val favorites by viewModel.favorites.collectAsState()
@@ -113,14 +114,12 @@ fun FavoritesScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .focusProperties {
-                    up = FocusRequester.Cancel
-                    down = FocusRequester.Cancel
-                    left = FocusRequester.Cancel
-                }
         ) {
             if (favorites.isEmpty()) {
                 val emptyFocusRequester = firstItemFocusRequester ?: remember { FocusRequester() }
+                LaunchedEffect(Unit) {
+                    onRegisterFocusRestorer?.invoke { emptyFocusRequester.requestFocusSafe() }
+                }
                 LaunchedEffect(Unit) {
                     emptyFocusRequester.requestFocusSafe()
                 }
@@ -179,7 +178,45 @@ fun FavoritesScreen(
                         }
                     }
 
-                    // Автофокус на последний выбранный или первый элемент в избранном
+                    val restoreFocus: () -> Unit = {
+                        coroutineScope.launch {
+                            if (favorites.isNotEmpty()) {
+                                val savedItemId = viewModel.getTvFavoritesFocusedItemId()
+                                val savedIndex = viewModel.getTvFavoritesFocusedIndex()
+                                val targetIndex = when {
+                                    savedItemId != null -> {
+                                        val idx = favorites.indexOfFirst { it.id == savedItemId }
+                                        if (idx >= 0) idx else (savedIndex?.coerceIn(0, favorites.lastIndex) ?: 0)
+                                    }
+                                    savedIndex != null -> savedIndex.coerceIn(0, favorites.lastIndex)
+                                    else -> 0
+                                }
+                                try {
+                                    gridState.scrollToItem(targetIndex)
+                                } catch (_: Throwable) {}
+                                for (attempt in 0..16) {
+                                    kotlinx.coroutines.delay(if (attempt == 0) 25L else 35L)
+                                    try {
+                                        getFocusRequesterForIndex(targetIndex).requestFocus()
+                                        break
+                                    } catch (_: Throwable) {}
+                                }
+                            } else {
+                                for (attempt in 0..10) {
+                                    kotlinx.coroutines.delay(if (attempt == 0) 25L else 35L)
+                                    try {
+                                        (firstItemFocusRequester ?: FocusRequester()).requestFocus()
+                                        break
+                                    } catch (_: Throwable) {}
+                                }
+                            }
+                        }
+                    }
+
+                    LaunchedEffect(restoreFocus) {
+                        onRegisterFocusRestorer?.invoke(restoreFocus)
+                    }
+
                     var hasSetFocusOnTop by remember { mutableStateOf(false) }
                     LaunchedEffect(isTopScreen, favorites.size) {
                         if (!isTopScreen) {
@@ -187,39 +224,10 @@ fun FavoritesScreen(
                             return@LaunchedEffect
                         }
                         if (hasSetFocusOnTop) return@LaunchedEffect
-
-                        if (favorites.isNotEmpty()) {
-                            hasSetFocusOnTop = true
-                            val savedItemId = viewModel.getTvFavoritesFocusedItemId()
-                            val savedIndex = viewModel.getTvFavoritesFocusedIndex()
-                            val targetIndex = when {
-                                savedItemId != null -> {
-                                    val idx = favorites.indexOfFirst { it.id == savedItemId }
-                                    if (idx >= 0) idx else (savedIndex?.coerceIn(0, favorites.lastIndex) ?: 0)
-                                }
-                                savedIndex != null -> savedIndex.coerceIn(0, favorites.lastIndex)
-                                else -> 0
-                            }
-                            try {
-                                gridState.scrollToItem(targetIndex)
-                            } catch (_: Throwable) {}
-                            for (attempt in 0..14) {
-                                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
-                                try {
-                                    getFocusRequesterForIndex(targetIndex).requestFocus()
-                                    break
-                                } catch (_: Throwable) {}
-                            }
-                        } else {
-                            hasSetFocusOnTop = true
-                            for (attempt in 0..14) {
-                                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
-                                try {
-                                    (firstItemFocusRequester ?: FocusRequester()).requestFocus()
-                                    break
-                                } catch (_: Throwable) {}
-                            }
-                        }
+                        hasSetFocusOnTop = true
+                        restoreFocus()
+                        kotlinx.coroutines.delay(450L)
+                        restoreFocus()
                     }
 
                     val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight, isLandscape) {
