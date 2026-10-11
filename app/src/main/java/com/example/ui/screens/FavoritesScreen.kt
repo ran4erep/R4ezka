@@ -56,7 +56,6 @@ import com.example.data.RezkaType
 import com.example.ui.RezkaViewModel
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.example.ui.theme.*
-import com.example.ui.tv.dpadScrollable
 import com.example.ui.tv.tvFocusableItem
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
@@ -281,6 +280,49 @@ fun FavoritesScreen(
                         } else androidx.compose.ui.unit.Dp.Unspecified
                     }
 
+                    val navigateToGridItem: (Int, Boolean) -> Unit = { targetIndex, focusButton ->
+                        val total = favorites.size
+                        if (total > 0) {
+                            val clampedIndex = targetIndex.coerceIn(0, total - 1)
+                            viewModel.setTvFavoritesFocusedItem(favorites[clampedIndex].id, clampedIndex)
+                            coroutineScope.launch {
+                                try {
+                                    val layoutInfo = gridState.layoutInfo
+                                    val visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == clampedIndex }
+                                    val isFullyVisible = if (visibleItem != null) {
+                                        val top = visibleItem.offset.y
+                                        val bottom = top + visibleItem.size.height
+                                        top >= layoutInfo.viewportStartOffset && bottom <= layoutInfo.viewportEndOffset
+                                    } else false
+
+                                    if (!isFullyVisible) {
+                                        gridState.scrollToItem(clampedIndex)
+                                    }
+                                } catch (_: Throwable) {
+                                    try {
+                                        gridState.scrollToItem(clampedIndex)
+                                    } catch (_: Throwable) {}
+                                }
+
+                                val requester = if (focusButton) {
+                                    deleteItemFocusRequesters.getOrPut(clampedIndex) { FocusRequester() }
+                                } else {
+                                    getFocusRequesterForIndex(clampedIndex)
+                                }
+
+                                for (attempt in 0..10) {
+                                    if (attempt > 0) {
+                                        kotlinx.coroutines.delay(20L)
+                                    }
+                                    try {
+                                        requester.requestFocus()
+                                        break
+                                    } catch (_: Throwable) {}
+                                }
+                            }
+                        }
+                    }
+
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(gridColumns),
                         state = gridState,
@@ -295,7 +337,6 @@ fun FavoritesScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
-                            .dpadScrollable(gridState)
                             .onKeyEvent { keyEvent ->
                                 if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
                                     if (onNavigateLeftToSidebar != null) {
@@ -320,21 +361,6 @@ fun FavoritesScreen(
                                 url = RezkaService.adjustUrlToCurrentMirror(fav.url, itemType, fav.id),
                                 type = itemType
                             )
-                            val navigateToItem: (Int) -> Unit = { targetIndex ->
-                                val total = favorites.size
-                                if (total > 0) {
-                                    val clampedIndex = targetIndex.coerceIn(0, total - 1)
-                                    coroutineScope.launch {
-                                        try {
-                                            val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
-                                            if (!isVisible) {
-                                                gridState.scrollToItem(clampedIndex)
-                                            }
-                                        } catch (_: Exception) {}
-                                        getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
-                                    }
-                                }
-                            }
 
                             val cardRequester = getFocusRequesterForIndex(index)
                             val deleteRequester = deleteItemFocusRequesters.getOrPut(index) { FocusRequester() }
@@ -355,20 +381,24 @@ fun FavoritesScreen(
                                         cardWidth = resolvedGrid.estimatedCardWidth,
                                         seriesBadgeMode = seriesBadgeMode,
                                         isBouncing = item.id == loadingMovieId,
-                                        onNavigateIndex = navigateToItem,
+                                        onNavigateIndex = { targetIdx -> navigateToGridItem(targetIdx, false) },
                                         onDown = {
                                             deleteRequester.requestFocusSafe()
                                         },
                                         onUp = {
                                             if (index >= gridColumns) {
-                                                deleteItemFocusRequesters.getOrPut(index - gridColumns) { FocusRequester() }.requestFocusSafe()
+                                                navigateToGridItem(index - gridColumns, true)
+                                            } else {
+                                                coroutineScope.launch {
+                                                    try { gridState.scrollToItem(0) } catch (_: Throwable) {}
+                                                }
                                             }
                                         },
                                         onLeft = {
                                             if (isFirstCol) {
                                                 onNavigateLeftToSidebar?.invoke()
                                             } else {
-                                                navigateToItem(index - 1)
+                                                navigateToGridItem(index - 1, false)
                                             }
                                         },
                                         focusRequester = cardRequester,
@@ -388,20 +418,24 @@ fun FavoritesScreen(
                                         cardWidth = resolvedGrid.estimatedCardWidth,
                                         seriesBadgeMode = seriesBadgeMode,
                                         isBouncing = item.id == loadingMovieId,
-                                        onNavigateIndex = navigateToItem,
+                                        onNavigateIndex = { targetIdx -> navigateToGridItem(targetIdx, false) },
                                         onDown = {
                                             deleteRequester.requestFocusSafe()
                                         },
                                         onUp = {
                                             if (index >= gridColumns) {
-                                                deleteItemFocusRequesters.getOrPut(index - gridColumns) { FocusRequester() }.requestFocusSafe()
+                                                navigateToGridItem(index - gridColumns, true)
+                                            } else {
+                                                coroutineScope.launch {
+                                                    try { gridState.scrollToItem(0) } catch (_: Throwable) {}
+                                                }
                                             }
                                         },
                                         onLeft = {
                                             if (isFirstCol) {
                                                 onNavigateLeftToSidebar?.invoke()
                                             } else {
-                                                navigateToItem(index - 1)
+                                                navigateToGridItem(index - 1, false)
                                             }
                                         },
                                         focusRequester = cardRequester,
@@ -452,7 +486,7 @@ fun FavoritesScreen(
                                                     android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
                                                         val nextIndex = index + gridColumns
                                                         if (nextIndex < favorites.size) {
-                                                            getFocusRequesterForIndex(nextIndex).requestFocusSafe()
+                                                            navigateToGridItem(nextIndex, false)
                                                             true
                                                         } else true
                                                     }
