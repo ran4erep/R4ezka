@@ -129,6 +129,7 @@ fun FavoritesScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .then(if (isTvMode) Modifier.padding(horizontal = 16.dp) else Modifier)
         ) {
             if (favorites.isEmpty()) {
                 val emptyFocusRequester = firstItemFocusRequester ?: remember { FocusRequester() }
@@ -266,11 +267,15 @@ fun FavoritesScreen(
 
                     val gridColumns = resolvedGrid.columns
                     val isDense = gridColumns >= 5
-                    val buttonHeight = if (gridColumns >= 7) 26.dp else if (isDense) 30.dp else 36.dp
+                    val buttonHeight = if (gridColumns >= 7) 24.dp else if (isDense) 28.dp else 32.dp
                     val spacerHeight = if (isDense) 4.dp else 6.dp
-                    val itemCardHeight = if (resolvedGrid.cardHeight != androidx.compose.ui.unit.Dp.Unspecified) {
-                        (resolvedGrid.cardHeight - buttonHeight - spacerHeight).coerceAtLeast(60.dp)
-                    } else androidx.compose.ui.unit.Dp.Unspecified
+                    val itemCardHeight = if (isTvMode) {
+                        resolvedGrid.cardHeight
+                    } else {
+                        if (resolvedGrid.cardHeight != androidx.compose.ui.unit.Dp.Unspecified) {
+                            (resolvedGrid.cardHeight - buttonHeight - spacerHeight).coerceAtLeast(60.dp)
+                        } else androidx.compose.ui.unit.Dp.Unspecified
+                    }
 
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(gridColumns),
@@ -336,38 +341,73 @@ fun FavoritesScreen(
                                     .fillMaxWidth()
                                     .padding(bottom = 4.dp)
                             ) {
-                                RezkaItemCard(
-                                    item = item,
-                                    index = index,
-                                    totalItems = favorites.size,
-                                    columnsCount = gridColumns,
-                                    cardHeight = itemCardHeight,
-                                    cardWidth = resolvedGrid.estimatedCardWidth,
-                                    seriesBadgeMode = seriesBadgeMode,
-                                    isBouncing = item.id == loadingMovieId,
-                                    onNavigateIndex = navigateToItem,
-                                    onDown = {
-                                        deleteRequester.requestFocusSafe()
-                                    },
-                                    onUp = {
-                                        if (index >= gridColumns) {
-                                            deleteItemFocusRequesters.getOrPut(index - gridColumns) { FocusRequester() }.requestFocusSafe()
-                                        }
-                                    },
-                                    onLeft = {
-                                        if (isFirstCol) {
-                                            onNavigateLeftToSidebar?.invoke()
-                                        } else {
-                                            navigateToItem(index - 1)
-                                        }
-                                    },
-                                    focusRequester = cardRequester,
-                                    onClick = {
-                                        viewModel.setTvFavoritesFocusedItem(fav.id, index)
-                                        onNavigateToDetail(item)
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                if (isTvMode) {
+                                    TvFavoriteCard(
+                                        item = item,
+                                        index = index,
+                                        totalItems = favorites.size,
+                                        columnCount = gridColumns,
+                                        cardHeight = itemCardHeight,
+                                        cardWidth = resolvedGrid.estimatedCardWidth,
+                                        seriesBadgeMode = seriesBadgeMode,
+                                        isBouncing = item.id == loadingMovieId,
+                                        onNavigateIndex = navigateToItem,
+                                        onDown = {
+                                            deleteRequester.requestFocusSafe()
+                                        },
+                                        onUp = {
+                                            if (index >= gridColumns) {
+                                                deleteItemFocusRequesters.getOrPut(index - gridColumns) { FocusRequester() }.requestFocusSafe()
+                                            }
+                                        },
+                                        onLeft = {
+                                            if (isFirstCol) {
+                                                onNavigateLeftToSidebar?.invoke()
+                                            } else {
+                                                navigateToItem(index - 1)
+                                            }
+                                        },
+                                        focusRequester = cardRequester,
+                                        onClick = {
+                                            viewModel.setTvFavoritesFocusedItem(fav.id, index)
+                                            onNavigateToDetail(item)
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                } else {
+                                    RezkaItemCard(
+                                        item = item,
+                                        index = index,
+                                        totalItems = favorites.size,
+                                        columnsCount = gridColumns,
+                                        cardHeight = itemCardHeight,
+                                        cardWidth = resolvedGrid.estimatedCardWidth,
+                                        seriesBadgeMode = seriesBadgeMode,
+                                        isBouncing = item.id == loadingMovieId,
+                                        onNavigateIndex = navigateToItem,
+                                        onDown = {
+                                            deleteRequester.requestFocusSafe()
+                                        },
+                                        onUp = {
+                                            if (index >= gridColumns) {
+                                                deleteItemFocusRequesters.getOrPut(index - gridColumns) { FocusRequester() }.requestFocusSafe()
+                                            }
+                                        },
+                                        onLeft = {
+                                            if (isFirstCol) {
+                                                onNavigateLeftToSidebar?.invoke()
+                                            } else {
+                                                navigateToItem(index - 1)
+                                            }
+                                        },
+                                        focusRequester = cardRequester,
+                                        onClick = {
+                                            viewModel.setTvFavoritesFocusedItem(fav.id, index)
+                                            onNavigateToDetail(item)
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
 
                                 Spacer(modifier = Modifier.height(spacerHeight))
 
@@ -438,17 +478,19 @@ fun FavoritesScreen(
                                             imageVector = Icons.Default.DeleteOutline,
                                             contentDescription = "Удалить из избранного",
                                             tint = CinemaPrimary,
-                                            modifier = Modifier.size(if (isDense) 14.dp else 16.dp)
+                                            modifier = Modifier.size(if (gridColumns >= 7) 12.dp else if (isDense) 14.dp else 16.dp)
                                         )
-                                        Spacer(modifier = Modifier.width(if (isDense) 4.dp else 6.dp))
-                                        Text(
-                                            text = "Удалить",
-                                            color = CinemaTextWhite,
-                                            fontSize = if (gridColumns >= 7) 9.sp else if (isDense) 10.sp else 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            softWrap = false
-                                        )
+                                        if (gridColumns < 8) {
+                                            Spacer(modifier = Modifier.width(if (isDense) 3.dp else 5.dp))
+                                            Text(
+                                                text = "Удалить",
+                                                color = CinemaTextWhite,
+                                                fontSize = if (gridColumns >= 7) 8.5.sp else if (isDense) 9.5.sp else 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -459,3 +501,201 @@ fun FavoritesScreen(
         }
     }
 }
+
+/**
+ * Специализированная ТВ-карточка для Избранного:
+ * 1. Имеет точно такой же размер (высоту и пропорции), как и карточка в каталоге.
+ * 2. Постер содержит стильный оверлей с круглой иконкой Play (как на телефоне).
+ * 3. Поддерживает навигацию с пульта D-Pad и адаптивный бейдж серий.
+ */
+@Composable
+private fun TvFavoriteCard(
+    item: RezkaItem,
+    index: Int,
+    totalItems: Int,
+    columnCount: Int,
+    cardHeight: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp.Unspecified,
+    cardWidth: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp.Unspecified,
+    seriesBadgeMode: SeriesBadgeMode = RezkaService.seriesBadgeMode.value,
+    isBouncing: Boolean = false,
+    onClick: () -> Unit,
+    onNavigateIndex: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+    onUp: (() -> Unit)? = null,
+    onDown: (() -> Unit)? = null,
+    onLeft: (() -> Unit)? = null
+) {
+    val safeCols = if (columnCount > 0) columnCount else 4
+    val isFirstColumn = index % safeCols == 0
+
+    val isDense = columnCount >= 6 || (cardHeight != androidx.compose.ui.unit.Dp.Unspecified && cardHeight.value < 140f)
+    val isUltraDense = columnCount >= 8 || (cardHeight != androidx.compose.ui.unit.Dp.Unspecified && cardHeight.value < 100f)
+
+    var isFocused by remember { mutableStateOf(false) }
+
+    val playCircleSize = remember(columnCount) {
+        if (columnCount >= 8) 22.dp else if (columnCount >= 6) 28.dp else if (columnCount >= 5) 34.dp else 40.dp
+    }
+    val playIconSize = remember(columnCount) {
+        if (columnCount >= 8) 13.dp else if (columnCount >= 6) 17.dp else if (columnCount >= 5) 20.dp else 24.dp
+    }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (cardHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.height(cardHeight) else Modifier)
+            .subtleCardBounce(
+                isBouncing = isBouncing,
+                shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp)
+            )
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown) {
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            if (onDown != null) {
+                                onDown()
+                                true
+                            } else {
+                                val targetIndex = index + safeCols
+                                if (targetIndex < totalItems) {
+                                    onNavigateIndex(targetIndex)
+                                    true
+                                } else if (index < totalItems - 1) {
+                                    onNavigateIndex(totalItems - 1)
+                                    true
+                                } else true
+                            }
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                            if (index >= safeCols) {
+                                if (onUp != null) onUp() else onNavigateIndex(index - safeCols)
+                                true
+                            } else if (onUp != null) {
+                                onUp()
+                                true
+                            } else false
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                            if (isFirstColumn) {
+                                if (onLeft != null) {
+                                    onLeft()
+                                    true
+                                } else false
+                            } else {
+                                onNavigateIndex(index - 1)
+                                true
+                            }
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if ((index + 1) % safeCols == 0 || index == totalItems - 1) {
+                                true
+                            } else {
+                                onNavigateIndex(index + 1)
+                                true
+                            }
+                        }
+                        else -> false
+                    }
+                } else false
+            }
+            .tvFocusableItem(
+                onClick = onClick,
+                onFocused = { isFocused = true },
+                onFocusChanged = { isFocused = it },
+                scaleFactor = 1.0f,
+                focusedBorderWidth = if (isUltraDense) 1.5.dp else 2.dp,
+                shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp),
+                focusRequester = focusRequester,
+                hideBorder = isBouncing
+            )
+            .testTag("tv_favorite_card_${item.id}"),
+        colors = CardDefaults.cardColors(containerColor = CinemaDark),
+        shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp)
+    ) {
+        Column(modifier = if (cardHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.fillMaxSize() else Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (cardHeight != androidx.compose.ui.unit.Dp.Unspecified) {
+                            Modifier.weight(1f)
+                        } else {
+                            Modifier.aspectRatio(0.68f)
+                        }
+                    )
+            ) {
+                AsyncImage(
+                    model = item.imageUrl,
+                    contentDescription = item.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Полупрозрачный оверлей с круглой иконкой Play по центру постера (как на телефоне)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = if (isFocused) 0.15f else 0.28f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isFocused) CinemaPrimary else Color.Black.copy(alpha = 0.5f),
+                        border = BorderStroke(1.dp, if (isFocused) CinemaPrimary else Color.White.copy(alpha = 0.35f)),
+                        modifier = Modifier.size(playCircleSize)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Смотреть",
+                                tint = if (isFocused) CinemaBlack else CinemaTextWhite,
+                                modifier = Modifier.size(playIconSize)
+                            )
+                        }
+                    }
+                }
+
+                // Adaptive Episode Badge (Series only)
+                AdaptivePosterBadge(
+                    rawText = item.rating,
+                    isSeries = item.type != RezkaType.MOVIE,
+                    columnsCount = columnCount,
+                    cardHeight = cardHeight,
+                    cardWidth = cardWidth,
+                    seriesBadgeMode = seriesBadgeMode,
+                    modifier = Modifier.align(Alignment.TopEnd)
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = if (isUltraDense) 3.dp else if (isDense) 5.dp else 8.dp,
+                        vertical = if (isUltraDense) 2.dp else if (isDense) 3.dp else 6.dp
+                    )
+            ) {
+                Text(
+                    text = item.title,
+                    color = CinemaTextWhite,
+                    fontSize = if (isUltraDense) 8.5.sp else if (isDense) 10.sp else 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (!isUltraDense || (cardHeight != androidx.compose.ui.unit.Dp.Unspecified && cardHeight.value >= 85f)) {
+                    Spacer(modifier = Modifier.height(1.dp))
+                    Text(
+                        text = item.subtitle,
+                        color = CinemaTextGray,
+                        fontSize = if (isUltraDense) 6.5.sp else if (isDense) 8.sp else 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+

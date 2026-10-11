@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -227,6 +228,7 @@ fun HistoryScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .then(if (isTvMode) Modifier.padding(horizontal = 16.dp) else Modifier)
         ) {
             if (historyList.isEmpty()) {
                 Column(
@@ -282,11 +284,9 @@ fun HistoryScreen(
 
                     val tvGridCols = resolvedGrid.columns
                     val isDense = tvGridCols >= 5
-                    val buttonHeight = if (tvGridCols >= 7) 26.dp else if (isDense) 30.dp else 36.dp
+                    val buttonHeight = if (tvGridCols >= 7) 24.dp else if (isDense) 28.dp else 32.dp
                     val spacerHeight = if (isDense) 4.dp else 6.dp
-                    val itemCardHeight = if (resolvedGrid.cardHeight != androidx.compose.ui.unit.Dp.Unspecified) {
-                        (resolvedGrid.cardHeight - buttonHeight - spacerHeight).coerceAtLeast(60.dp)
-                    } else androidx.compose.ui.unit.Dp.Unspecified
+                    val itemCardHeight = resolvedGrid.cardHeight
 
                     val markWatchedFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
                     val deleteItemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
@@ -459,17 +459,19 @@ fun HistoryScreen(
                                                 imageVector = Icons.Default.Delete,
                                                 contentDescription = "Удалить из истории",
                                                 tint = CinemaPrimary,
-                                                modifier = Modifier.size(if (isDense) 14.dp else 16.dp)
+                                                modifier = Modifier.size(if (tvGridCols >= 7) 12.dp else if (isDense) 14.dp else 16.dp)
                                             )
-                                            Spacer(modifier = Modifier.width(if (isDense) 4.dp else 6.dp))
-                                            Text(
-                                                text = "Удалить",
-                                                color = CinemaTextWhite,
-                                                fontSize = if (tvGridCols >= 7) 9.sp else if (isDense) 10.sp else 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                softWrap = false
-                                            )
+                                            if (tvGridCols < 8) {
+                                                Spacer(modifier = Modifier.width(if (isDense) 3.dp else 5.dp))
+                                                Text(
+                                                    text = "Удалить",
+                                                    color = CinemaTextWhite,
+                                                    fontSize = if (tvGridCols >= 7) 8.5.sp else if (isDense) 9.5.sp else 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    softWrap = false
+                                                )
+                                            }
                                         }
                                     }
                                 } else {
@@ -542,6 +544,7 @@ fun HistoryScreen(
                                                     tint = CinemaMuted,
                                                     modifier = Modifier.size(if (isDense) 13.dp else 15.dp)
                                                 )
+                                            if (tvGridCols < 8) {
                                                 Spacer(modifier = Modifier.width(3.dp))
                                                 Text(
                                                     text = "Просмотрено",
@@ -551,6 +554,7 @@ fun HistoryScreen(
                                                     maxLines = 1,
                                                     softWrap = false
                                                 )
+                                            }
                                             }
                                         }
 
@@ -615,6 +619,7 @@ fun HistoryScreen(
                                                     tint = CinemaMuted,
                                                     modifier = Modifier.size(if (isDense) 13.dp else 15.dp)
                                                 )
+                                            if (tvGridCols < 8) {
                                                 Spacer(modifier = Modifier.width(3.dp))
                                                 Text(
                                                     text = "Удалить",
@@ -624,6 +629,7 @@ fun HistoryScreen(
                                                     maxLines = 1,
                                                     softWrap = false
                                                 )
+                                            }
                                             }
                                         }
                                     }
@@ -1095,6 +1101,13 @@ fun TvHistoryCard(
         if (isFullyWatched) 100 else (progressFraction * 100f).toInt().coerceIn(0, 99)
     }
 
+    val playCircleSize = remember(columnCount) {
+        if (columnCount >= 8) 22.dp else if (columnCount >= 6) 28.dp else if (columnCount >= 5) 34.dp else 40.dp
+    }
+    val playIconSize = remember(columnCount) {
+        if (columnCount >= 8) 13.dp else if (columnCount >= 6) 17.dp else if (columnCount >= 5) 20.dp else 24.dp
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -1186,18 +1199,29 @@ fun TvHistoryCard(
                     modifier = Modifier.fillMaxSize()
                 )
 
-
-                // Нижняя полоса прогресса просмотра на постере (как в Netflix/YouTube/Rezka)
-                LinearProgressIndicator(
-                    progress = { progressFraction },
+                // Полупрозрачный оверлей с круглой иконкой Play по центру постера (как на телефоне)
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(if (isUltraDense) 2.dp else 3.5.dp)
-                        .align(Alignment.BottomCenter),
-                    color = if (isFullyWatched) CinemaGreen else CinemaPrimary,
-                    trackColor = Color.Black.copy(alpha = 0.55f),
-                    drawStopIndicator = {}
-                )
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = if (isFocused) 0.15f else 0.28f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isFocused) CinemaPrimary else Color.Black.copy(alpha = 0.5f),
+                        border = BorderStroke(1.dp, if (isFocused) CinemaPrimary else Color.White.copy(alpha = 0.35f)),
+                        modifier = Modifier.size(playCircleSize)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Смотреть",
+                                tint = if (isFocused) CinemaBlack else CinemaTextWhite,
+                                modifier = Modifier.size(playIconSize)
+                            )
+                        }
+                    }
+                }
             }
 
             Column(
@@ -1236,6 +1260,20 @@ fun TvHistoryCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+
+                Spacer(modifier = Modifier.height(if (isUltraDense) 2.dp else 4.dp))
+
+                // Полоса прогресса просмотра, как на телефоне (отдельная полоска под текстом, не встроена в постер!)
+                LinearProgressIndicator(
+                    progress = { progressFraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(if (isUltraDense) 2.5.dp else 3.5.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = if (isFullyWatched) CinemaGreen else CinemaPrimary,
+                    trackColor = CinemaSecondary,
+                    drawStopIndicator = {}
+                )
             }
         }
     }

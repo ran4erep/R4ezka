@@ -1019,11 +1019,10 @@ private fun TvCatalogContent(
                                 }
                             } else {
                                 val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight) {
-                                    CardGridEngine.calculate(
+                                    CardGridEngine.calculateForTv(
                                         cardGridMode = cardGridMode,
                                         availableWidth = maxWidth,
-                                        availableHeight = maxHeight,
-                                        isLandscapeOrTv = true
+                                        availableHeight = maxHeight
                                     )
                                 }
 
