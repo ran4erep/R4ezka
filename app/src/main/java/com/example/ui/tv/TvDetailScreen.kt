@@ -1477,14 +1477,13 @@ fun TvDetailContent(
                             }
 
                             if (onDownloadClick != null && isPlayEnabled) {
-                                Button(
-                                    onClick = onDownloadClick,
-                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
+                                Surface(
+                                    color = CinemaCard,
                                     shape = RoundedCornerShape(10.dp),
                                     border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(48.dp)
+                                        .height(44.dp)
                                         .focusProperties {
                                             up = mainActionFocusRequester
                                             left = trailerButtonFocusRequester
@@ -1523,6 +1522,7 @@ fun TvDetailContent(
                                         .testTag("tv_movie_download_button")
                                 ) {
                                     Row(
+                                        modifier = Modifier.fillMaxSize(),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.Center
                                     ) {
@@ -1670,14 +1670,13 @@ fun TvDetailContent(
                             Spacer(modifier = Modifier.height(10.dp))
 
                             if (onDownloadClick != null) {
-                                Button(
-                                    onClick = onDownloadClick,
-                                    colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
+                                Surface(
+                                    color = CinemaCard,
                                     shape = RoundedCornerShape(8.dp),
                                     border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(38.dp)
+                                        .height(40.dp)
                                         .focusProperties { left = trailerButtonFocusRequester }
                                         .onKeyEvent { event ->
                                             if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
@@ -1694,6 +1693,7 @@ fun TvDetailContent(
                                         .testTag("tv_series_download_button")
                                 ) {
                                     Row(
+                                        modifier = Modifier.fillMaxSize(),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.Center
                                     ) {

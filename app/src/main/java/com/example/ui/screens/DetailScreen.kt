@@ -1896,24 +1896,24 @@ fun DetailScreen(
 
                                 // Кнопка Загрузить сериал (отображается только если сериал уже вышел)
                                 if (detail.isReleased) {
-                                    Button(
-                                        onClick = {
-                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
-                                            onDownloadClick()
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
+                                    Surface(
+                                        color = CinemaCard,
                                         shape = RoundedCornerShape(10.dp),
                                         border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(48.dp)
+                                            .height(44.dp)
                                             .tvFocusableItem(
-                                                onClick = onDownloadClick,
+                                                onClick = {
+                                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                                    onDownloadClick()
+                                                },
                                                 shape = RoundedCornerShape(10.dp)
                                             )
                                             .testTag("series_download_button")
                                     ) {
                                         Row(
+                                            modifier = Modifier.fillMaxSize(),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.Center
                                         ) {
@@ -2114,24 +2114,24 @@ fun DetailScreen(
 
                                 // Кнопка Загрузить фильм (под кнопками "Смотреть" и "Трейлер" - только если фильм уже вышел)
                                 if (detail.isReleased) {
-                                    Button(
-                                        onClick = {
-                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
-                                            onDownloadClick()
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = CinemaCard),
+                                    Surface(
+                                        color = CinemaCard,
                                         shape = RoundedCornerShape(10.dp),
                                         border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(52.dp)
+                                            .height(48.dp)
                                             .tvFocusableItem(
-                                                onClick = onDownloadClick,
+                                                onClick = {
+                                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                                    onDownloadClick()
+                                                },
                                                 shape = RoundedCornerShape(10.dp)
                                             )
                                             .testTag("movie_download_button")
                                     ) {
                                         Row(
+                                            modifier = Modifier.fillMaxSize(),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.Center
                                         ) {
