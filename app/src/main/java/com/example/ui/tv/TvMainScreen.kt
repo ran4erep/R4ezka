@@ -233,6 +233,11 @@ fun TvMainScreen(
                 .fillMaxHeight()
                 .background(CinemaDark)
                 .padding(vertical = 16.dp, horizontal = 8.dp)
+                .focusProperties {
+                    // Изоляция курсора: запрещаем автоматический вход в сайдбар при потере фокуса в основном контенте.
+                    // Переход в сайдбар осуществляется ИСКЛЮЧИТЕЛЬНО явно по D-pad Left через sidebarFocusRequesters.
+                    enter = { FocusRequester.Cancel }
+                }
                 .onFocusChanged { isSidebarFocused = it.hasFocus },
             verticalArrangement = Arrangement.SpaceBetween,
             horizontalAlignment = Alignment.Start

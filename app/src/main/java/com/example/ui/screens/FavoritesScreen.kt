@@ -234,8 +234,40 @@ fun FavoritesScreen(
                         onRegisterFocusRestorer?.invoke(restoreFocus)
                     }
 
+                    val safeRemoveFavorite: (Int, String) -> Unit = { index, favId ->
+                        val haptic = HapticEngine.get()
+                        haptic.perform(HapticType.WARNING)
+                        val total = favorites.size
+                        if (total <= 1) {
+                            viewModel.setTvFavoritesFocusedItem(null, 0)
+                            firstItemFocusRequester?.requestFocusSafe()
+                            viewModel.removeFavorite(favId)
+                        } else {
+                            val targetIndex = if (index < total - 1) index else index - 1
+                            val neighborIndex = if (index < total - 1) index + 1 else index - 1
+                            val nextFav = favorites[neighborIndex]
+
+                            viewModel.setTvFavoritesFocusedItem(nextFav.id, targetIndex)
+
+                            // Переносим фокус на существующий элемент-сосед до удаления
+                            getFocusRequesterForIndex(neighborIndex).requestFocusSafe()
+
+                            viewModel.removeFavorite(favId)
+
+                            coroutineScope.launch {
+                                kotlinx.coroutines.delay(40L)
+                                try {
+                                    deleteItemFocusRequesters[targetIndex]?.requestFocus()
+                                        ?: getFocusRequesterForIndex(targetIndex).requestFocus()
+                                } catch (_: Throwable) {
+                                    getFocusRequesterForIndex(targetIndex).requestFocusSafe()
+                                }
+                            }
+                        }
+                    }
+
                     var hasSetFocusOnTop by remember { mutableStateOf(false) }
-                    LaunchedEffect(isTopScreen, favorites.size) {
+                    LaunchedEffect(isTopScreen) {
                         if (!isTopScreen) {
                             hasSetFocusOnTop = false
                             return@LaunchedEffect
@@ -496,8 +528,7 @@ fun FavoritesScreen(
                                         }
                                         .tvFocusableItem(
                                             onClick = {
-                                                haptic.perform(HapticType.WARNING)
-                                                viewModel.removeFavorite(fav.id)
+                                                safeRemoveFavorite(index, fav.id)
                                             },
                                             scaleFactor = 1.0f,
                                             focusedBorderColor = CinemaPrimary,
