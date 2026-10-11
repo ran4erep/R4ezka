@@ -12,6 +12,7 @@ import android.util.Rational
 import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.WindowManager
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -58,6 +59,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
@@ -3411,150 +3413,344 @@ fun RezkaPlayer(
     if (showQualityDialog) {
         val initialQualityRequester = remember { FocusRequester() }
         val qualityScrollState = rememberScrollState()
+        val cancelButtonRequester = remember { FocusRequester() }
 
         LaunchedEffect(Unit) {
             initialQualityRequester.requestFocusSafe()
         }
 
-        AlertDialog(
+        Dialog(
             onDismissRequest = { showQualityDialog = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false),
-            shape = RoundedCornerShape(16.dp),
-            containerColor = CinemaDark,
-            modifier = Modifier
-                .widthIn(min = 520.dp, max = 760.dp)
-                .padding(16.dp),
-            title = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.HighQuality,
-                        contentDescription = null,
-                        tint = CinemaPrimary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Text(
-                        text = "Качество видео",
-                        color = CinemaTextWhite,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = "Выберите желаемое разрешение видеопотока:",
-                        color = CinemaTextGray,
-                        fontSize = 12.sp
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    // Горизонтальный ряд карточек качества видео
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true
+            )
+        ) {
+            Surface(
+                color = CinemaDark,
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, CinemaBorder),
+                modifier = Modifier
+                    .fillMaxWidth(if (isTvMode) 0.80f else 0.94f)
+                    .wrapContentHeight()
+                    .padding(16.dp)
+            ) {
+                if (isTvMode) {
+                    // ГОРИЗОНТАЛЬНЫЙ TV-ДИАЛОГ
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(qualityScrollState)
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(20.dp)
                     ) {
-                        cleanStreams.forEachIndexed { index, stream ->
-                            val isSelected = index == selectedStreamIndex
-                            val itemRequester = if (isSelected) initialQualityRequester else null
+                        // Левая колонка
+                        Column(
+                            modifier = Modifier
+                                .width(220.dp)
+                                .padding(vertical = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.HighQuality,
+                                    contentDescription = null,
+                                    tint = CinemaPrimary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Text(
+                                    text = "Качество видео",
+                                    color = CinemaTextWhite,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Text(
+                                text = "Выберите желаемое разрешение видеопотока:",
+                                color = CinemaTextGray,
+                                fontSize = 11.sp
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
 
                             Surface(
-                                color = if (isSelected) CinemaPrimary.copy(alpha = 0.22f) else CinemaCard,
-                                shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(
-                                    if (isSelected) 2.dp else 1.dp,
-                                    if (isSelected) CinemaPrimary else Color.White.copy(alpha = 0.12f)
-                                ),
+                                color = CinemaCard,
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, CinemaBorder),
                                 modifier = Modifier
-                                    .width(112.dp)
-                                    .height(78.dp)
+                                    .focusRequester(cancelButtonRequester)
+                                    .onKeyEvent { keyEvent ->
+                                        if (keyEvent.type == KeyEventType.KeyDown &&
+                                            keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_RIGHT
+                                        ) {
+                                            initialQualityRequester.requestFocusSafe()
+                                            true
+                                        } else false
+                                    }
                                     .tvFocusableItem(
                                         onClick = {
-                                            HapticEngine.get().perform(HapticType.SELECTION)
-                                            selectedStreamIndex = index
-                                            preferredQualityName = stream.quality
-                                            playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
+                                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                             showQualityDialog = false
                                         },
-                                        scaleFactor = 1.05f,
-                                        shape = RoundedCornerShape(12.dp),
-                                        focusRequester = itemRequester
+                                        shape = RoundedCornerShape(8.dp),
+                                        focusedBorderColor = CinemaPrimary
                                     )
                             ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(8.dp),
-                                    verticalArrangement = Arrangement.Center,
-                                    horizontalAlignment = Alignment.CenterHorizontally
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Text(
-                                        text = stream.quality,
-                                        color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Bold
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = null,
+                                        tint = CinemaTextGray,
+                                        modifier = Modifier.size(14.dp)
                                     )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    if (isSelected) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Check,
-                                                contentDescription = null,
-                                                tint = CinemaPrimary,
-                                                modifier = Modifier.size(13.dp)
-                                            )
+                                    Text(
+                                        text = "Закрыть",
+                                        color = CinemaTextWhite,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+
+                        // Разделитель
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(100.dp)
+                                .background(CinemaBorder)
+                        )
+
+                        // Правая часть: горизонтальный ряд карточек
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .horizontalScroll(qualityScrollState)
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            cleanStreams.forEachIndexed { index, stream ->
+                                val isSelected = index == selectedStreamIndex
+                                val itemRequester = if (isSelected) initialQualityRequester else null
+
+                                Surface(
+                                    color = if (isSelected) CinemaPrimary.copy(alpha = 0.22f) else CinemaCard,
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(
+                                        if (isSelected) 2.dp else 1.dp,
+                                        if (isSelected) CinemaPrimary else CinemaBorder
+                                    ),
+                                    modifier = Modifier
+                                        .width(116.dp)
+                                        .height(84.dp)
+                                        .onKeyEvent { keyEvent ->
+                                            if (keyEvent.type == KeyEventType.KeyDown &&
+                                                keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT &&
+                                                index == 0
+                                            ) {
+                                                cancelButtonRequester.requestFocusSafe()
+                                                true
+                                            } else false
+                                        }
+                                        .tvFocusableItem(
+                                            onClick = {
+                                                HapticEngine.get().perform(HapticType.SELECTION)
+                                                selectedStreamIndex = index
+                                                preferredQualityName = stream.quality
+                                                playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
+                                                showQualityDialog = false
+                                            },
+                                            scaleFactor = 1.05f,
+                                            shape = RoundedCornerShape(12.dp),
+                                            focusRequester = itemRequester,
+                                            focusedBorderColor = CinemaPrimary
+                                        )
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(8.dp),
+                                        verticalArrangement = Arrangement.Center,
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text(
+                                            text = stream.quality,
+                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        if (isSelected) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    tint = CinemaPrimary,
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                                Text(
+                                                    text = "Текущее",
+                                                    color = CinemaPrimary,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                        } else {
                                             Text(
-                                                text = "Текущее",
-                                                color = CinemaPrimary,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.SemiBold
+                                                text = when {
+                                                    stream.quality.contains("1080") -> "Full HD"
+                                                    stream.quality.contains("720") -> "HD"
+                                                    stream.quality.contains("4K", true) || stream.quality.contains("2160") -> "Ultra HD"
+                                                    else -> "SD"
+                                                },
+                                                color = CinemaTextGray,
+                                                fontSize = 11.sp
                                             )
                                         }
-                                    } else {
-                                        Text(
-                                            text = when {
-                                                stream.quality.contains("1080") -> "Full HD"
-                                                stream.quality.contains("720") -> "HD"
-                                                stream.quality.contains("4K", true) || stream.quality.contains("2160") -> "Ultra HD"
-                                                else -> "SD"
-                                            },
-                                            color = CinemaTextGray,
-                                            fontSize = 11.sp
-                                        )
                                     }
                                 }
                             }
                         }
                     }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                        showQualityDialog = false
-                    },
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.tvFocusableItem(
-                        onClick = { showQualityDialog = false },
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                ) {
-                    Text("Закрыть", color = CinemaPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                } else {
+                    // МОБИЛЬНАЯ ВЕРСИЯ
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.HighQuality,
+                                contentDescription = null,
+                                tint = CinemaPrimary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                text = "Качество видео",
+                                color = CinemaTextWhite,
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Выберите желаемое разрешение видеопотока:",
+                            color = CinemaTextGray,
+                            fontSize = 12.sp
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(qualityScrollState)
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            cleanStreams.forEachIndexed { index, stream ->
+                                val isSelected = index == selectedStreamIndex
+
+                                Surface(
+                                    color = if (isSelected) CinemaPrimary.copy(alpha = 0.22f) else CinemaCard,
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(
+                                        if (isSelected) 2.dp else 1.dp,
+                                        if (isSelected) CinemaPrimary else CinemaBorder
+                                    ),
+                                    modifier = Modifier
+                                        .width(112.dp)
+                                        .height(78.dp)
+                                        .clickable {
+                                            HapticEngine.get().perform(HapticType.SELECTION)
+                                            selectedStreamIndex = index
+                                            preferredQualityName = stream.quality
+                                            playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
+                                            showQualityDialog = false
+                                        }
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(8.dp),
+                                        verticalArrangement = Arrangement.Center,
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text(
+                                            text = stream.quality,
+                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        if (isSelected) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    tint = CinemaPrimary,
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                                Text(
+                                                    text = "Текущее",
+                                                    color = CinemaPrimary,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                        } else {
+                                            Text(
+                                                text = when {
+                                                    stream.quality.contains("1080") -> "Full HD"
+                                                    stream.quality.contains("720") -> "HD"
+                                                    stream.quality.contains("4K", true) || stream.quality.contains("2160") -> "Ultra HD"
+                                                    else -> "SD"
+                                                },
+                                                color = CinemaTextGray,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                    showQualityDialog = false
+                                }
+                            ) {
+                                Text("Закрыть", color = CinemaPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
                 }
             }
-        )
+        }
     }
 
     // Speed Selection Dialog (with 1.5x, 2x, etc.)
