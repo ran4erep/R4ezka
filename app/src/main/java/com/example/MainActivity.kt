@@ -158,6 +158,13 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
         }
     }
 
+    // Переход на экран фильма специально из истории просмотров
+    val onNavigateToDetailFromHistory: (RezkaItem) -> Unit = { item ->
+        viewModel.selectMovieWithPreload(item) {
+            pushToStack(ScreenState.Detail(item = item, fromHistory = true))
+        }
+    }
+
     val pendingDeepLink by viewModel.pendingDeepLink.collectAsState()
 
     LaunchedEffect(pendingDeepLink) {
@@ -354,6 +361,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                             viewModel = viewModel,
                             item = activeTarget.item,
                             initialTranslatorId = activeTarget.initialTranslatorId,
+                            fromHistory = activeTarget.fromHistory,
                             onBack = { popBackStack() },
                             onNavigateToThematic = { name, url ->
                                 if (url.contains("/person/")) {
@@ -401,6 +409,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                         TvMainScreen(
                             viewModel = viewModel,
                             onNavigateToDetail = onNavigateToDetailWithBounce,
+                            onNavigateToDetailFromHistory = onNavigateToDetailFromHistory,
                             onNavigateToThematic = { title, url ->
                                 pushToStack(ScreenState.ThematicList(title, url))
                             },
@@ -559,7 +568,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                         NavTab.HISTORY -> {
                             HistoryScreen(
                                 viewModel = viewModel,
-                                onNavigateToDetail = onNavigateToDetailWithBounce
+                                onNavigateToDetail = onNavigateToDetailFromHistory
                             )
                         }
                     }
@@ -660,6 +669,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 viewModel = viewModel,
                                 item = topState.item,
                                 initialTranslatorId = topState.initialTranslatorId,
+                                fromHistory = topState.fromHistory,
                                 onBack = { popBackStack() },
                                 onNavigateToThematic = { name, url ->
                                     if (url.contains("/person/")) {

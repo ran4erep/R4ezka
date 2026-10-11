@@ -55,7 +55,9 @@ import com.example.ui.haptics.HapticType
 import com.example.ui.theme.*
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusableItem
+import com.example.ui.tv.tvPulsingFocusBorder
 import com.example.ui.tv.rememberTvKeyboardVisibility
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -171,8 +173,27 @@ fun TvCountryDropdown(
 
     val isKeyboardVisible by rememberTvKeyboardVisibility()
     var wasKeyboardOpened by remember { mutableStateOf(false) }
+    var wasExpanded by remember { mutableStateOf(false) }
 
-    // Отслеживание скрытия экранной клавиатуры: мгновенно выходим из режима ввода, убираем курсор и переводим фокус
+    // Гарантированный возврат фокуса на триггер выпадающего списка страны при закрытии меню
+    LaunchedEffect(expanded) {
+        if (wasExpanded && !expanded) {
+            searchQuery = ""
+            isEditingSearch = false
+            coroutineScope.launch {
+                for (attempt in 0..4) {
+                    delay(if (attempt == 0) 20L else 30L)
+                    try {
+                        triggerRequester.requestFocus()
+                        break
+                    } catch (_: Throwable) {}
+                }
+            }
+        }
+        wasExpanded = expanded
+    }
+
+    // Отслеживание скрытия экранной клавиатуры: мгновенно выходим из режима ввода и надежно удерживаем фокус внутри выпадающего списка
     LaunchedEffect(isKeyboardVisible, isEditingSearch) {
         if (isEditingSearch) {
             if (isKeyboardVisible) {
@@ -181,11 +202,12 @@ fun TvCountryDropdown(
                 wasKeyboardOpened = false
                 isEditingSearch = false
                 keyboardController?.hide()
-                focusManager.clearFocus()
+                searchFieldRequester.requestFocusSafe()
                 if (filteredCountries.isNotEmpty()) {
-                    firstCountryRequester.requestFocusSafe()
-                } else {
-                    searchFieldRequester.requestFocusSafe()
+                    coroutineScope.launch {
+                        delay(35L)
+                        firstCountryRequester.requestFocusSafe()
+                    }
                 }
             }
         } else {
@@ -197,11 +219,12 @@ fun TvCountryDropdown(
     BackHandler(enabled = expanded && isEditingSearch) {
         isEditingSearch = false
         keyboardController?.hide()
-        focusManager.clearFocus()
+        searchFieldRequester.requestFocusSafe()
         if (filteredCountries.isNotEmpty()) {
-            firstCountryRequester.requestFocusSafe()
-        } else {
-            searchFieldRequester.requestFocusSafe()
+            coroutineScope.launch {
+                delay(35L)
+                firstCountryRequester.requestFocusSafe()
+            }
         }
     }
 
@@ -209,7 +232,13 @@ fun TvCountryDropdown(
         expanded = false
         searchQuery = ""
         coroutineScope.launch {
-            triggerRequester.requestFocusSafe()
+            for (attempt in 0..4) {
+                delay(if (attempt == 0) 20L else 30L)
+                try {
+                    triggerRequester.requestFocus()
+                    break
+                } catch (_: Throwable) {}
+            }
         }
     }
 
@@ -303,19 +332,24 @@ fun TvCountryDropdown(
                     if (isEditingSearch) {
                         isEditingSearch = false
                         keyboardController?.hide()
-                        focusManager.clearFocus()
-                        coroutineScope.launch {
-                            if (filteredCountries.isNotEmpty()) {
+                        searchFieldRequester.requestFocusSafe()
+                        if (filteredCountries.isNotEmpty()) {
+                            coroutineScope.launch {
+                                delay(35L)
                                 firstCountryRequester.requestFocusSafe()
-                            } else {
-                                searchFieldRequester.requestFocusSafe()
                             }
                         }
                     } else {
                         expanded = false
                         searchQuery = ""
                         coroutineScope.launch {
-                            triggerRequester.requestFocusSafe()
+                            for (attempt in 0..4) {
+                                delay(if (attempt == 0) 20L else 30L)
+                                try {
+                                    triggerRequester.requestFocus()
+                                    break
+                                } catch (_: Throwable) {}
+                            }
                         }
                     }
                 },
@@ -407,6 +441,7 @@ fun TvCountryDropdown(
                                 .fillMaxWidth()
                                 .padding(horizontal = 6.dp, vertical = 4.dp)
                                 .height(38.dp)
+                                .focusRequester(searchFieldRequester)
                                 .onKeyEvent { keyEvent ->
                                     if (keyEvent.type == KeyEventType.KeyDown) {
                                         when (keyEvent.nativeKeyEvent.keyCode) {
@@ -415,6 +450,12 @@ fun TvCountryDropdown(
                                                     isEditingSearch = false
                                                     keyboardController?.hide()
                                                     searchFieldRequester.requestFocusSafe()
+                                                    if (filteredCountries.isNotEmpty()) {
+                                                        coroutineScope.launch {
+                                                            delay(35L)
+                                                            firstCountryRequester.requestFocusSafe()
+                                                        }
+                                                    }
                                                     true
                                                 } else false
                                             }
@@ -451,7 +492,14 @@ fun TvCountryDropdown(
                                             shape = RoundedCornerShape(8.dp),
                                             focusRequester = searchFieldRequester
                                         )
-                                    } else Modifier
+                                    } else {
+                                        Modifier.tvPulsingFocusBorder(
+                                            isFocused = true,
+                                            focusedBorderColor = CinemaPrimary,
+                                            shape = RoundedCornerShape(8.dp),
+                                            baseBorderWidth = 2.dp
+                                        )
+                                    }
                                 )
                                 .testTag("tv_country_search_box")
                         ) {
@@ -505,9 +553,12 @@ fun TvCountryDropdown(
                                                 onSearch = {
                                                     isEditingSearch = false
                                                     keyboardController?.hide()
-                                                    focusManager.clearFocus()
+                                                    searchFieldRequester.requestFocusSafe()
                                                     if (filteredCountries.isNotEmpty()) {
-                                                        firstCountryRequester.requestFocusSafe()
+                                                        coroutineScope.launch {
+                                                            delay(35L)
+                                                            firstCountryRequester.requestFocusSafe()
+                                                        }
                                                     }
                                                 }
                                             ),
@@ -520,11 +571,12 @@ fun TvCountryDropdown(
                                                             AndroidKeyEvent.KEYCODE_BACK -> {
                                                                 isEditingSearch = false
                                                                 keyboardController?.hide()
-                                                                focusManager.clearFocus()
+                                                                searchFieldRequester.requestFocusSafe()
                                                                 if (filteredCountries.isNotEmpty()) {
-                                                                    firstCountryRequester.requestFocusSafe()
-                                                                } else {
-                                                                    searchFieldRequester.requestFocusSafe()
+                                                                    coroutineScope.launch {
+                                                                        delay(35L)
+                                                                        firstCountryRequester.requestFocusSafe()
+                                                                    }
                                                                 }
                                                                 true
                                                             }
@@ -542,9 +594,12 @@ fun TvCountryDropdown(
                                                             AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
                                                                 isEditingSearch = false
                                                                 keyboardController?.hide()
-                                                                focusManager.clearFocus()
+                                                                searchFieldRequester.requestFocusSafe()
                                                                 if (filteredCountries.isNotEmpty()) {
-                                                                    firstCountryRequester.requestFocusSafe()
+                                                                    coroutineScope.launch {
+                                                                        delay(35L)
+                                                                        firstCountryRequester.requestFocusSafe()
+                                                                    }
                                                                 }
                                                                 true
                                                             }
