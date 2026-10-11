@@ -7,22 +7,29 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.input.key.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -35,7 +42,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import com.example.ui.util.rememberSavedLazyListState
+import com.example.ui.util.rememberSavedLazyGridState
+import com.example.ui.util.AdaptivePosterBadge
+import com.example.ui.util.SeriesBadgeMode
 import com.example.ui.haptics.bounceOverscroll
+import com.example.ui.haptics.HapticEngine
+import com.example.ui.haptics.HapticType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -60,6 +72,7 @@ fun HistoryScreen(
     firstItemFocusRequester: FocusRequester? = null,
     isTopScreen: Boolean = true,
     onRegisterFocusRestorer: (((() -> Unit)) -> Unit)? = null,
+    isTvMode: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val historyList by viewModel.aggregatedWatchHistory.collectAsStateWithLifecycle()
@@ -82,6 +95,9 @@ fun HistoryScreen(
         }
     }
 
+    val cardGridMode by viewModel.cardGridMode.collectAsState()
+    val gridState = rememberSavedLazyGridState("history_grid", viewModel)
+
     val restoreFocus: () -> Unit = {
         coroutineScope.launch {
             if (historyList.isNotEmpty()) {
@@ -96,7 +112,11 @@ fun HistoryScreen(
                     else -> 0
                 }
                 try {
-                    listState.scrollToItem(targetIndex)
+                    if (isTvMode) {
+                        gridState.scrollToItem(targetIndex)
+                    } else {
+                        listState.scrollToItem(targetIndex)
+                    }
                 } catch (_: Throwable) {}
                 for (attempt in 0..16) {
                     kotlinx.coroutines.delay(if (attempt == 0) 25L else 35L)
@@ -248,7 +268,376 @@ fun HistoryScreen(
                         fontSize = 12.sp
                     )
                 }
+            } else if (isTvMode) {
+                // ---- РЕЖИМ ДЛЯ ТЕЛЕВИЗОРОВ: специализированная ТВ-сетка, согласованная с каталогом ----
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight) {
+                        com.example.ui.tv.CardGridEngine.calculateForTv(
+                            cardGridMode = cardGridMode,
+                            availableWidth = maxWidth,
+                            availableHeight = maxHeight
+                        )
+                    }
+
+                    val tvGridCols = resolvedGrid.columns
+                    val isDense = tvGridCols >= 5
+                    val buttonHeight = if (tvGridCols >= 7) 26.dp else if (isDense) 30.dp else 36.dp
+                    val spacerHeight = if (isDense) 4.dp else 6.dp
+                    val itemCardHeight = if (resolvedGrid.cardHeight != androidx.compose.ui.unit.Dp.Unspecified) {
+                        (resolvedGrid.cardHeight - buttonHeight - spacerHeight).coerceAtLeast(60.dp)
+                    } else androidx.compose.ui.unit.Dp.Unspecified
+
+                    val markWatchedFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+                    val deleteItemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(tvGridCols),
+                        state = gridState,
+                        contentPadding = PaddingValues(top = 10.dp, bottom = 48.dp),
+                        horizontalArrangement = Arrangement.spacedBy(resolvedGrid.horizontalSpacing),
+                        verticalArrangement = Arrangement.spacedBy(resolvedGrid.verticalSpacing),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
+                            .dpadScrollable(gridState)
+                            .onKeyEvent { keyEvent ->
+                                if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+                                    if (onNavigateLeftToSidebar != null) {
+                                        onNavigateLeftToSidebar()
+                                        true
+                                    } else false
+                                } else false
+                            }
+                            .testTag("history_grid")
+                    ) {
+                        itemsIndexed(
+                            items = historyList,
+                            key = { _, it -> it.itemId }
+                        ) { index, history ->
+                            val navigateToItem: (Int) -> Unit = { targetIndex ->
+                                val total = historyList.size
+                                if (total > 0) {
+                                    val clampedIndex = targetIndex.coerceIn(0, total - 1)
+                                    coroutineScope.launch {
+                                        try {
+                                            val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
+                                            if (!isVisible) {
+                                                gridState.scrollToItem(clampedIndex)
+                                            }
+                                        } catch (_: Exception) {}
+                                        getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
+                                    }
+                                }
+                            }
+
+                            val cardRequester = getFocusRequesterForIndex(index)
+                            val markWatchedRequester = markWatchedFocusRequesters.getOrPut(index) { FocusRequester() }
+                            val deleteRequester = deleteItemFocusRequesters.getOrPut(index) { FocusRequester() }
+                            val isFullyWatched = history.isFullyWatched
+                            val isFirstCol = index % tvGridCols == 0
+
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 4.dp)
+                            ) {
+                                TvHistoryCard(
+                                    history = history,
+                                    index = index,
+                                    totalItems = historyList.size,
+                                    columnCount = tvGridCols,
+                                    cardHeight = itemCardHeight,
+                                    cardWidth = resolvedGrid.estimatedCardWidth,
+                                    isBouncing = history.itemId == loadingMovieId,
+                                    onClick = {
+                                        viewModel.setTvHistoryFocusedItem(history.itemId, index)
+                                        val itemType = if (history.isSeries) RezkaType.SERIES else RezkaType.MOVIE
+                                        val targetUrl = RezkaService.adjustUrlToCurrentMirror(history.url, itemType, history.itemId)
+                                        val item = RezkaItem(
+                                            id = history.itemId,
+                                            title = history.title,
+                                            subtitle = "",
+                                            imageUrl = history.imageUrl,
+                                            rating = "",
+                                            url = targetUrl,
+                                            type = itemType
+                                        )
+                                        onNavigateToDetail(item)
+                                    },
+                                    onNavigateIndex = navigateToItem,
+                                    onUp = {
+                                        if (index >= tvGridCols) {
+                                            deleteItemFocusRequesters.getOrPut(index - tvGridCols) { FocusRequester() }.requestFocusSafe()
+                                        }
+                                    },
+                                    onLeft = {
+                                        if (isFirstCol) {
+                                            onNavigateLeftToSidebar?.invoke()
+                                        } else {
+                                            navigateToItem(index - 1)
+                                        }
+                                    },
+                                    onDown = {
+                                        if (isFullyWatched) {
+                                            deleteRequester.requestFocusSafe()
+                                        } else {
+                                            markWatchedRequester.requestFocusSafe()
+                                        }
+                                    },
+                                    focusRequester = cardRequester,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+
+                                Spacer(modifier = Modifier.height(spacerHeight))
+
+                                if (isFullyWatched) {
+                                    val haptic = HapticEngine.get()
+                                    Surface(
+                                        onClick = {
+                                            haptic.perform(HapticType.WARNING)
+                                            viewModel.deleteHistoryByItemId(history.itemId)
+                                        },
+                                        color = CinemaDark,
+                                        shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
+                                        border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.8f)),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(buttonHeight)
+                                            .focusRequester(deleteRequester)
+                                            .onKeyEvent { keyEvent ->
+                                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                                    when (keyEvent.nativeKeyEvent.keyCode) {
+                                                        android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                            if (isFirstCol) {
+                                                                if (onNavigateLeftToSidebar != null) {
+                                                                    onNavigateLeftToSidebar()
+                                                                    true
+                                                                } else false
+                                                            } else {
+                                                                deleteItemFocusRequesters.getOrPut(index - 1) { FocusRequester() }.requestFocusSafe()
+                                                                true
+                                                            }
+                                                        }
+                                                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                                            if ((index + 1) % tvGridCols != 0 && index < historyList.size - 1) {
+                                                                deleteItemFocusRequesters.getOrPut(index + 1) { FocusRequester() }.requestFocusSafe()
+                                                                true
+                                                            } else true
+                                                        }
+                                                        android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                            cardRequester.requestFocusSafe()
+                                                            true
+                                                        }
+                                                        android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                            val nextIndex = index + tvGridCols
+                                                            if (nextIndex < historyList.size) {
+                                                                getFocusRequesterForIndex(nextIndex).requestFocusSafe()
+                                                                true
+                                                            } else true
+                                                        }
+                                                        else -> false
+                                                    }
+                                                } else false
+                                            }
+                                            .tvFocusableItem(
+                                                onClick = {
+                                                    haptic.perform(HapticType.WARNING)
+                                                    viewModel.deleteHistoryByItemId(history.itemId)
+                                                },
+                                                scaleFactor = 1.0f,
+                                                focusedBorderColor = CinemaPrimary,
+                                                shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
+                                                focusRequester = deleteRequester
+                                            )
+                                            .testTag("delete_history_${history.itemId}")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxSize(),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "Удалить из истории",
+                                                tint = CinemaPrimary,
+                                                modifier = Modifier.size(if (isDense) 14.dp else 16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(if (isDense) 4.dp else 6.dp))
+                                            Text(
+                                                text = "Удалить",
+                                                color = CinemaTextWhite,
+                                                fontSize = if (tvGridCols >= 7) 9.sp else if (isDense) 10.sp else 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(buttonHeight),
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Surface(
+                                            onClick = {
+                                                viewModel.toggleHistoryWatched(history.itemId)
+                                            },
+                                            color = CinemaDark,
+                                            shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
+                                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .fillMaxHeight()
+                                                .focusRequester(markWatchedRequester)
+                                                .onKeyEvent { keyEvent ->
+                                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                                        when (keyEvent.nativeKeyEvent.keyCode) {
+                                                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                                if (isFirstCol) {
+                                                                    onNavigateLeftToSidebar?.invoke()
+                                                                    true
+                                                                } else {
+                                                                    deleteItemFocusRequesters.getOrPut(index - 1) { FocusRequester() }.requestFocusSafe()
+                                                                    true
+                                                                }
+                                                            }
+                                                            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                                                deleteRequester.requestFocusSafe()
+                                                                true
+                                                            }
+                                                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                                cardRequester.requestFocusSafe()
+                                                                true
+                                                            }
+                                                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                                val nextIndex = index + tvGridCols
+                                                                if (nextIndex < historyList.size) {
+                                                                    getFocusRequesterForIndex(nextIndex).requestFocusSafe()
+                                                                    true
+                                                                } else true
+                                                            }
+                                                            else -> false
+                                                        }
+                                                    } else false
+                                                }
+                                                .tvFocusableItem(
+                                                    onClick = {
+                                                        viewModel.toggleHistoryWatched(history.itemId)
+                                                    },
+                                                    scaleFactor = 1.0f,
+                                                    focusedBorderColor = CinemaGreen,
+                                                    shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
+                                                    focusRequester = markWatchedRequester
+                                                )
+                                                .testTag("mark_watched_history_${history.itemId}")
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxSize(),
+                                                horizontalArrangement = Arrangement.Center,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = "Отметить просмотренным",
+                                                    tint = CinemaMuted,
+                                                    modifier = Modifier.size(if (isDense) 13.dp else 15.dp)
+                                                )
+                                                if (tvGridCols <= 5) {
+                                                    Spacer(modifier = Modifier.width(3.dp))
+                                                    Text(
+                                                        text = "Просм.",
+                                                        color = CinemaTextGray,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        val haptic = HapticEngine.get()
+                                        Surface(
+                                            onClick = {
+                                                haptic.perform(HapticType.WARNING)
+                                                viewModel.deleteHistoryByItemId(history.itemId)
+                                            },
+                                            color = CinemaDark,
+                                            shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
+                                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .fillMaxHeight()
+                                                .focusRequester(deleteRequester)
+                                                .onKeyEvent { keyEvent ->
+                                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                                        when (keyEvent.nativeKeyEvent.keyCode) {
+                                                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                                markWatchedRequester.requestFocusSafe()
+                                                                true
+                                                            }
+                                                            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                                                if ((index + 1) % tvGridCols != 0 && index < historyList.size - 1) {
+                                                                    markWatchedFocusRequesters.getOrPut(index + 1) { FocusRequester() }.requestFocusSafe()
+                                                                    true
+                                                                } else true
+                                                            }
+                                                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                                cardRequester.requestFocusSafe()
+                                                                true
+                                                            }
+                                                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                                val nextIndex = index + tvGridCols
+                                                                if (nextIndex < historyList.size) {
+                                                                    getFocusRequesterForIndex(nextIndex).requestFocusSafe()
+                                                                    true
+                                                                } else true
+                                                            }
+                                                            else -> false
+                                                        }
+                                                    } else false
+                                                }
+                                                .tvFocusableItem(
+                                                    onClick = {
+                                                        haptic.perform(HapticType.WARNING)
+                                                        viewModel.deleteHistoryByItemId(history.itemId)
+                                                    },
+                                                    scaleFactor = 1.0f,
+                                                    focusedBorderColor = CinemaPrimary,
+                                                    shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
+                                                    focusRequester = deleteRequester
+                                                )
+                                                .testTag("delete_history_${history.itemId}")
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxSize(),
+                                                horizontalArrangement = Arrangement.Center,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Delete,
+                                                    contentDescription = "Удалить",
+                                                    tint = CinemaMuted,
+                                                    modifier = Modifier.size(if (isDense) 13.dp else 15.dp)
+                                                )
+                                                if (tvGridCols <= 5) {
+                                                    Spacer(modifier = Modifier.width(3.dp))
+                                                    Text(
+                                                        text = "Удал.",
+                                                        color = CinemaTextGray,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             } else {
+                // ---- РЕЖИМ ДЛЯ СМАРТФОНОВ: привычный вертикальный мобильный список ----
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
@@ -673,3 +1062,229 @@ fun HistoryCardItem(
         }
     }
 }
+
+/**
+ * Высокопроизводительная специализированная карточка элемента истории для 10-foot TV интерфейса.
+ * Согласована по геометрии, шрифтовым шкалам и логике сетки с карточками каталога и избранного.
+ */
+@Composable
+fun TvHistoryCard(
+    history: AggregatedHistoryItem,
+    index: Int,
+    totalItems: Int,
+    columnCount: Int,
+    cardHeight: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp.Unspecified,
+    cardWidth: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp.Unspecified,
+    isBouncing: Boolean = false,
+    onClick: () -> Unit,
+    onNavigateIndex: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+    onUp: (() -> Unit)? = null,
+    onLeft: (() -> Unit)? = null,
+    onDown: (() -> Unit)? = null
+) {
+    val safeCols = if (columnCount > 0) columnCount else 4
+    val isFirstColumn = index % safeCols == 0
+
+    val isDense = columnCount >= 6 || (cardHeight != androidx.compose.ui.unit.Dp.Unspecified && cardHeight.value < 140f)
+    val isUltraDense = columnCount >= 8 || (cardHeight != androidx.compose.ui.unit.Dp.Unspecified && cardHeight.value < 100f)
+
+    var isFocused by remember { mutableStateOf(false) }
+    val isFullyWatched = history.isFullyWatched
+    val progressFraction = remember(history.totalProgressFraction, isFullyWatched) {
+        if (isFullyWatched) 1.0f else history.totalProgressFraction.coerceIn(0f, 1f)
+    }
+    val progressPercentage = remember(progressFraction, isFullyWatched) {
+        if (isFullyWatched) 100 else (progressFraction * 100f).toInt().coerceIn(0, 99)
+    }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (cardHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.height(cardHeight) else Modifier)
+            .subtleCardBounce(
+                isBouncing = isBouncing,
+                shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp)
+            )
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown) {
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            if (onDown != null) {
+                                onDown()
+                                true
+                            } else {
+                                val targetIndex = index + safeCols
+                                if (targetIndex < totalItems) {
+                                    onNavigateIndex(targetIndex)
+                                    true
+                                } else if (index < totalItems - 1) {
+                                    onNavigateIndex(totalItems - 1)
+                                    true
+                                } else true
+                            }
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                            if (index >= safeCols) {
+                                onNavigateIndex(index - safeCols)
+                                true
+                            } else if (onUp != null) {
+                                onUp()
+                                true
+                            } else false
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                            if (isFirstColumn) {
+                                if (onLeft != null) {
+                                    onLeft()
+                                    true
+                                } else false
+                            } else {
+                                onNavigateIndex(index - 1)
+                                true
+                            }
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if ((index + 1) % safeCols == 0 || index == totalItems - 1) {
+                                true
+                            } else {
+                                onNavigateIndex(index + 1)
+                                true
+                            }
+                        }
+                        else -> false
+                    }
+                } else false
+            }
+            .tvFocusableItem(
+                onClick = onClick,
+                onFocused = { isFocused = true },
+                onFocusChanged = { isFocused = it },
+                scaleFactor = 1.0f,
+                focusedBorderWidth = if (isUltraDense) 1.5.dp else 2.dp,
+                shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp),
+                focusRequester = focusRequester,
+                hideBorder = isBouncing
+            )
+            .testTag("tv_history_card_${history.itemId}"),
+        colors = CardDefaults.cardColors(containerColor = CinemaDark),
+        shape = RoundedCornerShape(if (isUltraDense) 6.dp else if (isDense) 8.dp else 12.dp)
+    ) {
+        Column(modifier = if (cardHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.fillMaxSize() else Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (cardHeight != androidx.compose.ui.unit.Dp.Unspecified) {
+                            Modifier.weight(1f)
+                        } else {
+                            Modifier.aspectRatio(0.68f)
+                        }
+                    )
+            ) {
+                AsyncImage(
+                    model = history.imageUrl,
+                    contentDescription = history.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Значок состояния (в правом верхнем углу)
+                if (isFullyWatched) {
+                    Surface(
+                        color = CinemaGreen,
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(if (isUltraDense) 3.dp else 5.dp)
+                    ) {
+                        Text(
+                            text = "✓ 100%",
+                            color = Color.White,
+                            fontSize = if (isUltraDense) 7.sp else 8.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                    }
+                } else if (history.isSeries) {
+                    AdaptivePosterBadge(
+                        rawText = "Сезон ${history.latestSeason}, Серия ${history.latestEpisode}",
+                        isSeries = true,
+                        columnsCount = columnCount,
+                        cardHeight = cardHeight,
+                        cardWidth = cardWidth,
+                        modifier = Modifier.align(Alignment.TopEnd)
+                    )
+                } else if (progressPercentage > 0) {
+                    Surface(
+                        color = CinemaPrimary,
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(if (isUltraDense) 3.dp else 5.dp)
+                    ) {
+                        Text(
+                            text = "$progressPercentage%",
+                            color = Color.White,
+                            fontSize = if (isUltraDense) 7.sp else 8.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                // Нижняя полоса прогресса просмотра на постере (как в Netflix/YouTube/Rezka)
+                LinearProgressIndicator(
+                    progress = { progressFraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(if (isUltraDense) 2.dp else 3.5.dp)
+                        .align(Alignment.BottomCenter),
+                    color = if (isFullyWatched) CinemaGreen else CinemaPrimary,
+                    trackColor = Color.Black.copy(alpha = 0.55f),
+                    drawStopIndicator = {}
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = if (isUltraDense) 3.dp else if (isDense) 5.dp else 8.dp,
+                        vertical = if (isUltraDense) 2.dp else if (isDense) 3.dp else 6.dp
+                    )
+            ) {
+                Text(
+                    text = history.title,
+                    color = CinemaTextWhite,
+                    fontSize = if (isUltraDense) 8.5.sp else if (isDense) 10.sp else 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (!isUltraDense || (cardHeight != androidx.compose.ui.unit.Dp.Unspecified && cardHeight.value >= 85f)) {
+                    Spacer(modifier = Modifier.height(1.dp))
+                    val subtitleText = remember(history) {
+                        if (history.isSeries) {
+                            if (history.isFullyWatched) "Все серии • 100%"
+                            else "С${history.latestSeason} Э${history.latestEpisode} • $progressPercentage%"
+                        } else {
+                            if (history.isFullyWatched) "Просмотрено • 100%"
+                            else if (progressPercentage > 0) "Просмотрено $progressPercentage%"
+                            else "Фильм"
+                        }
+                    }
+                    Text(
+                        text = subtitleText,
+                        color = if (history.isFullyWatched) CinemaGreen else CinemaTextGray,
+                        fontSize = if (isUltraDense) 6.5.sp else if (isDense) 8.sp else 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+

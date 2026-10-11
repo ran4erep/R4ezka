@@ -104,4 +104,33 @@ object CardGridEngine {
             estimatedCardWidth = calculatedCardWidth
         )
     }
+
+    /**
+     * Высокопроизводительный специализированный расчет сетки карточек для 10-foot TV интерфейса.
+     * Обеспечивает согласованную геометрию, масштаб и количество колонок между Каталогом, Избранным и Историей.
+     */
+    fun calculateForTv(
+        cardGridMode: String,
+        availableWidth: Dp,
+        availableHeight: Dp
+    ): ResolvedCardGrid {
+        val parsed = RezkaService.parseCardGrid(cardGridMode)
+        if (parsed != null) {
+            return calculate(
+                cardGridMode = cardGridMode,
+                availableWidth = availableWidth,
+                availableHeight = availableHeight,
+                isLandscapeOrTv = true
+            )
+        }
+        // В режиме "Авто" для ТВ согласуем эталонную рабочую высоту с каталогом (~420dp),
+        // чтобы карточки в каталоге, избранном и истории имели идентичный гармоничный размер и число колонок
+        val effectiveHeight = if (availableHeight in 440.dp..660.dp) 420.dp else availableHeight
+        return calculate(
+            cardGridMode = cardGridMode,
+            availableWidth = availableWidth,
+            availableHeight = effectiveHeight,
+            isLandscapeOrTv = true
+        )
+    }
 }
