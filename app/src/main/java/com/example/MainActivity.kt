@@ -133,7 +133,10 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     // Безопасный метод извлечения экрана из стека (защита от дребезга кнопок, двойных кликов и гонок состояний)
     val popBackStack = {
         if (navigationStack.isNotEmpty()) {
-            navigationStack.removeAt(navigationStack.lastIndex)
+            val removed = navigationStack.removeAt(navigationStack.lastIndex)
+            if (removed is ScreenState.Detail) {
+                viewModel.clearTvDetailFocusedItem(removed.item.id)
+            }
         }
     }
 
