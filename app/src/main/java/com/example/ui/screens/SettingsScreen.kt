@@ -174,6 +174,8 @@ fun SettingsScreen(
     val subscriptionsFirstItemRequester = remember { FocusRequester() }
     val subscriptionsLastItemRequester = remember { FocusRequester() }
     val offlineFirstItemRequester = remember { FocusRequester() }
+    val offlineFirstCardRequester = remember { FocusRequester() }
+    val supportCardRequester = remember { FocusRequester() }
 
     // Автофокус по умолчанию на первой категории настроек
     LaunchedEffect(Unit) {
@@ -2370,9 +2372,20 @@ fun SettingsScreen(
                                 .fillMaxWidth()
                                 .height(44.dp)
                                 .onKeyEvent { keyEvent ->
-                                    if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP) {
-                                        subscriptionsCategoryRequester.requestFocusSafe()
-                                        true
+                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                        when (keyEvent.nativeKeyEvent.keyCode) {
+                                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                subscriptionsCategoryRequester.requestFocusSafe()
+                                                true
+                                            }
+                                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                if (subscriptions.isEmpty()) {
+                                                    offlineCategoryRequester.requestFocusSafe()
+                                                    true
+                                                } else false
+                                            }
+                                            else -> false
+                                        }
                                     } else false
                                 }
                                 .tvFocusableItem(
@@ -2436,7 +2449,8 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.height(8.dp))
 
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                subscriptions.forEach { sub ->
+                                subscriptions.forEachIndexed { subIndex, sub ->
+                                    val isLastSub = subIndex == subscriptions.lastIndex
                                     Surface(
                                         shape = RoundedCornerShape(10.dp),
                                         color = CinemaCard,
@@ -2518,10 +2532,17 @@ fun SettingsScreen(
                                                     modifier = Modifier
                                                         .size(36.dp)
                                                         .clip(CircleShape)
+                                                        .onKeyEvent { keyEvent ->
+                                                            if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN && isLastSub) {
+                                                                offlineCategoryRequester.requestFocusSafe()
+                                                                true
+                                                            } else false
+                                                        }
                                                         .tvFocusableItem(
                                                             onClick = { viewModel.removeSubscription(sub.id) },
                                                             shape = CircleShape,
-                                                            scaleFactor = 1.0f
+                                                            scaleFactor = 1.0f,
+                                                            focusRequester = if (isLastSub) subscriptionsLastItemRequester else null
                                                         ),
                                                     contentAlignment = Alignment.Center
                                                 ) {
@@ -2589,11 +2610,26 @@ fun SettingsScreen(
                                         } else false
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_UP -> {
-                                        subscriptionsCategoryRequester.requestFocusSafe()
-                                        true
+                                        if (isSubscriptionsExpanded) {
+                                            if (subscriptions.isNotEmpty()) {
+                                                subscriptionsLastItemRequester.requestFocusSafe()
+                                            } else {
+                                                subscriptionsFirstItemRequester.requestFocusSafe()
+                                            }
+                                            true
+                                        } else {
+                                            subscriptionsCategoryRequester.requestFocusSafe()
+                                            true
+                                        }
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                        true
+                                        if (isOfflineExpanded) {
+                                            offlineFirstItemRequester.requestFocusSafe()
+                                            true
+                                        } else {
+                                            supportCardRequester.requestFocusSafe()
+                                            true
+                                        }
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
                                         if (!isOfflineExpanded) {
@@ -2688,12 +2724,79 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(14.dp))
 
                         if (offlineMedia.isEmpty()) {
-                            Text(
-                                text = "Оффлайн библиотека пуста",
-                                color = CinemaTextGray,
-                                fontSize = 13.sp,
-                                modifier = Modifier.padding(vertical = 8.dp)
-                            )
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = CinemaCard,
+                                border = BorderStroke(1.dp, CinemaMuted.copy(alpha = 0.25f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onKeyEvent { keyEvent ->
+                                        if (keyEvent.type == KeyEventType.KeyDown) {
+                                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                    offlineCategoryRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                    supportCardRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                    if (onNavigateLeftToSidebar != null) {
+                                                        onNavigateLeftToSidebar()
+                                                        true
+                                                    } else false
+                                                }
+                                                else -> false
+                                            }
+                                        } else false
+                                    }
+                                    .tvFocusableItem(
+                                        onClick = {
+                                            Toast.makeText(context, "Скачивайте фильмы в карточке тайтла через кнопку Загрузка", Toast.LENGTH_SHORT).show()
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.0f,
+                                        focusRequester = offlineFirstItemRequester
+                                    )
+                                    .testTag("offline_empty_hint")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .background(CinemaMuted.copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.CloudOff,
+                                            contentDescription = null,
+                                            tint = CinemaTextGray,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    Column {
+                                        Text(
+                                            text = "Оффлайн библиотека пуста",
+                                            color = CinemaTextWhite,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "Скачанные фильмы и серии будут доступны здесь без интернета",
+                                            color = CinemaTextGray,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+                            }
                         } else {
                             val computedTotalBytes = remember(offlineMedia) {
                                 offlineMedia.sumOf { entity ->
@@ -2724,12 +2827,37 @@ fun SettingsScreen(
                                     },
                                     shape = RoundedCornerShape(8.dp),
                                     colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFFF5252)),
-                                    modifier = Modifier.tvFocusableItem(
-                                        onClick = {
-                                            HapticEngine.get().perform(HapticType.WARNING)
-                                            showClearOfflineDialog = true
+                                    modifier = Modifier
+                                        .onKeyEvent { keyEvent ->
+                                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                        offlineCategoryRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                        offlineFirstCardRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                        if (onNavigateLeftToSidebar != null) {
+                                                            onNavigateLeftToSidebar()
+                                                            true
+                                                        } else false
+                                                    }
+                                                    else -> false
+                                                }
+                                            } else false
                                         }
-                                    )
+                                        .tvFocusableItem(
+                                            onClick = {
+                                                HapticEngine.get().perform(HapticType.WARNING)
+                                                showClearOfflineDialog = true
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            focusRequester = offlineFirstItemRequester
+                                        )
+                                        .testTag("offline_clear_all_button")
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.DeleteSweep,
@@ -2745,7 +2873,9 @@ fun SettingsScreen(
 
                             // Список скачанных файлов
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                offlineMedia.forEach { entity ->
+                                offlineMedia.forEachIndexed { index, entity ->
+                                    val isFirstItem = index == 0
+                                    val isLastItem = index == offlineMedia.lastIndex
                                     val isSeries = entity.type == "SERIES"
                                     val subText = if (isSeries) {
                                         "Сезон ${entity.season}, Серия ${entity.episode} • ${entity.quality} • ${entity.translatorName}"
@@ -2764,112 +2894,144 @@ fun SettingsScreen(
                                         }
                                     }
 
-                                    Card(
+                                    Surface(
                                         shape = RoundedCornerShape(10.dp),
-                                        colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                                        color = CinemaDark,
                                         border = BorderStroke(1.dp, CinemaMuted.copy(alpha = 0.25f)),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .tvFocusableItem(
-                                                onClick = {
-                                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
-                                                    val openItem = com.example.data.RezkaItem(
-                                                        id = entity.itemId,
-                                                        title = entity.title,
-                                                        subtitle = subText,
-                                                        imageUrl = if (entity.localPosterPath.isNotEmpty()) "file://${entity.localPosterPath}" else entity.imageUrl,
-                                                        rating = "Оффлайн",
-                                                        url = "",
-                                                        type = try {
-                                                            com.example.data.RezkaType.valueOf(entity.type.uppercase())
-                                                        } catch (_: Exception) {
-                                                            if (isSeries) com.example.data.RezkaType.SERIES else com.example.data.RezkaType.MOVIE
-                                                        }
-                                                    )
-                                                    onNavigateToDetail?.invoke(openItem)
-                                                },
-                                                shape = RoundedCornerShape(10.dp)
-                                            )
-                                            .clickable {
-                                                HapticEngine.get().perform(HapticType.SOFT_CLICK)
-                                                val openItem = com.example.data.RezkaItem(
-                                                    id = entity.itemId,
-                                                    title = entity.title,
-                                                    subtitle = subText,
-                                                    imageUrl = if (entity.localPosterPath.isNotEmpty()) "file://${entity.localPosterPath}" else entity.imageUrl,
-                                                    rating = "Оффлайн",
-                                                    url = "",
-                                                    type = try {
-                                                        com.example.data.RezkaType.valueOf(entity.type.uppercase())
-                                                    } catch (_: Exception) {
-                                                        if (isSeries) com.example.data.RezkaType.SERIES else com.example.data.RezkaType.MOVIE
-                                                    }
-                                                )
-                                                onNavigateToDetail?.invoke(openItem)
-                                            }
+                                        modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(10.dp),
+                                                .padding(6.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            // Превью постера
-                                            val posterModel = remember(entity.localPosterPath, entity.imageUrl) {
-                                                if (entity.localPosterPath.isNotEmpty()) {
-                                                    java.io.File(entity.localPosterPath)
-                                                } else {
-                                                    entity.imageUrl
+                                            // Кликабельная зона карточки фильма/серии
+                                            Row(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .onKeyEvent { keyEvent ->
+                                                        if (keyEvent.type == KeyEventType.KeyDown) {
+                                                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                                    if (isFirstItem) {
+                                                                        offlineFirstItemRequester.requestFocusSafe()
+                                                                        true
+                                                                    } else false
+                                                                }
+                                                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                                    if (isLastItem) {
+                                                                        supportCardRequester.requestFocusSafe()
+                                                                        true
+                                                                    } else false
+                                                                }
+                                                                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                                    if (onNavigateLeftToSidebar != null) {
+                                                                        onNavigateLeftToSidebar()
+                                                                        true
+                                                                    } else false
+                                                                }
+                                                                else -> false
+                                                            }
+                                                        } else false
+                                                    }
+                                                    .tvFocusableItem(
+                                                        onClick = {
+                                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                                            val openItem = com.example.data.RezkaItem(
+                                                                id = entity.itemId,
+                                                                title = entity.title,
+                                                                subtitle = subText,
+                                                                imageUrl = if (entity.localPosterPath.isNotEmpty()) "file://${entity.localPosterPath}" else entity.imageUrl,
+                                                                rating = "Оффлайн",
+                                                                url = "",
+                                                                type = try {
+                                                                    com.example.data.RezkaType.valueOf(entity.type.uppercase())
+                                                                } catch (_: Exception) {
+                                                                    if (isSeries) com.example.data.RezkaType.SERIES else com.example.data.RezkaType.MOVIE
+                                                                }
+                                                            )
+                                                            onNavigateToDetail?.invoke(openItem)
+                                                        },
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        focusRequester = if (isFirstItem) offlineFirstCardRequester else null
+                                                    )
+                                                    .padding(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                // Превью постера
+                                                val posterModel = remember(entity.localPosterPath, entity.imageUrl) {
+                                                    if (entity.localPosterPath.isNotEmpty()) {
+                                                        java.io.File(entity.localPosterPath)
+                                                    } else {
+                                                        entity.imageUrl
+                                                    }
+                                                }
+                                                AsyncImage(
+                                                    model = posterModel,
+                                                    contentDescription = entity.title,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier
+                                                        .size(width = 44.dp, height = 62.dp)
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .background(CinemaCard)
+                                                )
+
+                                                Spacer(modifier = Modifier.width(12.dp))
+
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = entity.title,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = CinemaTextWhite,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Text(
+                                                        text = subText,
+                                                        fontSize = 11.sp,
+                                                        color = CinemaPrimary,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Text(
+                                                        text = DownloadHelper.formatFileSize(actualFileSize),
+                                                        fontSize = 11.sp,
+                                                        color = CinemaTextGray
+                                                    )
                                                 }
                                             }
-                                            AsyncImage(
-                                                model = posterModel,
-                                                contentDescription = entity.title,
-                                                contentScale = ContentScale.Crop,
+
+                                            Spacer(modifier = Modifier.width(6.dp))
+
+                                            // Кнопка удаления файла с выделенным ТВ-фокусом
+                                            Box(
                                                 modifier = Modifier
-                                                    .size(width = 44.dp, height = 62.dp)
-                                                    .clip(RoundedCornerShape(6.dp))
-                                                    .background(CinemaCard)
-                                            )
-
-                                            Spacer(modifier = Modifier.width(12.dp))
-
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = entity.title,
-                                                    fontSize = 13.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = CinemaTextWhite,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Spacer(modifier = Modifier.height(2.dp))
-                                                Text(
-                                                    text = subText,
-                                                    fontSize = 11.sp,
-                                                    color = CinemaPrimary,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Spacer(modifier = Modifier.height(2.dp))
-                                                Text(
-                                                    text = DownloadHelper.formatFileSize(actualFileSize),
-                                                    fontSize = 11.sp,
-                                                    color = CinemaTextGray
-                                                )
-                                            }
-
-                                            Spacer(modifier = Modifier.width(8.dp))
-
-                                             // Кнопка удаления файла
-                                            IconButton(
-                                                onClick = {
-                                                    HapticEngine.get().perform(HapticType.WARNING)
-                                                    viewModel.deleteOfflineMedia(entity)
-                                                    Toast.makeText(context, "Файл удален", Toast.LENGTH_SHORT).show()
-                                                },
-                                                modifier = Modifier
-                                                    .size(36.dp)
+                                                    .size(38.dp)
+                                                    .clip(CircleShape)
+                                                    .onKeyEvent { keyEvent ->
+                                                        if (keyEvent.type == KeyEventType.KeyDown) {
+                                                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                                    if (isFirstItem) {
+                                                                        offlineFirstItemRequester.requestFocusSafe()
+                                                                        true
+                                                                    } else false
+                                                                }
+                                                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                                    if (isLastItem) {
+                                                                        supportCardRequester.requestFocusSafe()
+                                                                        true
+                                                                    } else false
+                                                                }
+                                                                else -> false
+                                                            }
+                                                        } else false
+                                                    }
                                                     .tvFocusableItem(
                                                         onClick = {
                                                             HapticEngine.get().perform(HapticType.WARNING)
@@ -2878,7 +3040,8 @@ fun SettingsScreen(
                                                         },
                                                         shape = CircleShape
                                                     )
-                                                    .testTag("offline_delete_${entity.id}")
+                                                    .testTag("offline_delete_${entity.id}"),
+                                                contentAlignment = Alignment.Center
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Default.DeleteOutline,
@@ -2987,6 +3150,28 @@ fun SettingsScreen(
                     border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.25f)),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                        if (isOfflineExpanded) {
+                                            offlineFirstItemRequester.requestFocusSafe()
+                                            true
+                                        } else {
+                                            offlineCategoryRequester.requestFocusSafe()
+                                            true
+                                        }
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        if (onNavigateLeftToSidebar != null) {
+                                            onNavigateLeftToSidebar()
+                                            true
+                                        } else false
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
                         .tvFocusableItem(
                             onClick = {
                                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(supportUrl)).apply {
@@ -2999,7 +3184,8 @@ fun SettingsScreen(
                                 }
                             },
                             shape = RoundedCornerShape(14.dp),
-                            scaleFactor = 1.0f
+                            scaleFactor = 1.0f,
+                            focusRequester = supportCardRequester
                         )
                         .testTag("support_project_card")
                 ) {

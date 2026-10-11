@@ -99,6 +99,9 @@ fun MediaDownloadDialog(
     var translatorDropdownExpanded by remember { mutableStateOf(false) }
     var seasonDropdownExpanded by remember { mutableStateOf(false) }
     var episodeDropdownExpanded by remember { mutableStateOf(false) }
+    var mobileSeasonDropdownExpanded by remember { mutableStateOf(false) }
+    var mobileEpisodeDropdownExpanded by remember { mutableStateOf(false) }
+    var mobileTranslatorDropdownExpanded by remember { mutableStateOf(false) }
 
     val initialDialogRequester = remember { FocusRequester() }
     val dialogScrollState = rememberScrollState()
@@ -713,76 +716,318 @@ fun MediaDownloadDialog(
                             }
                         }
                     } else {
-                        // Вертикальная компоновка (для узких экранов телефонов), но с полным скроллом!
+                        // Вертикальная компоновка для телефонов
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            // Выбор сезона и серии для сериалов
                             if (isSeries && availableSeasons.isNotEmpty()) {
-                                // Сезон
-                                Text(text = "Сезон: ${currentSeason?.name ?: ""}", color = CinemaTextWhite, fontSize = 13.sp)
-                            }
-                            Text(text = "Озвучка: ${selectedTranslator.name}", color = CinemaTextWhite, fontSize = 13.sp)
-                            
-                            // Качество
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                qualityOptions.forEach { q ->
-                                    val isSelected = q == selectedQuality
-                                    Surface(
-                                        color = if (isSelected) CinemaPrimary.copy(alpha = 0.25f) else CinemaCard,
-                                        shape = RoundedCornerShape(8.dp),
-                                        border = BorderStroke(1.dp, if (isSelected) CinemaPrimary else CinemaBorder),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(34.dp)
-                                            .clickable { selectedQuality = q }
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(text = q, color = if (isSelected) CinemaPrimary else CinemaTextWhite, fontSize = 12.sp)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    // Сезон
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        Surface(
+                                            color = CinemaCard,
+                                            shape = RoundedCornerShape(8.dp),
+                                            border = BorderStroke(1.dp, CinemaBorder),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(38.dp)
+                                                .clickable { mobileSeasonDropdownExpanded = true }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .padding(horizontal = 10.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = currentSeason?.name ?: "Сезон $selectedSeasonId",
+                                                    color = CinemaTextWhite,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Icon(
+                                                    imageVector = if (mobileSeasonDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                                    contentDescription = null,
+                                                    tint = CinemaPrimary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                        DropdownMenu(
+                                            expanded = mobileSeasonDropdownExpanded,
+                                            onDismissRequest = { mobileSeasonDropdownExpanded = false },
+                                            modifier = Modifier
+                                                .background(CinemaDark)
+                                                .border(1.dp, CinemaPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                                .widthIn(min = 160.dp, max = 240.dp)
+                                                .heightIn(max = 240.dp)
+                                                .padding(4.dp)
+                                        ) {
+                                            availableSeasons.forEach { s ->
+                                                val isSelected = s.id == selectedSeasonId
+                                                DropdownMenuItem(
+                                                    text = {
+                                                        Text(
+                                                            text = s.name,
+                                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                        )
+                                                    },
+                                                    onClick = {
+                                                        selectedSeasonId = s.id
+                                                        selectedEpisodeId = s.episodes.firstOrNull()?.id ?: "1"
+                                                        mobileSeasonDropdownExpanded = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    // Серия
+                                    if (availableEpisodes.isNotEmpty()) {
+                                        Box(modifier = Modifier.weight(1f)) {
+                                            Surface(
+                                                color = CinemaCard,
+                                                shape = RoundedCornerShape(8.dp),
+                                                border = BorderStroke(1.dp, CinemaBorder),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(38.dp)
+                                                    .clickable { mobileEpisodeDropdownExpanded = true }
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                    .padding(horizontal = 10.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = currentEpisode?.name ?: "Серия $selectedEpisodeId",
+                                                        color = CinemaTextWhite,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Icon(
+                                                        imageVector = if (mobileEpisodeDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                                        contentDescription = null,
+                                                        tint = CinemaPrimary,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                            DropdownMenu(
+                                                expanded = mobileEpisodeDropdownExpanded,
+                                                onDismissRequest = { mobileEpisodeDropdownExpanded = false },
+                                                modifier = Modifier
+                                                    .background(CinemaDark)
+                                                    .border(1.dp, CinemaPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                                    .widthIn(min = 160.dp, max = 240.dp)
+                                                    .heightIn(max = 240.dp)
+                                                    .padding(4.dp)
+                                            ) {
+                                                availableEpisodes.forEach { ep ->
+                                                    val isSelected = ep.id == selectedEpisodeId
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                text = ep.name,
+                                                                color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                                fontSize = 12.sp,
+                                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                            )
+                                                        },
+                                                        onClick = {
+                                                            selectedEpisodeId = ep.id
+                                                            mobileEpisodeDropdownExpanded = false
+                                                        }
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(6.dp))
-
-                            Surface(
-                                color = CinemaCard,
-                                shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, CinemaPrimary),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(42.dp)
-                                    .clickable { performDownload(true) }
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxSize(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(imageVector = Icons.Default.CloudOff, contentDescription = null, tint = CinemaPrimary, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(text = "В оффлайн библиотеку", color = CinemaTextWhite, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            // Выбор озвучки (если озвучек больше 1)
+                            if (detail.translators.size > 1) {
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    Surface(
+                                        color = CinemaCard,
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = BorderStroke(1.dp, CinemaBorder),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(38.dp)
+                                            .clickable { mobileTranslatorDropdownExpanded = true }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(horizontal = 10.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = selectedTranslator.name,
+                                                color = CinemaTextWhite,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Icon(
+                                                imageVector = if (mobileTranslatorDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                                contentDescription = null,
+                                                tint = CinemaPrimary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                    DropdownMenu(
+                                        expanded = mobileTranslatorDropdownExpanded,
+                                        onDismissRequest = { mobileTranslatorDropdownExpanded = false },
+                                        modifier = Modifier
+                                            .background(CinemaDark)
+                                            .border(1.dp, CinemaPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                            .widthIn(min = 200.dp, max = 300.dp)
+                                            .heightIn(max = 240.dp)
+                                            .padding(4.dp)
+                                    ) {
+                                        detail.translators.forEach { trans ->
+                                            val isSelected = trans.id == selectedTranslator.id
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Text(
+                                                        text = trans.name,
+                                                        color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                },
+                                                onClick = {
+                                                    selectedTranslator = trans
+                                                    mobileTranslatorDropdownExpanded = false
+                                                }
+                                            )
+                                        }
+                                    }
                                 }
                             }
 
+                            // Единый цельный блок выбора качества без визуального разделения
                             Surface(
                                 color = CinemaCard,
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 border = BorderStroke(1.dp, CinemaBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    qualityOptions.forEachIndexed { idx, q ->
+                                        val isSelected = q == selectedQuality
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(44.dp)
+                                                .background(if (isSelected) CinemaPrimary.copy(alpha = 0.18f) else Color.Transparent)
+                                                .clickable {
+                                                    HapticEngine.get().perform(HapticType.SELECTION)
+                                                    selectedQuality = q
+                                                }
+                                        ) {
+                                            Text(
+                                                text = q,
+                                                color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                fontSize = 15.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                            )
+                                        }
+
+                                        if (idx < qualityOptions.size - 1) {
+                                            HorizontalDivider(
+                                                color = CinemaBorder.copy(alpha = 0.5f),
+                                                thickness = 0.5.dp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            // Кнопка: В оффлайн библиотеку
+                            Surface(
+                                color = CinemaCard,
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, CinemaPrimary),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(40.dp)
-                                    .clickable { performDownload(false) }
+                                    .height(44.dp)
+                                    .clickable { performDownload(true) }
+                                    .testTag("download_offline_library_button")
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxSize(),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.Center
                                 ) {
-                                    Icon(imageVector = Icons.Default.Download, contentDescription = null, tint = CinemaPrimary, modifier = Modifier.size(16.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.CloudOff,
+                                        contentDescription = null,
+                                        tint = CinemaPrimary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text(text = "Обычное скачивание", color = CinemaTextWhite, fontSize = 12.sp)
+                                    Text(
+                                        text = "В оффлайн библиотеку",
+                                        color = CinemaTextWhite,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            // Кнопка: Обычное скачивание
+                            Surface(
+                                color = CinemaCard,
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, CinemaBorder),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .clickable { performDownload(false) }
+                                    .testTag("download_regular_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = null,
+                                        tint = CinemaPrimary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Обычное скачивание",
+                                        color = CinemaTextWhite,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
                                 }
                             }
                         }
