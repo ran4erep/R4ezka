@@ -25,7 +25,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -57,19 +56,6 @@ import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusableItem
 import kotlinx.coroutines.launch
 
-private val countryItemSearchCache = java.util.concurrent.ConcurrentHashMap<String, String>()
-
-private fun getCountryItemSearchKey(item: CountryItem): String {
-    val key = "${item.query}|${item.name}"
-    return countryItemSearchCache.getOrPut(key) {
-        val cleanName = CountryFlags.stripFlags(item.name).trim().lowercase()
-        val cleanQuery = CountryFlags.cleanCountryName(item.query).lowercase()
-        val rawNameLower = item.name.lowercase()
-        val rawQueryLower = item.query.lowercase()
-        "$cleanName $cleanQuery $rawNameLower $rawQueryLower"
-    }
-}
-
 /**
  * Высокопроизводительная фильтрация списка стран по поисковому запросу.
  * Выполняется в памяти за микросекунды с предвычисленными поисковыми ключами без лишних аллокаций.
@@ -80,10 +66,15 @@ fun filterCountryItems(countries: List<CountryItem>, query: String): List<Countr
 
     val cleanSearch = CountryFlags.cleanCountryName(trimmed).lowercase()
     val rawSearchLower = trimmed.lowercase()
+    val isSame = cleanSearch == rawSearchLower
 
     return countries.filter { item ->
-        val searchKey = getCountryItemSearchKey(item)
-        searchKey.contains(cleanSearch) || searchKey.contains(rawSearchLower)
+        val key = item.searchKey
+        if (isSame) {
+            key.contains(cleanSearch)
+        } else {
+            key.contains(cleanSearch) || key.contains(rawSearchLower)
+        }
     }
 }
 
@@ -131,7 +122,7 @@ class StableDropdownPositionProvider(
  *    - Нажатие Enter или стрелки вниз -> скрытие клавиатуры и переход на первую отфильтрованную страну.
  *    - По стрелке вверх из первой страны -> возврат фокуса на поле поиска.
  */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TvCountryDropdown(
     selectedCountry: CountryItem,
@@ -152,7 +143,6 @@ fun TvCountryDropdown(
     val allCountriesRequester = remember { FocusRequester() }
     val searchFieldRequester = remember { FocusRequester() }
     val searchInputRequester = remember { FocusRequester() }
-    val clearCountrySearchRequester = remember { FocusRequester() }
     val firstCountryRequester = remember { FocusRequester() }
 
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -160,8 +150,7 @@ fun TvCountryDropdown(
     val coroutineScope = rememberCoroutineScope()
     val density = LocalDensity.current
 
-    // Отслеживание системного скрытия клавиатуры:
-    // если клавиатура скрылась системно по Back, сбрасываем isEditingSearch и удерживаем фокус на поле
+    // Отслеживание скрытия экранной клавиатуры: мгновенно возвращаем фокус на карточку поиска без сброса текста
     val isImeVisible = WindowInsets.isImeVisible
     LaunchedEffect(isImeVisible) {
         if (!isImeVisible && isEditingSearch) {
@@ -170,28 +159,15 @@ fun TvCountryDropdown(
         }
     }
 
-    // При открытом выпадающем списке кнопка Назад сначала завершает режим ввода (сохраняя набранный текст),
-    // а при повторном нажатии — закрывает выпадающий список
-    BackHandler(enabled = expanded) {
-        if (isEditingSearch) {
-            isEditingSearch = false
-            keyboardController?.hide()
-            searchFieldRequester.requestFocusSafe()
-        } else {
-            expanded = false
-            searchQuery = ""
-            coroutineScope.launch {
-                triggerRequester.requestFocusSafe()
-            }
-        }
-    }
-
     val allCountriesItem = remember(countriesList) {
         countriesList.firstOrNull { it.query.isEmpty() } ?: CountryItem("Все страны", "")
     }
 
-    val filteredCountries = remember(countriesList, searchQuery) {
-        val rawCountries = countriesList.filter { it.query.isNotEmpty() }
+    val rawCountries = remember(countriesList) {
+        countriesList.filter { it.query.isNotEmpty() }
+    }
+
+    val filteredCountries = remember(rawCountries, searchQuery) {
         if (searchQuery.isBlank()) {
             rawCountries
         } else {
@@ -289,7 +265,9 @@ fun TvCountryDropdown(
                     if (isEditingSearch) {
                         isEditingSearch = false
                         keyboardController?.hide()
-                        searchFieldRequester.requestFocusSafe()
+                        coroutineScope.launch {
+                            searchFieldRequester.requestFocusSafe()
+                        }
                     } else {
                         expanded = false
                         searchQuery = ""
@@ -406,12 +384,6 @@ fun TvCountryDropdown(
                                             AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
                                                 if (!isEditingSearch && filteredCountries.isNotEmpty()) {
                                                     firstCountryRequester.requestFocusSafe()
-                                                    true
-                                                } else false
-                                            }
-                                            AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                                if (!isEditingSearch && searchQuery.isNotEmpty()) {
-                                                    clearCountrySearchRequester.requestFocusSafe()
                                                     true
                                                 } else false
                                             }
@@ -533,62 +505,19 @@ fun TvCountryDropdown(
                                 }
 
                                 if (searchQuery.isNotEmpty()) {
-                                    Surface(
-                                        color = Color.Transparent,
-                                        shape = androidx.compose.foundation.shape.CircleShape,
-                                        modifier = Modifier
-                                            .size(26.dp)
-                                            .focusProperties {
-                                                left = searchFieldRequester
-                                                if (filteredCountries.isNotEmpty()) {
-                                                    down = firstCountryRequester
-                                                }
-                                                up = allCountriesRequester
-                                            }
-                                            .onKeyEvent { keyEvent ->
-                                                if (keyEvent.type == KeyEventType.KeyDown) {
-                                                    when (keyEvent.nativeKeyEvent.keyCode) {
-                                                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                                                            searchFieldRequester.requestFocusSafe()
-                                                            true
-                                                        }
-                                                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                                            if (filteredCountries.isNotEmpty()) {
-                                                                firstCountryRequester.requestFocusSafe()
-                                                                true
-                                                            } else false
-                                                        }
-                                                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                                                            allCountriesRequester.requestFocusSafe()
-                                                            true
-                                                        }
-                                                        else -> false
-                                                    }
-                                                } else false
-                                            }
-                                            .tvFocusableItem(
-                                                onClick = {
-                                                    searchQuery = ""
-                                                    isEditingSearch = false
-                                                    searchFieldRequester.requestFocusSafe()
-                                                },
-                                                scaleFactor = 1.15f,
-                                                shape = androidx.compose.foundation.shape.CircleShape,
-                                                focusRequester = clearCountrySearchRequester
-                                            )
-                                            .testTag("tv_country_clear_button")
+                                    IconButton(
+                                        onClick = {
+                                            searchQuery = ""
+                                            isEditingSearch = false
+                                        },
+                                        modifier = Modifier.size(24.dp)
                                     ) {
-                                        Box(
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = "Очистить поиск",
-                                                tint = CinemaTextGray,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                        }
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Очистить",
+                                            tint = CinemaTextGray,
+                                            modifier = Modifier.size(14.dp)
+                                        )
                                     }
                                 }
                             }
@@ -720,8 +649,11 @@ fun RezkaCountryDropdown(
         options.firstOrNull { it.query.isEmpty() } ?: CountryItem("Все страны", "")
     }
 
-    val filteredCountries = remember(options, searchQuery) {
-        val rawCountries = options.filter { it.query.isNotEmpty() }
+    val rawCountries = remember(options) {
+        options.filter { it.query.isNotEmpty() }
+    }
+
+    val filteredCountries = remember(rawCountries, searchQuery) {
         if (searchQuery.isBlank()) {
             rawCountries
         } else {

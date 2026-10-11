@@ -62,7 +62,6 @@ fun HistoryScreen(
     val historyList by viewModel.aggregatedWatchHistory.collectAsStateWithLifecycle()
     val isCheckingUpdates by viewModel.isCheckingSeriesUpdates.collectAsStateWithLifecycle()
     val loadingMovieId by viewModel.loadingMovieId.collectAsStateWithLifecycle()
-    val listState = rememberSavedLazyListState("history", viewModel)
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.checkHistorySeriesUpdates(force = true)
@@ -77,15 +76,16 @@ fun HistoryScreen(
         }
     }
 
-    var hasRestoredFocus by remember { mutableStateOf(false) }
+    var hasSetFocusOnTop by remember { mutableStateOf(false) }
     LaunchedEffect(isTopScreen, historyList.size) {
         if (!isTopScreen) {
-            hasRestoredFocus = false
+            hasSetFocusOnTop = false
             return@LaunchedEffect
         }
-        if (hasRestoredFocus) return@LaunchedEffect
+        if (hasSetFocusOnTop) return@LaunchedEffect
+
         if (historyList.isNotEmpty()) {
-            hasRestoredFocus = true
+            hasSetFocusOnTop = true
             val savedItemId = viewModel.getTvHistoryFocusedItemId()
             val savedIndex = viewModel.getTvHistoryFocusedIndex()
             val targetIndex = when {
@@ -96,22 +96,20 @@ fun HistoryScreen(
                 savedIndex != null -> savedIndex.coerceIn(0, historyList.lastIndex)
                 else -> 0
             }
-            try {
-                listState.scrollToItem(targetIndex)
-            } catch (_: Throwable) {}
-
-            var focused = false
-            for (attempt in 0..19) {
-                kotlinx.coroutines.delay(if (attempt == 0) 40L else 45L)
+            for (attempt in 0..14) {
+                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
                 try {
                     getFocusRequesterForIndex(targetIndex).requestFocus()
-                    focused = true
                     break
                 } catch (_: Throwable) {}
             }
-            if (!focused) {
+        } else {
+            hasSetFocusOnTop = true
+            for (attempt in 0..14) {
+                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
                 try {
-                    getFocusRequesterForIndex(0).requestFocusSafe()
+                    (firstItemFocusRequester ?: FocusRequester()).requestFocus()
+                    break
                 } catch (_: Throwable) {}
             }
         }
@@ -240,6 +238,7 @@ fun HistoryScreen(
                     )
                 }
             } else {
+                val listState = rememberSavedLazyListState("history", viewModel)
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
@@ -248,6 +247,14 @@ fun HistoryScreen(
                         .fillMaxSize()
                         .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                         .dpadScrollable(listState)
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+                                if (onNavigateLeftToSidebar != null) {
+                                    onNavigateLeftToSidebar()
+                                    true
+                                } else false
+                            } else false
+                        }
                         .testTag("history_list")
                 ) {
                     itemsIndexed(

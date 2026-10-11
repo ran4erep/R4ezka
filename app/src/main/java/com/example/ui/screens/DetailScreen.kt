@@ -941,8 +941,8 @@ fun DetailScreen(
                         onAppendNextCommentsPage = { viewModel.appendNextCommentsPage() },
                         onNavigateToMovie = { targetItem -> onNavigateToDetail(targetItem) },
                         onNavigateToThematic = { name, url -> onNavigateToThematic(name, url) },
-                        scrollState = lazyListState,
-                        isPlayerOpen = isPlayerOpen
+                        isPlayerOpen = isPlayerOpen,
+                        scrollState = lazyListState
                     )
                 } else {
                     // ---- SCROLLABLE MOBILE DETAIL PAGE (with TV/D-Pad support) ----

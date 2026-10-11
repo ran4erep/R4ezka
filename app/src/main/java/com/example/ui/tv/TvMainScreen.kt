@@ -182,6 +182,24 @@ fun TvMainScreen(
             }
         }
 
+        LaunchedEffect(isTopScreen, selectedDestination) {
+            if (isTopScreen && !isSidebarFocused) {
+                delay(100L)
+                when (selectedDestination) {
+                    TvNavDestination.CATALOG -> {
+                        if (catalogFocusRestorer != null) {
+                            catalogFocusRestorer?.invoke()
+                        } else {
+                            rightContentFocusRequester.requestFocusSafe()
+                        }
+                    }
+                    TvNavDestination.FAVORITES -> favoritesFirstItemRequester.requestFocusSafe()
+                    TvNavDestination.HISTORY -> historyFirstItemRequester.requestFocusSafe()
+                    TvNavDestination.SETTINGS -> settingsFirstCategoryRequester.requestFocusSafe()
+                }
+            }
+        }
+
         Column(
             modifier = Modifier
                 .width(sidebarWidth)
@@ -741,7 +759,7 @@ private fun TvCatalogContent(
                 }
             }
 
-            BackHandler(enabled = isTopScreen && searchInput.isNotEmpty()) {
+            BackHandler(enabled = isTopScreen && isSearchInputFocused && searchInput.isNotEmpty()) {
                 searchInput = ""
                 viewModel.onSearchQueryChanged("")
             }
@@ -1909,7 +1927,7 @@ fun <T> TvRezkaDropdown(
  * Компактная поисковая строка для ТВ-интерфейса.
  * Не занимает лишнего места по высоте и ширине, адаптирована под ТВ-пульт.
  */
-@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun TvCompactSearchBar(
     query: String,
@@ -1929,19 +1947,12 @@ fun TvCompactSearchBar(
     val clearButtonFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    // Отслеживание системного скрытия клавиатуры:
-    // если клавиатура скрылась системно (по кнопке Back), мгновенно сбрасываем isEditing и удерживаем фокус на поиске!
+    // Отслеживание закрытия системной экранной клавиатуры: мгновенно возвращаем поле в режим навигации с пульта
     val isImeVisible = WindowInsets.isImeVisible
     LaunchedEffect(isImeVisible) {
         if (!isImeVisible && isEditing) {
             isEditing = false
-            for (attempt in 0..4) {
-                delay(if (attempt == 0) 20L else 30L)
-                try {
-                    searchBarFocusRequester?.requestFocus()
-                    break
-                } catch (_: Throwable) {}
-            }
+            searchBarFocusRequester?.requestFocusSafe()
         }
     }
 
@@ -2105,24 +2116,15 @@ fun TvCompactSearchBar(
                             .fillMaxWidth()
                             .focusRequester(textFieldFocusRequester)
                             .onKeyEvent { keyEvent ->
-                                if (keyEvent.type == KeyEventType.KeyDown) {
-                                    when (keyEvent.nativeKeyEvent.keyCode) {
-                                        AndroidKeyEvent.KEYCODE_BACK -> {
-                                            isEditing = false
-                                            keyboardController?.hide()
-                                            searchBarFocusRequester?.requestFocusSafe()
-                                            true
-                                        }
-                                        AndroidKeyEvent.KEYCODE_ENTER,
-                                        AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
-                                        AndroidKeyEvent.KEYCODE_DPAD_CENTER -> {
-                                            onSearchCommit?.invoke(query)
-                                            isEditing = false
-                                            keyboardController?.hide()
-                                            true
-                                        }
-                                        else -> false
-                                    }
+                                if (keyEvent.type == KeyEventType.KeyDown &&
+                                    (keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
+                                     keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
+                                     keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER)
+                                ) {
+                                    onSearchCommit?.invoke(query)
+                                    isEditing = false
+                                    keyboardController?.hide()
+                                    true
                                 } else false
                             },
                         decorationBox = { innerTextField ->
@@ -2140,17 +2142,14 @@ fun TvCompactSearchBar(
             }
 
             if (query.isNotEmpty()) {
-                Surface(
-                    color = Color.Transparent,
-                    shape = CircleShape,
+                var isClearFocused by remember { mutableStateOf(false) }
+                Box(
                     modifier = Modifier
-                        .size(30.dp)
-                        .focusProperties {
-                            left = searchBarFocusRequester ?: FocusRequester.Default
-                            if (voiceButtonFocusRequester != null && onVoiceSearchClick != null) {
-                                right = voiceButtonFocusRequester
-                            }
-                        }
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .then(
+                            if (isClearFocused) Modifier.background(CinemaPrimary.copy(alpha = 0.25f), CircleShape) else Modifier
+                        )
                         .onKeyEvent { keyEvent ->
                             if (keyEvent.type == KeyEventType.KeyDown) {
                                 when (keyEvent.nativeKeyEvent.keyCode) {
@@ -2168,11 +2167,10 @@ fun TvCompactSearchBar(
                                         } else false
                                     }
                                     AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                        if (onDown != null) {
-                                            onDown()
-                                            true
-                                        } else false
+                                        onDown?.invoke()
+                                        true
                                     }
+                                    AndroidKeyEvent.KEYCODE_DPAD_UP -> true
                                     else -> false
                                 }
                             } else false
@@ -2184,23 +2182,22 @@ fun TvCompactSearchBar(
                                 keyboardController?.hide()
                                 searchBarFocusRequester?.requestFocusSafe()
                             },
+                            onFocusChanged = { isClearFocused = it },
                             scaleFactor = 1.15f,
+                            focusedBorderColor = CinemaPrimary,
+                            focusedBorderWidth = 1.5.dp,
                             shape = CircleShape,
                             focusRequester = clearButtonFocusRequester
                         )
-                        .testTag("tv_search_clear_button")
+                        .testTag("tv_search_clear_button"),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Очистить поиск",
-                            tint = CinemaTextGray,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Очистить поиск",
+                        tint = if (isClearFocused) CinemaPrimary else CinemaTextGray,
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
             }
 
@@ -2221,10 +2218,11 @@ fun TvCompactSearchBar(
                                     AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
                                         if (query.isNotEmpty()) {
                                             clearButtonFocusRequester.requestFocusSafe()
+                                            true
                                         } else {
                                             searchBarFocusRequester?.requestFocusSafe()
+                                            true
                                         }
-                                        true
                                     }
                                     AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
                                         onDown?.invoke()

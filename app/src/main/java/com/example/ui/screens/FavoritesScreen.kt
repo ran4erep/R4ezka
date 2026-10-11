@@ -180,15 +180,16 @@ fun FavoritesScreen(
                     }
 
                     // Автофокус на последний выбранный или первый элемент в избранном
-                    var hasRestoredFocus by remember { mutableStateOf(false) }
+                    var hasSetFocusOnTop by remember { mutableStateOf(false) }
                     LaunchedEffect(isTopScreen, favorites.size) {
                         if (!isTopScreen) {
-                            hasRestoredFocus = false
+                            hasSetFocusOnTop = false
                             return@LaunchedEffect
                         }
-                        if (hasRestoredFocus) return@LaunchedEffect
+                        if (hasSetFocusOnTop) return@LaunchedEffect
+
                         if (favorites.isNotEmpty()) {
-                            hasRestoredFocus = true
+                            hasSetFocusOnTop = true
                             val savedItemId = viewModel.getTvFavoritesFocusedItemId()
                             val savedIndex = viewModel.getTvFavoritesFocusedIndex()
                             val targetIndex = when {
@@ -202,19 +203,20 @@ fun FavoritesScreen(
                             try {
                                 gridState.scrollToItem(targetIndex)
                             } catch (_: Throwable) {}
-
-                            var focused = false
-                            for (attempt in 0..19) {
-                                kotlinx.coroutines.delay(if (attempt == 0) 40L else 45L)
+                            for (attempt in 0..14) {
+                                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
                                 try {
                                     getFocusRequesterForIndex(targetIndex).requestFocus()
-                                    focused = true
                                     break
                                 } catch (_: Throwable) {}
                             }
-                            if (!focused) {
+                        } else {
+                            hasSetFocusOnTop = true
+                            for (attempt in 0..14) {
+                                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
                                 try {
-                                    getFocusRequesterForIndex(0).requestFocusSafe()
+                                    (firstItemFocusRequester ?: FocusRequester()).requestFocus()
+                                    break
                                 } catch (_: Throwable) {}
                             }
                         }
@@ -247,6 +249,14 @@ fun FavoritesScreen(
                             .fillMaxSize()
                             .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
                             .dpadScrollable(gridState)
+                            .onKeyEvent { keyEvent ->
+                                if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+                                    if (onNavigateLeftToSidebar != null) {
+                                        onNavigateLeftToSidebar()
+                                        true
+                                    } else false
+                                } else false
+                            }
                             .testTag("favorites_grid")
                     ) {
                         itemsIndexed(
