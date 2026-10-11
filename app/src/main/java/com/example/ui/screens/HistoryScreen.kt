@@ -56,11 +56,13 @@ fun HistoryScreen(
     onNavigateToDetail: (RezkaItem) -> Unit,
     onNavigateLeftToSidebar: (() -> Unit)? = null,
     firstItemFocusRequester: FocusRequester? = null,
+    isTopScreen: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val historyList by viewModel.aggregatedWatchHistory.collectAsStateWithLifecycle()
     val isCheckingUpdates by viewModel.isCheckingSeriesUpdates.collectAsStateWithLifecycle()
     val loadingMovieId by viewModel.loadingMovieId.collectAsStateWithLifecycle()
+    val listState = rememberSavedLazyListState("history", viewModel)
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.checkHistorySeriesUpdates(force = true)
@@ -75,10 +77,15 @@ fun HistoryScreen(
         }
     }
 
-    var hasSetInitialFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(historyList.size) {
-        if (!hasSetInitialFocus && historyList.isNotEmpty()) {
-            hasSetInitialFocus = true
+    var hasRestoredFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(isTopScreen, historyList.size) {
+        if (!isTopScreen) {
+            hasRestoredFocus = false
+            return@LaunchedEffect
+        }
+        if (hasRestoredFocus) return@LaunchedEffect
+        if (historyList.isNotEmpty()) {
+            hasRestoredFocus = true
             val savedItemId = viewModel.getTvHistoryFocusedItemId()
             val savedIndex = viewModel.getTvHistoryFocusedIndex()
             val targetIndex = when {
@@ -89,11 +96,22 @@ fun HistoryScreen(
                 savedIndex != null -> savedIndex.coerceIn(0, historyList.lastIndex)
                 else -> 0
             }
-            for (attempt in 0..14) {
-                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
+            try {
+                listState.scrollToItem(targetIndex)
+            } catch (_: Throwable) {}
+
+            var focused = false
+            for (attempt in 0..19) {
+                kotlinx.coroutines.delay(if (attempt == 0) 40L else 45L)
                 try {
                     getFocusRequesterForIndex(targetIndex).requestFocus()
+                    focused = true
                     break
+                } catch (_: Throwable) {}
+            }
+            if (!focused) {
+                try {
+                    getFocusRequesterForIndex(0).requestFocusSafe()
                 } catch (_: Throwable) {}
             }
         }
@@ -222,7 +240,6 @@ fun HistoryScreen(
                     )
                 }
             } else {
-                val listState = rememberSavedLazyListState("history", viewModel)
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),

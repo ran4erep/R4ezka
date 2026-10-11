@@ -94,9 +94,11 @@ fun TvDetailContent(
     onNavigateToMovie: (RezkaItem) -> Unit = {},
     onNavigateToThematic: (String, String) -> Unit = { _, _ -> },
     scrollState: androidx.compose.foundation.lazy.LazyListState? = null,
+    isPlayerOpen: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val backButtonFocusRequester = remember { FocusRequester() }
     val trailerButtonFocusRequester = remember { FocusRequester() }
     val favoriteButtonFocusRequester = remember { FocusRequester() }
@@ -149,6 +151,27 @@ fun TvDetailContent(
                 break
             } catch (_: Throwable) {}
         }
+    }
+
+    // При выходе из плеера гарантированно восстанавливаем фокус на кнопке "Смотреть" или текущем эпизоде
+    var wasPlayerOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(isPlayerOpen) {
+        if (wasPlayerOpen && !isPlayerOpen) {
+            for (attempt in 0..14) {
+                kotlinx.coroutines.delay(if (attempt == 0) 30L else 40L)
+                try {
+                    mainActionFocusRequester.requestFocus()
+                    break
+                } catch (_: Throwable) {
+                    if (attempt == 14) {
+                        try {
+                            translatorDropdownFocusRequester.requestFocusSafe()
+                        } catch (_: Throwable) {}
+                    }
+                }
+            }
+        }
+        wasPlayerOpen = isPlayerOpen
     }
 
     BoxWithConstraints(
@@ -286,7 +309,10 @@ fun TvDetailContent(
                             } else false
                         }
                         .tvFocusableItem(
-                            onClick = onBack,
+                            onClick = {
+                                focusManager.clearFocus(force = true)
+                                onBack()
+                            },
                             scaleFactor = 1.05f,
                             shape = RoundedCornerShape(10.dp),
                             focusRequester = backButtonFocusRequester
