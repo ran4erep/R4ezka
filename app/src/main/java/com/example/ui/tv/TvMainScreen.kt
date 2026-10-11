@@ -782,11 +782,6 @@ private fun TvCatalogContent(
                 }
             }
 
-            BackHandler(enabled = isTopScreen && isSearchInputFocused && searchInput.isNotEmpty()) {
-                searchInput = ""
-                viewModel.onSearchQueryChanged("")
-            }
-
             val searchHistory by viewModel.searchHistory.collectAsState()
             val searchCategoryFilter by viewModel.searchCategoryFilter.collectAsState()
             val searchSectionFilter by viewModel.searchSectionFilter.collectAsState()
@@ -1969,13 +1964,25 @@ fun TvCompactSearchBar(
     val textFieldFocusRequester = remember { FocusRequester() }
     val clearButtonFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
-    // Отслеживание закрытия системной экранной клавиатуры: мгновенно возвращаем поле в режим навигации с пульта
-    val isImeVisible = WindowInsets.isImeVisible
-    LaunchedEffect(isImeVisible) {
-        if (!isImeVisible && isEditing) {
-            isEditing = false
-            searchBarFocusRequester?.requestFocusSafe()
+    val isKeyboardVisible by rememberTvKeyboardVisibility()
+    var wasKeyboardOpened by remember { mutableStateOf(false) }
+
+    // Отслеживание закрытия системной экранной клавиатуры: мгновенно выходим из режима ввода, убираем курсор и переводим фокус на карточку поиска
+    LaunchedEffect(isKeyboardVisible, isEditing) {
+        if (isEditing) {
+            if (isKeyboardVisible) {
+                wasKeyboardOpened = true
+            } else if (wasKeyboardOpened) {
+                wasKeyboardOpened = false
+                isEditing = false
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                searchBarFocusRequester?.requestFocusSafe()
+            }
+        } else {
+            wasKeyboardOpened = false
         }
     }
 
@@ -1999,10 +2006,11 @@ fun TvCompactSearchBar(
     }
 
     // При открытой экранной клавиатуре по кнопке "Назад" на пульте скрываем клавиатуру
-    // и сохраняем фокус на строке поиска без сброса набранного текста
+    // и возвращаем фокус на карточку поиска в нередактируемом режиме
     BackHandler(enabled = isEditing) {
         isEditing = false
         keyboardController?.hide()
+        focusManager.clearFocus()
         searchBarFocusRequester?.requestFocusSafe()
     }
 
@@ -2116,48 +2124,94 @@ fun TvCompactSearchBar(
                         overflow = TextOverflow.Ellipsis
                     )
                 } else {
-                    // Режим редактирования: активируется ТОЛЬКО по явному нажатию кнопки ОК на пульте.
-                    // Нативный TvSearchInputField перехватывает KEYCODE_BACK на уровне Pre-IME до поглощения клавиатурой,
-                    // обеспечивая выход из режима ввода ровно за одно нажатие кнопки "Назад" на пульте.
-                    TvSearchInputField(
+                    // Режим редактирования: активируется ТОЛЬКО по явному нажатию кнопки ОК на пульте
+                    BasicTextField(
                         value = query,
                         onValueChange = onQueryChanged,
-                        placeholder = "Введите название...",
-                        fontSizeSp = 13f,
-                        modifier = Modifier.fillMaxWidth(),
-                        onExitEditing = {
-                            isEditing = false
-                            keyboardController?.hide()
-                            searchBarFocusRequester?.requestFocusSafe()
-                        },
-                        onCommit = {
-                            onSearchCommit?.invoke(query)
-                            isEditing = false
-                            keyboardController?.hide()
-                            searchBarFocusRequester?.requestFocusSafe()
-                        },
-                        onDown = {
-                            isEditing = false
-                            keyboardController?.hide()
-                            onDown?.invoke()
-                        },
-                        onLeft = {
-                            if (onLeft != null) {
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = CinemaTextWhite,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        cursorBrush = SolidColor(CinemaPrimary),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                onSearchCommit?.invoke(query)
                                 isEditing = false
                                 keyboardController?.hide()
-                                onLeft()
+                                focusManager.clearFocus()
+                                searchBarFocusRequester?.requestFocusSafe()
                             }
-                        },
-                        onRight = {
-                            if (query.isNotEmpty()) {
-                                isEditing = false
-                                keyboardController?.hide()
-                                clearButtonFocusRequester.requestFocusSafe()
-                            } else if (voiceButtonFocusRequester != null && onVoiceSearchClick != null) {
-                                isEditing = false
-                                keyboardController?.hide()
-                                voiceButtonFocusRequester.requestFocusSafe()
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(textFieldFocusRequester)
+                            .onKeyEvent { keyEvent ->
+                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                    when (keyEvent.nativeKeyEvent.keyCode) {
+                                        AndroidKeyEvent.KEYCODE_BACK -> {
+                                            isEditing = false
+                                            keyboardController?.hide()
+                                            focusManager.clearFocus()
+                                            searchBarFocusRequester?.requestFocusSafe()
+                                            true
+                                        }
+                                        AndroidKeyEvent.KEYCODE_ENTER,
+                                        AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
+                                        AndroidKeyEvent.KEYCODE_DPAD_CENTER -> {
+                                            onSearchCommit?.invoke(query)
+                                            isEditing = false
+                                            keyboardController?.hide()
+                                            focusManager.clearFocus()
+                                            searchBarFocusRequester?.requestFocusSafe()
+                                            true
+                                        }
+                                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                            if (query.isNotEmpty()) {
+                                                isEditing = false
+                                                keyboardController?.hide()
+                                                focusManager.clearFocus()
+                                                clearButtonFocusRequester.requestFocusSafe()
+                                                true
+                                            } else if (voiceButtonFocusRequester != null && onVoiceSearchClick != null) {
+                                                isEditing = false
+                                                keyboardController?.hide()
+                                                focusManager.clearFocus()
+                                                voiceButtonFocusRequester.requestFocusSafe()
+                                                true
+                                            } else false
+                                        }
+                                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                            isEditing = false
+                                            keyboardController?.hide()
+                                            focusManager.clearFocus()
+                                            onDown?.invoke()
+                                            true
+                                        }
+                                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                            if (onLeft != null) {
+                                                isEditing = false
+                                                keyboardController?.hide()
+                                                focusManager.clearFocus()
+                                                onLeft()
+                                                true
+                                            } else false
+                                        }
+                                        else -> false
+                                    }
+                                } else false
+                            },
+                        decorationBox = { innerTextField ->
+                            if (query.isEmpty()) {
+                                Text(
+                                    text = "Введите название...",
+                                    color = CinemaMuted,
+                                    fontSize = 13.sp
+                                )
                             }
+                            innerTextField()
                         }
                     )
                 }

@@ -1,8 +1,12 @@
 package com.example.ui.tv
 
 import android.content.Context
+import android.graphics.Rect
+import android.view.ViewTreeObserver
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.BackHandler
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -540,6 +544,59 @@ suspend fun FocusRequester.tvRequestFocusWithRetry(
 }
 
 /**
+ * Высокопроизводительный детектор видимости программной клавиатуры для Android TV.
+ * Комбинирует:
+ * 1. WindowInsets.isImeVisible (Compose Insets API)
+ * 2. ViewCompat.getRootWindowInsets (AndroidX WindowInsetsCompat)
+ * 3. OnGlobalLayoutListener на DecorView (отслеживание изменения высоты видимого фрейма дисплея)
+ *
+ * Гарантирует надежное определение скрытия/показа клавиатуры на всех ТВ-устройствах без нагрузки на CPU.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun rememberTvKeyboardVisibility(): State<Boolean> {
+    val isImeVisibleCompose = WindowInsets.isImeVisible
+    val view = LocalView.current
+    val keyboardVisibleState = remember { mutableStateOf(isImeVisibleCompose) }
+
+    DisposableEffect(view) {
+        val rect = Rect()
+        val layoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+            try {
+                view.getWindowVisibleDisplayFrame(rect)
+                val screenHeight = view.rootView.height
+                if (screenHeight > 0) {
+                    val keypadHeight = screenHeight - rect.bottom
+                    // На ТВ клавиатура обычно занимает от 15% до 60% высоты экрана
+                    val isShowingByLayout = keypadHeight > screenHeight * 0.15f
+                    val insets = ViewCompat.getRootWindowInsets(view)
+                    val isShowingByInsets = insets?.isVisible(WindowInsetsCompat.Type.ime()) == true
+                    val currentVisible = isShowingByLayout || isShowingByInsets
+                    if (keyboardVisibleState.value != currentVisible) {
+                        keyboardVisibleState.value = currentVisible
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
+
+        view.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
+        onDispose {
+            try {
+                view.viewTreeObserver.removeOnGlobalLayoutListener(layoutListener)
+            } catch (_: Throwable) {}
+        }
+    }
+
+    LaunchedEffect(isImeVisibleCompose) {
+        if (isImeVisibleCompose && !keyboardVisibleState.value) {
+            keyboardVisibleState.value = true
+        }
+    }
+
+    return keyboardVisibleState
+}
+
+/**
  * Высокопроизводительное поле текстового ввода для Android TV и пультов D-Pad.
  *
  * Логика работы (полностью идентично поиску в каталоге):
@@ -612,10 +669,31 @@ fun TvRemoteInputField(
         }
     }
 
+    val isKeyboardVisible by rememberTvKeyboardVisibility()
+    var wasKeyboardOpened by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isKeyboardVisible, isEditing) {
+        if (isEditing) {
+            if (isKeyboardVisible) {
+                wasKeyboardOpened = true
+            } else if (wasKeyboardOpened) {
+                wasKeyboardOpened = false
+                isEditing = false
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                localRequester.requestFocusSafe()
+            }
+        } else {
+            wasKeyboardOpened = false
+        }
+    }
+
     // При открытой клавиатуре кнопка "Назад" пульта закрывает клавиатуру и возвращает фокус на поле
     BackHandler(enabled = isEditing) {
         isEditing = false
         keyboardController?.hide()
+        focusManager.clearFocus()
+        localRequester.requestFocusSafe()
     }
 
     Box(
@@ -685,35 +763,86 @@ fun TvRemoteInputField(
                     )
                 } else {
                     // Режим редактирования: активируется ТОЛЬКО по нажатию ОК на пульте
-                    TvSearchInputField(
+                    BasicTextField(
                         value = value,
                         onValueChange = onValueChange,
-                        placeholder = placeholder,
-                        fontSizeSp = 14f,
-                        modifier = Modifier.fillMaxWidth(),
-                        onExitEditing = {
-                            wasEditing = false
-                            isEditing = false
-                            keyboardController?.hide()
-                            localRequester.requestFocusSafe()
-                        },
-                        onCommit = {
-                            wasEditing = false
-                            isEditing = false
-                            keyboardController?.hide()
-                            onCommit?.invoke()
-                            localRequester.requestFocusSafe()
-                        },
-                        onDown = {
-                            wasEditing = false
-                            isEditing = false
-                            keyboardController?.hide()
-                        },
-                        onUp = {
-                            wasEditing = false
-                            isEditing = false
-                            keyboardController?.hide()
-                        }
+                        singleLine = singleLine,
+                        visualTransformation = visualTransformation,
+                        textStyle = TextStyle(
+                            color = CinemaTextWhite,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        cursorBrush = SolidColor(CinemaPrimary),
+                        keyboardOptions = keyboardOptions,
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                onCommit?.invoke()
+                                isEditing = false
+                                keyboardController?.hide()
+                                localRequester.requestFocusSafe()
+                            },
+                            onSearch = {
+                                onCommit?.invoke()
+                                isEditing = false
+                                keyboardController?.hide()
+                                localRequester.requestFocusSafe()
+                            },
+                            onGo = {
+                                onCommit?.invoke()
+                                isEditing = false
+                                keyboardController?.hide()
+                                localRequester.requestFocusSafe()
+                            }
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(internalFieldRequester)
+                            .onFocusChanged { focusState ->
+                                if (focusState.isFocused) {
+                                    hasBeenFocused = true
+                                } else if (hasBeenFocused && isEditing) {
+                                    isEditing = false
+                                    keyboardController?.hide()
+                                }
+                            }
+                            .onKeyEvent { keyEvent ->
+                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                    val elapsed = System.currentTimeMillis() - lastActivationTime
+                                    when (keyEvent.nativeKeyEvent.keyCode) {
+                                        android.view.KeyEvent.KEYCODE_ENTER,
+                                        android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
+                                        android.view.KeyEvent.KEYCODE_DPAD_CENTER -> {
+                                            if (elapsed > 250L) {
+                                                onCommit?.invoke()
+                                                isEditing = false
+                                                keyboardController?.hide()
+                                                localRequester.requestFocusSafe()
+                                                true
+                                            } else {
+                                                true
+                                            }
+                                        }
+                                        android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                            if (isEditing) {
+                                                wasEditing = false
+                                                isEditing = false
+                                                keyboardController?.hide()
+                                            }
+                                            false
+                                        }
+                                        android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                            if (isEditing) {
+                                                wasEditing = false
+                                                isEditing = false
+                                                keyboardController?.hide()
+                                            }
+                                            false
+                                        }
+                                        else -> false
+                                    }
+                                } else false
+                            }
                     )
                 }
             }
