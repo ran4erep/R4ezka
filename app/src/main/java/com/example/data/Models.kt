@@ -415,7 +415,8 @@ data class AggregatedHistoryItem(
 sealed interface ScreenState : Serializable {
     data class Detail(
         val item: RezkaItem,
-        val initialTranslatorId: String? = null
+        val initialTranslatorId: String? = null,
+        val fromHistory: Boolean = false
     ) : ScreenState
     data class ThematicList(val title: String, val url: String) : ScreenState
     data class PersonProfile(val name: String, val url: String) : ScreenState

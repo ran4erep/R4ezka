@@ -94,6 +94,7 @@ enum class TvNavDestination(val title: String, val icon: ImageVector) {
 fun TvMainScreen(
     viewModel: RezkaViewModel,
     onNavigateToDetail: (RezkaItem) -> Unit,
+    onNavigateToDetailFromHistory: ((RezkaItem) -> Unit)? = null,
     onNavigateToThematic: (String, String) -> Unit = { _, _ -> },
     isTopScreen: Boolean = true,
     modifier: Modifier = Modifier
@@ -346,7 +347,7 @@ fun TvMainScreen(
                 TvNavDestination.HISTORY -> {
                     HistoryScreen(
                         viewModel = viewModel,
-                        onNavigateToDetail = onNavigateToDetail,
+                        onNavigateToDetail = onNavigateToDetailFromHistory ?: onNavigateToDetail,
                         onNavigateLeftToSidebar = { sidebarFocusRequesters[TvNavDestination.HISTORY]?.requestFocusSafe() },
                         firstItemFocusRequester = historyFirstItemRequester,
                         isTopScreen = isTopScreen,
@@ -1978,7 +1979,6 @@ fun TvCompactSearchBar(
                 wasKeyboardOpened = false
                 isEditing = false
                 keyboardController?.hide()
-                focusManager.clearFocus()
                 searchBarFocusRequester?.requestFocusSafe()
             }
         } else {
@@ -2010,7 +2010,6 @@ fun TvCompactSearchBar(
     BackHandler(enabled = isEditing) {
         isEditing = false
         keyboardController?.hide()
-        focusManager.clearFocus()
         searchBarFocusRequester?.requestFocusSafe()
     }
 
@@ -2141,7 +2140,6 @@ fun TvCompactSearchBar(
                                 onSearchCommit?.invoke(query)
                                 isEditing = false
                                 keyboardController?.hide()
-                                focusManager.clearFocus()
                                 searchBarFocusRequester?.requestFocusSafe()
                             }
                         ),
@@ -2154,7 +2152,6 @@ fun TvCompactSearchBar(
                                         AndroidKeyEvent.KEYCODE_BACK -> {
                                             isEditing = false
                                             keyboardController?.hide()
-                                            focusManager.clearFocus()
                                             searchBarFocusRequester?.requestFocusSafe()
                                             true
                                         }
@@ -2164,7 +2161,6 @@ fun TvCompactSearchBar(
                                             onSearchCommit?.invoke(query)
                                             isEditing = false
                                             keyboardController?.hide()
-                                            focusManager.clearFocus()
                                             searchBarFocusRequester?.requestFocusSafe()
                                             true
                                         }
@@ -2172,13 +2168,11 @@ fun TvCompactSearchBar(
                                             if (query.isNotEmpty()) {
                                                 isEditing = false
                                                 keyboardController?.hide()
-                                                focusManager.clearFocus()
                                                 clearButtonFocusRequester.requestFocusSafe()
                                                 true
                                             } else if (voiceButtonFocusRequester != null && onVoiceSearchClick != null) {
                                                 isEditing = false
                                                 keyboardController?.hide()
-                                                focusManager.clearFocus()
                                                 voiceButtonFocusRequester.requestFocusSafe()
                                                 true
                                             } else false
@@ -2186,7 +2180,6 @@ fun TvCompactSearchBar(
                                         AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
                                             isEditing = false
                                             keyboardController?.hide()
-                                            focusManager.clearFocus()
                                             onDown?.invoke()
                                             true
                                         }
@@ -2194,7 +2187,6 @@ fun TvCompactSearchBar(
                                             if (onLeft != null) {
                                                 isEditing = false
                                                 keyboardController?.hide()
-                                                focusManager.clearFocus()
                                                 onLeft()
                                                 true
                                             } else false

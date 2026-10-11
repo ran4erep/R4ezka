@@ -95,6 +95,7 @@ fun TvDetailContent(
     onNavigateToThematic: (String, String) -> Unit = { _, _ -> },
     isPlayerOpen: Boolean = false,
     scrollState: androidx.compose.foundation.lazy.LazyListState? = null,
+    fromHistory: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -148,18 +149,57 @@ fun TvDetailContent(
         if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
     }
 
-    // Автофокус на кнопке "К просмотру" и сброс скролла наверх при входе на страницу фильма на ТВ
-    LaunchedEffect(detail.id) {
-        ImagePreloaderEngine.preloadDetailImages(context, detail)
-        try {
-            rightScrollState.scrollToItem(0)
-        } catch (_: Throwable) {}
-        for (attempt in 0..14) {
-            kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
+    // Фокус и скролл при входе на страницу фильма/сериала на ТВ:
+    // - Если переход из истории (fromHistory == true): автоматически прокручивает страницу до кнопок просмотра
+    //   и ставит фокус на кнопке "Смотреть" (для фильма) или на текущей серии (для сериала)
+    // - Обычный переход: фокус на кнопке "К просмотру" и сброс скролла наверх
+    var hasHandledHistoryFocus by remember(detail.id) { mutableStateOf(false) }
+
+    LaunchedEffect(detail.id, selectedEpisodeId, fromHistory) {
+        if (!fromHistory) {
+            ImagePreloaderEngine.preloadDetailImages(context, detail)
             try {
-                scrollToWatchButtonFocusRequester.requestFocus()
-                break
+                rightScrollState.scrollToItem(0)
             } catch (_: Throwable) {}
+            for (attempt in 0..14) {
+                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
+                try {
+                    scrollToWatchButtonFocusRequester.requestFocus()
+                    break
+                } catch (_: Throwable) {}
+            }
+        } else {
+            if (hasHandledHistoryFocus) return@LaunchedEffect
+
+            ImagePreloaderEngine.preloadDetailImages(context, detail)
+            val isSeries = detail.type == RezkaType.SERIES
+            if (isSeries && selectedEpisodeId.isNullOrEmpty()) {
+                // Если сериал восстанавливает эпизод из истории, подождем его появления
+                for (i in 0..6) {
+                    if (!selectedEpisodeId.isNullOrEmpty()) break
+                    kotlinx.coroutines.delay(35L)
+                }
+            }
+
+            val targetScrollIndex = if (isSeries) seriesEpisodesIndex else moviePlayButtonIndex
+            if (targetScrollIndex >= 0) {
+                try {
+                    rightScrollState.scrollToItem(targetScrollIndex)
+                } catch (_: Throwable) {}
+            }
+
+            var focused = false
+            for (attempt in 0..22) {
+                kotlinx.coroutines.delay(if (attempt == 0) 25L else 35L)
+                try {
+                    mainActionFocusRequester.requestFocus()
+                    focused = true
+                    break
+                } catch (_: Throwable) {}
+            }
+            if (focused) {
+                hasHandledHistoryFocus = true
+            }
         }
     }
 
@@ -581,13 +621,14 @@ fun TvDetailContent(
                                         onClick = {
                                             coroutineScope.launch {
                                                 val isSeries = detail.type == RezkaType.SERIES
-                                                val targetRequester = if (isSeries && detail.translators.isNotEmpty()) {
+                                                val hasSelectedEpisode = isSeries && !selectedEpisodeId.isNullOrEmpty()
+                                                val targetRequester = if (isSeries && !hasSelectedEpisode && detail.translators.isNotEmpty()) {
                                                     translatorDropdownFocusRequester
                                                 } else {
                                                     mainActionFocusRequester
                                                 }
                                                 val targetIndex = if (isSeries) {
-                                                    tvTranslatorsWatchIndex
+                                                    if (hasSelectedEpisode) seriesEpisodesIndex else tvTranslatorsWatchIndex
                                                 } else {
                                                     moviePlayButtonIndex
                                                 }
@@ -596,8 +637,8 @@ fun TvDetailContent(
                                                         rightScrollState.animateScrollToItem(targetIndex)
                                                     } catch (_: Throwable) {}
                                                 }
-                                                for (attempt in 0..16) {
-                                                    kotlinx.coroutines.delay(if (attempt == 0) 30L else 50L)
+                                                for (attempt in 0..18) {
+                                                    kotlinx.coroutines.delay(if (attempt == 0) 30L else 40L)
                                                     try {
                                                         targetRequester.requestFocus()
                                                         break

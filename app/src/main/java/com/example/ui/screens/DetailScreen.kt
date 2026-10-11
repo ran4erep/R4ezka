@@ -134,6 +134,7 @@ fun DetailScreen(
     viewModel: RezkaViewModel,
     item: RezkaItem,
     initialTranslatorId: String? = null,
+    fromHistory: Boolean = false,
     onBack: () -> Unit,
     onNavigateToThematic: (String, String) -> Unit = { _, _ -> },
     onNavigateToDetail: (RezkaItem) -> Unit = {},
@@ -727,10 +728,11 @@ fun DetailScreen(
             is DetailState.Success -> {
                 val detail = state.detail
 
-                // Автоматически поднимаем список наверх только при смене ID фильма (переход по франшизе)
+                // Автоматически поднимаем список наверх только при смене ID фильма (переход по франшизе),
+                // если это не специальный переход из истории к просмотру
                 var previousDetailId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
-                LaunchedEffect(detail.id) {
-                    if (previousDetailId != null && previousDetailId != detail.id) {
+                LaunchedEffect(detail.id, fromHistory) {
+                    if (!fromHistory && previousDetailId != null && previousDetailId != detail.id) {
                         lazyListState.scrollToItem(0)
                     }
                     previousDetailId = detail.id
@@ -942,7 +944,8 @@ fun DetailScreen(
                         onNavigateToMovie = { targetItem -> onNavigateToDetail(targetItem) },
                         onNavigateToThematic = { name, url -> onNavigateToThematic(name, url) },
                         isPlayerOpen = isPlayerOpen,
-                        scrollState = lazyListState
+                        scrollState = lazyListState,
+                        fromHistory = fromHistory
                     )
                 } else {
                     // ---- SCROLLABLE MOBILE DETAIL PAGE (with TV/D-Pad support) ----
@@ -956,6 +959,44 @@ fun DetailScreen(
                                 easing = androidx.compose.animation.core.CubicBezierEasing(0.05f, 0.70f, 0.10f, 1.0f)
                             )
                         )
+                    }
+
+                    // Автоматическая плавная прокрутка к блоку кнопок просмотра при входе из истории
+                    var hasAutoScrolledFromHistory by remember(detail.id) { mutableStateOf(false) }
+                    val targetWatchIndex = remember(detail.type, detail.translators.isNotEmpty(), detail.isReleased, effectiveSeasons.isEmpty()) {
+                        if (detail.type == RezkaType.SERIES) {
+                            if (!detail.isReleased || effectiveSeasons.isEmpty()) {
+                                if (detail.translators.isNotEmpty()) 3 else 2
+                            } else {
+                                // Для сериала прокручиваем к блоку сезонов и серий
+                                if (detail.translators.isNotEmpty()) 3 else 2
+                            }
+                        } else {
+                            // Для фильма: блок с кнопкой "СМОТРЕТЬ" и озвучкой
+                            2
+                        }
+                    }
+
+                    LaunchedEffect(detail.id, selectedEpisodeId, fromHistory) {
+                        if (fromHistory && !hasAutoScrolledFromHistory) {
+                            val isSeries = detail.type == RezkaType.SERIES
+                            if (isSeries && selectedEpisodeId.isNullOrEmpty()) {
+                                for (i in 0..5) {
+                                    if (!selectedEpisodeId.isNullOrEmpty()) break
+                                    kotlinx.coroutines.delay(35L)
+                                }
+                            }
+                            kotlinx.coroutines.delay(120L)
+                            try {
+                                lazyListState.animateScrollToItem(targetWatchIndex)
+                                hasAutoScrolledFromHistory = true
+                            } catch (_: Throwable) {
+                                try {
+                                    lazyListState.scrollToItem(targetWatchIndex)
+                                    hasAutoScrolledFromHistory = true
+                                } catch (_: Throwable) {}
+                            }
+                        }
                     }
 
                     LazyColumn(
