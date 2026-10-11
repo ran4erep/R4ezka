@@ -34,8 +34,10 @@ class RezkaApplication : Application(), ImageLoaderFactory {
         com.example.data.SeriesUpdateEngine.createNotificationChannel(this)
         
         // Мгновенное создание и инициализация текстового лог-файла проверок сериалов
+        // и защита оффлайн библиотеки от индексации системной Галереей
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             com.example.data.SeriesUpdateLogger.init(this@RezkaApplication)
+            com.example.data.DownloadHelper.protectOfflineDirectoryFromGallery(this@RezkaApplication)
         }
     }
 

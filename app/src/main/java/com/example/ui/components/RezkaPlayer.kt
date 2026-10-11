@@ -322,9 +322,14 @@ fun RezkaPlayer(
 
     // Playback speed state (supports 1.5x, 2.0x, etc.)
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
-    var showSpeedDialog by remember { mutableStateOf(false) }
-    var showQualityDialog by remember { mutableStateOf(false) }
-    var showTranslatorDialog by remember { mutableStateOf(false) }
+
+    // Контекстные всплывающие меню плеера над кнопками (Quality, Speed, Translator, Subtitles)
+    var activePlayerMenu by remember { mutableStateOf(PlayerMenuType.NONE) }
+    var menuFocusedIndex by remember { mutableIntStateOf(0) }
+
+    androidx.activity.compose.BackHandler(enabled = activePlayerMenu != PlayerMenuType.NONE) {
+        activePlayerMenu = PlayerMenuType.NONE
+    }
 
     var preferredQualityName by remember { mutableStateOf<String?>(null) }
     var selectedStreamIndex by remember {
@@ -383,7 +388,6 @@ fun RezkaPlayer(
 
     var selectedSubtitleTrack by remember { mutableStateOf<SubtitleTrack?>(null) }
     var isSubtitlesEnabled by remember { mutableStateOf(false) }
-    var showSubtitlesDialog by remember { mutableStateOf(false) }
 
     // Error and Fallback tracking state
     var playerErrorMessage by remember { mutableStateOf<String?>(null) }
@@ -1116,8 +1120,8 @@ fun RezkaPlayer(
     var gestureCurrentSide by remember { mutableStateOf(SeekSide.NONE) }
     var gestureAccumulatedSec by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(showControls, shouldShowPause, controlsInteractionKey, isScreenLocked) {
-        if (showControls && shouldShowPause && playerErrorMessage == null && !isScreenLocked) {
+    LaunchedEffect(showControls, shouldShowPause, controlsInteractionKey, isScreenLocked, activePlayerMenu) {
+        if (showControls && shouldShowPause && playerErrorMessage == null && !isScreenLocked && activePlayerMenu == PlayerMenuType.NONE) {
             delay(4000)
             showControls = false
         }
@@ -1154,7 +1158,7 @@ fun RezkaPlayer(
         }
     }
 
-    val controlsVisible = showControls || showSpeedDialog || showQualityDialog || showTranslatorDialog || showSubtitlesDialog
+    val controlsVisible = showControls || activePlayerMenu != PlayerMenuType.NONE
 
     // Динамический показ и скрытие статус-бара при изменении состояния контролов и диалогов.
     // Когда отображаются элементы управления или открыты диалоги — статус-бар виден.
@@ -1550,94 +1554,105 @@ fun RezkaPlayer(
                         return@onKeyEvent true
                     }
 
-                    // Handle navigation inside Quality Selection Dialog
-                    if (showQualityDialog) {
-                        when (keyEvent.nativeKeyEvent.keyCode) {
-                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
-                                selectedStreamIndex = (selectedStreamIndex - 1).coerceAtLeast(0)
-                                return@onKeyEvent true
-                            }
-                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                selectedStreamIndex = (selectedStreamIndex + 1).coerceAtMost(cleanStreams.lastIndex.coerceAtLeast(0))
-                                return@onKeyEvent true
-                            }
-                            android.view.KeyEvent.KEYCODE_DPAD_CENTER,
-                            android.view.KeyEvent.KEYCODE_ENTER,
-                            android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                                if (selectedStreamIndex in cleanStreams.indices) {
-                                    val stream = cleanStreams[selectedStreamIndex]
-                                    preferredQualityName = stream.quality
-                                    playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
-                                }
-                                showQualityDialog = false
-                                currentFocusArea = PlayerFocusArea.BOTTOM
-                                return@onKeyEvent true
-                            }
-                            android.view.KeyEvent.KEYCODE_BACK -> {
-                                showQualityDialog = false
-                                return@onKeyEvent true
-                            }
-                            else -> return@onKeyEvent false
-                        }
-                    }
-
-                    // Handle navigation inside Speed Selection Dialog
-                    if (showSpeedDialog) {
+                    // Handle navigation inside anchored context menus (Quality, Speed, Translator, Subtitles)
+                    if (activePlayerMenu != PlayerMenuType.NONE) {
                         val availableSpeeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
-                        val curIdx = availableSpeeds.indexOf(playbackSpeed).let { if (it >= 0) it else 2 }
+                        val totalItems = when (activePlayerMenu) {
+                            PlayerMenuType.QUALITY -> cleanStreams.size
+                            PlayerMenuType.SPEED -> availableSpeeds.size
+                            PlayerMenuType.TRANSLATOR -> translators.size
+                            PlayerMenuType.SUBTITLES -> 1 + availableSubtitles.size
+                            PlayerMenuType.NONE -> 0
+                        }
+
                         when (keyEvent.nativeKeyEvent.keyCode) {
                             android.view.KeyEvent.KEYCODE_DPAD_UP -> {
-                                val newSpeed = availableSpeeds[(curIdx - 1).coerceAtLeast(0)]
-                                playbackSpeed = newSpeed
-                                exoPlayer.setPlaybackSpeed(newSpeed)
+                                if (totalItems > 0) {
+                                    menuFocusedIndex = (menuFocusedIndex - 1).coerceAtLeast(0)
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                }
                                 return@onKeyEvent true
                             }
                             android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                val newSpeed = availableSpeeds[(curIdx + 1).coerceAtMost(availableSpeeds.lastIndex)]
-                                playbackSpeed = newSpeed
-                                exoPlayer.setPlaybackSpeed(newSpeed)
+                                if (totalItems > 0) {
+                                    if (menuFocusedIndex < totalItems - 1) {
+                                        menuFocusedIndex++
+                                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                    } else {
+                                        // При нажатии вниз на последнем элементе закрываем меню и возвращаемся к кнопке
+                                        activePlayerMenu = PlayerMenuType.NONE
+                                        currentFocusArea = PlayerFocusArea.BOTTOM
+                                    }
+                                }
                                 return@onKeyEvent true
                             }
                             android.view.KeyEvent.KEYCODE_DPAD_CENTER,
                             android.view.KeyEvent.KEYCODE_ENTER,
                             android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                                showSpeedDialog = false
+                                when (activePlayerMenu) {
+                                    PlayerMenuType.QUALITY -> {
+                                        if (menuFocusedIndex in cleanStreams.indices) {
+                                            val stream = cleanStreams[menuFocusedIndex]
+                                            selectedStreamIndex = menuFocusedIndex
+                                            preferredQualityName = stream.quality
+                                            playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
+                                        }
+                                    }
+                                    PlayerMenuType.SPEED -> {
+                                        if (menuFocusedIndex in availableSpeeds.indices) {
+                                            val speed = availableSpeeds[menuFocusedIndex]
+                                            playbackSpeed = speed
+                                            exoPlayer.setPlaybackSpeed(speed)
+                                        }
+                                    }
+                                    PlayerMenuType.TRANSLATOR -> {
+                                        if (menuFocusedIndex in translators.indices) {
+                                            val trans = translators[menuFocusedIndex]
+                                            val currentPos = exoPlayer.currentPosition
+                                            onSelectTranslator?.invoke(trans, currentPos)
+                                        }
+                                    }
+                                    PlayerMenuType.SUBTITLES -> {
+                                        if (menuFocusedIndex == 0) {
+                                            isSubtitlesEnabled = false
+                                            selectedSubtitleTrack = null
+                                            applySubtitleTrack(null, false)
+                                            prefs.edit().putString("preferred_subtitle_lang", "off").apply()
+                                            RezkaService.setPreferredSubtitleLang("off")
+                                            FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = "off")
+                                            screenNotificationMessage = "Субтитры выключены"
+                                        } else {
+                                            val trackIdx = menuFocusedIndex - 1
+                                            if (trackIdx in availableSubtitles.indices) {
+                                                val track = availableSubtitles[trackIdx]
+                                                selectedSubtitleTrack = track
+                                                isSubtitlesEnabled = true
+                                                applySubtitleTrack(track, true)
+                                                prefs.edit().putString("preferred_subtitle_lang", track.language).apply()
+                                                RezkaService.setPreferredSubtitleLang(track.language)
+                                                FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = track.language)
+                                                screenNotificationMessage = "Субтитры: ${track.title}"
+                                            }
+                                        }
+                                    }
+                                    PlayerMenuType.NONE -> {}
+                                }
+                                HapticEngine.get().perform(HapticType.SELECTION)
+                                activePlayerMenu = PlayerMenuType.NONE
                                 currentFocusArea = PlayerFocusArea.BOTTOM
                                 return@onKeyEvent true
                             }
                             android.view.KeyEvent.KEYCODE_BACK -> {
-                                showSpeedDialog = false
+                                activePlayerMenu = PlayerMenuType.NONE
+                                currentFocusArea = PlayerFocusArea.BOTTOM
+                                HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                 return@onKeyEvent true
                             }
-                            else -> return@onKeyEvent false
-                        }
-                    }
-
-                    // Handle navigation inside Subtitles Dialog
-                    if (showSubtitlesDialog) {
-                        when (keyEvent.nativeKeyEvent.keyCode) {
-                            android.view.KeyEvent.KEYCODE_BACK,
-                            android.view.KeyEvent.KEYCODE_DPAD_CENTER,
-                            android.view.KeyEvent.KEYCODE_ENTER,
-                            android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                                showSubtitlesDialog = false
+                            android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                activePlayerMenu = PlayerMenuType.NONE
                                 currentFocusArea = PlayerFocusArea.BOTTOM
-                                return@onKeyEvent true
-                            }
-                            else -> return@onKeyEvent false
-                        }
-                    }
-
-                    // Handle navigation inside Translator Selection Dialog
-                    if (showTranslatorDialog) {
-                        when (keyEvent.nativeKeyEvent.keyCode) {
-                            android.view.KeyEvent.KEYCODE_BACK,
-                            android.view.KeyEvent.KEYCODE_DPAD_CENTER,
-                            android.view.KeyEvent.KEYCODE_ENTER,
-                            android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                                showTranslatorDialog = false
-                                currentFocusArea = PlayerFocusArea.BOTTOM
-                                return@onKeyEvent true
+                                return@onKeyEvent false
                             }
                             else -> return@onKeyEvent false
                         }
@@ -2031,10 +2046,31 @@ fun RezkaPlayer(
                                 android.view.KeyEvent.KEYCODE_ENTER,
                                 android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                                     when (currentBottomControl) {
-                                        BottomControl.QUALITY -> showQualityDialog = true
-                                        BottomControl.SPEED -> showSpeedDialog = true
-                                        BottomControl.TRANSLATOR -> showTranslatorDialog = true
-                                        BottomControl.SUBTITLES -> showSubtitlesDialog = true
+                                        BottomControl.QUALITY -> {
+                                            activePlayerMenu = if (activePlayerMenu == PlayerMenuType.QUALITY) PlayerMenuType.NONE else PlayerMenuType.QUALITY
+                                            if (activePlayerMenu == PlayerMenuType.QUALITY) {
+                                                menuFocusedIndex = selectedStreamIndex.coerceIn(0, cleanStreams.lastIndex.coerceAtLeast(0))
+                                            }
+                                        }
+                                        BottomControl.SPEED -> {
+                                            activePlayerMenu = if (activePlayerMenu == PlayerMenuType.SPEED) PlayerMenuType.NONE else PlayerMenuType.SPEED
+                                            if (activePlayerMenu == PlayerMenuType.SPEED) {
+                                                val speeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+                                                menuFocusedIndex = speeds.indexOf(playbackSpeed).let { if (it >= 0) it else 2 }
+                                            }
+                                        }
+                                        BottomControl.TRANSLATOR -> {
+                                            activePlayerMenu = if (activePlayerMenu == PlayerMenuType.TRANSLATOR) PlayerMenuType.NONE else PlayerMenuType.TRANSLATOR
+                                            if (activePlayerMenu == PlayerMenuType.TRANSLATOR) {
+                                                menuFocusedIndex = translators.indexOfFirst { it.id == currentTranslator?.id }.let { if (it >= 0) it else 0 }
+                                            }
+                                        }
+                                        BottomControl.SUBTITLES -> {
+                                            activePlayerMenu = if (activePlayerMenu == PlayerMenuType.SUBTITLES) PlayerMenuType.NONE else PlayerMenuType.SUBTITLES
+                                            if (activePlayerMenu == PlayerMenuType.SUBTITLES) {
+                                                menuFocusedIndex = if (!isSubtitlesEnabled || selectedSubtitleTrack == null) 0 else (availableSubtitles.indexOfFirst { it.url == selectedSubtitleTrack?.url } + 1).coerceAtLeast(0)
+                                            }
+                                        }
                                         BottomControl.ZOOM_OUT -> performZoomOut()
                                         BottomControl.ZOOM_IN -> performZoomIn()
                                         BottomControl.RESIZE_MODE -> cycleResizeMode()
@@ -2418,14 +2454,35 @@ fun RezkaPlayer(
                                     }
 
                                     if (cleanStreams.size > 1) {
-                                        Button(
-                                            onClick = {
-                                                HapticEngine.get().perform(HapticType.SOFT_CLICK)
-                                                showQualityDialog = true
-                                            },
-                                            colors = ButtonDefaults.buttonColors(containerColor = CinemaSecondary)
-                                        ) {
-                                            Text("Качество (${stream.quality})")
+                                        Box {
+                                            Button(
+                                                onClick = {
+                                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                                    activePlayerMenu = if (activePlayerMenu == PlayerMenuType.QUALITY) PlayerMenuType.NONE else PlayerMenuType.QUALITY
+                                                    if (activePlayerMenu == PlayerMenuType.QUALITY) {
+                                                        menuFocusedIndex = selectedStreamIndex.coerceIn(0, cleanStreams.lastIndex.coerceAtLeast(0))
+                                                    }
+                                                },
+                                                colors = ButtonDefaults.buttonColors(containerColor = CinemaSecondary)
+                                            ) {
+                                                Text("Качество (${stream.quality})")
+                                            }
+
+                                            if (activePlayerMenu == PlayerMenuType.QUALITY) {
+                                                QualityMenuPopup(
+                                                    streams = cleanStreams,
+                                                    selectedIndex = selectedStreamIndex,
+                                                    remoteFocusedIndex = menuFocusedIndex,
+                                                    onSelect = { idx, s ->
+                                                        selectedStreamIndex = idx
+                                                        preferredQualityName = s.quality
+                                                        playerErrorMessage = null
+                                                        playStreamUrl(s.url, targetStartPos = exoPlayer.currentPosition)
+                                                        activePlayerMenu = PlayerMenuType.NONE
+                                                    },
+                                                    onDismiss = { activePlayerMenu = PlayerMenuType.NONE }
+                                                )
+                                            }
                                         }
                                     }
 
@@ -3019,173 +3076,288 @@ fun RezkaPlayer(
                         ) {
                             // Left side: Quality, Speed, Translator and Subtitles buttons
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                // Quality button
-                                Button(
-                                    onClick = {
-                                        controlsInteractionKey++
-                                        selectedBottomIndex = bottomControls.indexOf(BottomControl.QUALITY)
-                                        showQualityDialog = true
-                                        HapticEngine.get().perform(HapticType.SELECTION)
-                                    },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isQualityRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
-                                    ),
-                                    border = if (isQualityRemoteFocused) BorderStroke(2.dp, CinemaPrimary) else null,
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    modifier = Modifier
-                                        .scale(if (isQualityRemoteFocused) 1.08f else 1.0f)
-                                        .height(32.dp)
-                                        .testTag("player_quality_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Settings,
-                                        contentDescription = null,
-                                        tint = CinemaTextWhite,
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(5.dp))
-                                    Text(
-                                        text = cleanStreams.getOrNull(selectedStreamIndex)?.quality ?: currentStream?.quality ?: "Авто",
-                                        color = CinemaTextWhite,
-                                        fontSize = 11.sp
-                                    )
-                                }
-
-                                // Speed button (supports 1.5x and 2x)
-                                val speedDisplay = if (playbackSpeed % 1.0f == 0f) "${playbackSpeed.toInt()}x" else "${playbackSpeed}x"
-                                Button(
-                                    onClick = {
-                                        controlsInteractionKey++
-                                        selectedBottomIndex = bottomControls.indexOf(BottomControl.SPEED)
-                                        showSpeedDialog = true
-                                        HapticEngine.get().perform(HapticType.SELECTION)
-                                    },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isSpeedRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
-                                    ),
-                                    border = if (isSpeedRemoteFocused) BorderStroke(2.dp, CinemaPrimary) else null,
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    modifier = Modifier
-                                        .scale(if (isSpeedRemoteFocused) 1.08f else 1.0f)
-                                        .height(32.dp)
-                                        .testTag("player_speed_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Speed,
-                                        contentDescription = null,
-                                        tint = CinemaTextWhite,
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(5.dp))
-                                    Text(
-                                        text = speedDisplay,
-                                        color = CinemaTextWhite,
-                                        fontSize = 11.sp
-                                    )
-                                }
-
-                                // Translator (Dubbing) button
-                                if (hasTranslators) {
+                                // Quality button & Anchored Menu
+                                Box {
+                                    val isQualityMenuOpen = activePlayerMenu == PlayerMenuType.QUALITY
+                                    val isQualityActive = isQualityRemoteFocused && !isQualityMenuOpen
                                     Button(
                                         onClick = {
                                             controlsInteractionKey++
-                                            selectedBottomIndex = bottomControls.indexOf(BottomControl.TRANSLATOR)
-                                            showTranslatorDialog = true
+                                            selectedBottomIndex = bottomControls.indexOf(BottomControl.QUALITY)
+                                            activePlayerMenu = if (activePlayerMenu == PlayerMenuType.QUALITY) PlayerMenuType.NONE else PlayerMenuType.QUALITY
+                                            if (activePlayerMenu == PlayerMenuType.QUALITY) {
+                                                menuFocusedIndex = selectedStreamIndex.coerceIn(0, cleanStreams.lastIndex.coerceAtLeast(0))
+                                            }
                                             HapticEngine.get().perform(HapticType.SELECTION)
                                         },
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (isTranslatorRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
+                                            containerColor = if (isQualityActive) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
                                         ),
-                                        border = if (isTranslatorRemoteFocused) BorderStroke(2.dp, CinemaPrimary) else null,
+                                        border = if (isQualityActive) BorderStroke(2.dp, CinemaPrimary) else null,
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                         modifier = Modifier
-                                            .scale(if (isTranslatorRemoteFocused) 1.08f else 1.0f)
+                                            .scale(if (isQualityActive) 1.08f else 1.0f)
                                             .height(32.dp)
-                                            .testTag("player_translator_button")
+                                            .testTag("player_quality_button")
                                     ) {
-                                        if (currentTranslator != null && currentTranslator.flagUrl.isNotEmpty()) {
-                                            AsyncImage(
-                                                model = currentTranslator.flagUrl,
-                                                contentDescription = null,
-                                                contentScale = ContentScale.Fit,
-                                                modifier = Modifier
-                                                    .height(13.dp)
-                                                    .widthIn(max = 20.dp)
-                                                    .clip(RoundedCornerShape(2.dp))
-                                            )
-                                            Spacer(modifier = Modifier.width(5.dp))
-                                        } else {
-                                            Icon(
-                                                imageVector = Icons.Default.RecordVoiceOver,
-                                                contentDescription = "Озвучка",
-                                                tint = CinemaTextWhite,
-                                                modifier = Modifier.size(15.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(5.dp))
-                                        }
-                                        Text(
-                                            text = currentTranslator?.name ?: "Озвучка",
-                                            color = CinemaTextWhite,
-                                            fontSize = 11.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.widthIn(max = 120.dp)
+                                        Icon(
+                                            imageVector = Icons.Default.Settings,
+                                            contentDescription = null,
+                                            tint = CinemaTextWhite,
+                                            modifier = Modifier.size(15.dp)
                                         )
-                                        if (currentTranslator != null && currentTranslator.isPremium && currentTranslator.premiumUrl.isNotEmpty()) {
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            AsyncImage(
-                                                model = currentTranslator.premiumUrl,
-                                                contentDescription = "Премиум",
-                                                contentScale = ContentScale.Fit,
-                                                modifier = Modifier.height(12.dp).widthIn(max = 18.dp)
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        Text(
+                                            text = cleanStreams.getOrNull(selectedStreamIndex)?.quality ?: currentStream?.quality ?: "Авто",
+                                            color = CinemaTextWhite,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+
+                                    if (activePlayerMenu == PlayerMenuType.QUALITY) {
+                                        QualityMenuPopup(
+                                            streams = cleanStreams,
+                                            selectedIndex = selectedStreamIndex,
+                                            remoteFocusedIndex = menuFocusedIndex,
+                                            onSelect = { index, stream ->
+                                                selectedStreamIndex = index
+                                                preferredQualityName = stream.quality
+                                                playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
+                                                activePlayerMenu = PlayerMenuType.NONE
+                                                currentFocusArea = PlayerFocusArea.BOTTOM
+                                            },
+                                            onDismiss = { activePlayerMenu = PlayerMenuType.NONE }
+                                        )
+                                    }
+                                }
+
+                                // Speed button & Anchored Menu (supports 1.5x and 2x)
+                                val speedDisplay = if (playbackSpeed % 1.0f == 0f) "${playbackSpeed.toInt()}x" else "${playbackSpeed}x"
+                                Box {
+                                    val isSpeedMenuOpen = activePlayerMenu == PlayerMenuType.SPEED
+                                    val isSpeedActive = isSpeedRemoteFocused && !isSpeedMenuOpen
+                                    Button(
+                                        onClick = {
+                                            controlsInteractionKey++
+                                            selectedBottomIndex = bottomControls.indexOf(BottomControl.SPEED)
+                                            activePlayerMenu = if (activePlayerMenu == PlayerMenuType.SPEED) PlayerMenuType.NONE else PlayerMenuType.SPEED
+                                            if (activePlayerMenu == PlayerMenuType.SPEED) {
+                                                val speeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+                                                menuFocusedIndex = speeds.indexOf(playbackSpeed).let { if (it >= 0) it else 2 }
+                                            }
+                                            HapticEngine.get().perform(HapticType.SELECTION)
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isSpeedActive) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
+                                        ),
+                                        border = if (isSpeedActive) BorderStroke(2.dp, CinemaPrimary) else null,
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        modifier = Modifier
+                                            .scale(if (isSpeedActive) 1.08f else 1.0f)
+                                            .height(32.dp)
+                                            .testTag("player_speed_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Speed,
+                                            contentDescription = null,
+                                            tint = CinemaTextWhite,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        Text(
+                                            text = speedDisplay,
+                                            color = CinemaTextWhite,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+
+                                    if (activePlayerMenu == PlayerMenuType.SPEED) {
+                                        SpeedMenuPopup(
+                                            currentSpeed = playbackSpeed,
+                                            remoteFocusedIndex = menuFocusedIndex,
+                                            onSelect = { speed ->
+                                                playbackSpeed = speed
+                                                exoPlayer.setPlaybackSpeed(speed)
+                                                activePlayerMenu = PlayerMenuType.NONE
+                                                currentFocusArea = PlayerFocusArea.BOTTOM
+                                            },
+                                            onDismiss = { activePlayerMenu = PlayerMenuType.NONE }
+                                        )
+                                    }
+                                }
+
+                                // Translator (Dubbing) button & Anchored Menu
+                                if (hasTranslators) {
+                                    Box {
+                                        val isTranslatorMenuOpen = activePlayerMenu == PlayerMenuType.TRANSLATOR
+                                        val isTranslatorActive = isTranslatorRemoteFocused && !isTranslatorMenuOpen
+                                        Button(
+                                            onClick = {
+                                                controlsInteractionKey++
+                                                selectedBottomIndex = bottomControls.indexOf(BottomControl.TRANSLATOR)
+                                                activePlayerMenu = if (activePlayerMenu == PlayerMenuType.TRANSLATOR) PlayerMenuType.NONE else PlayerMenuType.TRANSLATOR
+                                                if (activePlayerMenu == PlayerMenuType.TRANSLATOR) {
+                                                    menuFocusedIndex = translators.indexOfFirst { it.id == currentTranslator?.id }.let { if (it >= 0) it else 0 }
+                                                }
+                                                HapticEngine.get().perform(HapticType.SELECTION)
+                                            },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (isTranslatorActive) CinemaPrimary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.5f)
+                                            ),
+                                            border = if (isTranslatorActive) BorderStroke(2.dp, CinemaPrimary) else null,
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            modifier = Modifier
+                                                .scale(if (isTranslatorActive) 1.08f else 1.0f)
+                                                .height(32.dp)
+                                                .testTag("player_translator_button")
+                                        ) {
+                                            if (currentTranslator != null && currentTranslator.flagUrl.isNotEmpty()) {
+                                                AsyncImage(
+                                                    model = currentTranslator.flagUrl,
+                                                    contentDescription = null,
+                                                    contentScale = ContentScale.Fit,
+                                                    modifier = Modifier
+                                                        .height(13.dp)
+                                                        .widthIn(max = 20.dp)
+                                                        .clip(RoundedCornerShape(2.dp))
+                                                )
+                                                Spacer(modifier = Modifier.width(5.dp))
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Default.RecordVoiceOver,
+                                                    contentDescription = "Озвучка",
+                                                    tint = CinemaTextWhite,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(5.dp))
+                                            }
+                                            Text(
+                                                text = currentTranslator?.name ?: "Озвучка",
+                                                color = CinemaTextWhite,
+                                                fontSize = 11.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.widthIn(max = 120.dp)
+                                            )
+                                            if (currentTranslator != null && currentTranslator.isPremium && currentTranslator.premiumUrl.isNotEmpty()) {
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                AsyncImage(
+                                                    model = currentTranslator.premiumUrl,
+                                                    contentDescription = "Премиум",
+                                                    contentScale = ContentScale.Fit,
+                                                    modifier = Modifier.height(12.dp).widthIn(max = 18.dp)
+                                                )
+                                            }
+                                        }
+
+                                        if (activePlayerMenu == PlayerMenuType.TRANSLATOR) {
+                                            TranslatorMenuPopup(
+                                                translators = translators,
+                                                currentTranslatorId = currentTranslator?.id,
+                                                remoteFocusedIndex = menuFocusedIndex,
+                                                onSelect = { trans ->
+                                                    activePlayerMenu = PlayerMenuType.NONE
+                                                    currentFocusArea = PlayerFocusArea.BOTTOM
+                                                    val currentPos = exoPlayer.currentPosition
+                                                    onSelectTranslator?.invoke(trans, currentPos)
+                                                },
+                                                onDismiss = { activePlayerMenu = PlayerMenuType.NONE }
                                             )
                                         }
                                     }
                                 }
 
-                                // Subtitles (CC) button
+                                // Subtitles (CC) button & Anchored Menu
                                 val subBtnTitle = when {
                                     !isSubtitlesEnabled || selectedSubtitleTrack == null -> "Субтитры: Выкл"
                                     else -> selectedSubtitleTrack?.title ?: "Субтитры"
                                 }
-                                Button(
-                                    onClick = {
-                                        controlsInteractionKey++
-                                        selectedBottomIndex = bottomControls.indexOf(BottomControl.SUBTITLES)
-                                        showSubtitlesDialog = true
-                                        HapticEngine.get().perform(HapticType.SELECTION)
-                                    },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = when {
-                                            isSubtitlesRemoteFocused -> CinemaPrimary.copy(alpha = 0.45f)
-                                            isSubtitlesEnabled && selectedSubtitleTrack != null -> CinemaPrimary.copy(alpha = 0.25f)
-                                            else -> Color.Black.copy(alpha = 0.5f)
-                                        }
-                                    ),
-                                    border = when {
-                                        isSubtitlesRemoteFocused -> BorderStroke(2.dp, CinemaPrimary)
-                                        isSubtitlesEnabled && selectedSubtitleTrack != null -> BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.6f))
-                                        else -> null
-                                    },
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    modifier = Modifier
-                                        .scale(if (isSubtitlesRemoteFocused) 1.08f else 1.0f)
-                                        .height(32.dp)
-                                        .testTag("player_subtitles_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Subtitles,
-                                        contentDescription = "Субтитры",
-                                        tint = CinemaTextWhite,
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(5.dp))
-                                    Text(
-                                        text = subBtnTitle,
-                                        color = CinemaTextWhite,
-                                        fontSize = 11.sp,
-                                        maxLines = 1
-                                    )
+                                Box {
+                                    val isSubtitlesMenuOpen = activePlayerMenu == PlayerMenuType.SUBTITLES
+                                    val isSubtitlesActive = isSubtitlesRemoteFocused && !isSubtitlesMenuOpen
+                                    Button(
+                                        onClick = {
+                                            controlsInteractionKey++
+                                            selectedBottomIndex = bottomControls.indexOf(BottomControl.SUBTITLES)
+                                            activePlayerMenu = if (activePlayerMenu == PlayerMenuType.SUBTITLES) PlayerMenuType.NONE else PlayerMenuType.SUBTITLES
+                                            if (activePlayerMenu == PlayerMenuType.SUBTITLES) {
+                                                menuFocusedIndex = if (!isSubtitlesEnabled || selectedSubtitleTrack == null) 0 else (availableSubtitles.indexOfFirst { it.url == selectedSubtitleTrack?.url } + 1).coerceAtLeast(0)
+                                            }
+                                            HapticEngine.get().perform(HapticType.SELECTION)
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = when {
+                                                isSubtitlesMenuOpen -> Color.Black.copy(alpha = 0.5f)
+                                                isSubtitlesActive -> CinemaPrimary.copy(alpha = 0.45f)
+                                                isSubtitlesEnabled && selectedSubtitleTrack != null -> CinemaPrimary.copy(alpha = 0.25f)
+                                                else -> Color.Black.copy(alpha = 0.5f)
+                                            }
+                                        ),
+                                        border = when {
+                                            isSubtitlesMenuOpen -> null
+                                            isSubtitlesActive -> BorderStroke(2.dp, CinemaPrimary)
+                                            isSubtitlesEnabled && selectedSubtitleTrack != null -> BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.6f))
+                                            else -> null
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        modifier = Modifier
+                                            .scale(if (isSubtitlesActive) 1.08f else 1.0f)
+                                            .height(32.dp)
+                                            .testTag("player_subtitles_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Subtitles,
+                                            contentDescription = "Субтитры",
+                                            tint = CinemaTextWhite,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        Text(
+                                            text = subBtnTitle,
+                                            color = CinemaTextWhite,
+                                            fontSize = 11.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+
+                                    if (activePlayerMenu == PlayerMenuType.SUBTITLES) {
+                                        SubtitlesMenuPopup(
+                                            isSubtitlesEnabled = isSubtitlesEnabled,
+                                            selectedSubtitleTrack = selectedSubtitleTrack,
+                                            availableSubtitles = availableSubtitles,
+                                            subtitleTextScale = subtitleTextScale,
+                                            remoteFocusedIndex = menuFocusedIndex,
+                                            onSelectOff = {
+                                                isSubtitlesEnabled = false
+                                                selectedSubtitleTrack = null
+                                                applySubtitleTrack(null, false)
+                                                prefs.edit().putString("preferred_subtitle_lang", "off").apply()
+                                                RezkaService.setPreferredSubtitleLang("off")
+                                                FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = "off")
+                                                activePlayerMenu = PlayerMenuType.NONE
+                                                currentFocusArea = PlayerFocusArea.BOTTOM
+                                                screenNotificationMessage = "Субтитры выключены"
+                                            },
+                                            onSelectTrack = { track ->
+                                                selectedSubtitleTrack = track
+                                                isSubtitlesEnabled = true
+                                                applySubtitleTrack(track, true)
+                                                prefs.edit().putString("preferred_subtitle_lang", track.language).apply()
+                                                RezkaService.setPreferredSubtitleLang(track.language)
+                                                FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = track.language)
+                                                activePlayerMenu = PlayerMenuType.NONE
+                                                currentFocusArea = PlayerFocusArea.BOTTOM
+                                                screenNotificationMessage = "Субтитры: ${track.title}"
+                                            },
+                                            onSelectScale = { scale ->
+                                                subtitleTextScale = scale
+                                                prefs.edit().putFloat("subtitle_text_scale", scale).apply()
+                                                RezkaService.setSubtitleTextScale(scale)
+                                                FirebaseSyncManager.onSettingsUpdated(subtitleTextScale = scale)
+                                            },
+                                            onDismiss = { activePlayerMenu = PlayerMenuType.NONE }
+                                        )
+                                    }
                                 }
                             }
 
@@ -3407,746 +3579,6 @@ fun RezkaPlayer(
                 }
             }
         }
-    }
-
-    // Quality Selection Dialog (Горизонтальное адаптивное окно для ТВ и мобильных)
-    if (showQualityDialog) {
-        val initialQualityRequester = remember { FocusRequester() }
-        val qualityScrollState = rememberScrollState()
-        val cancelButtonRequester = remember { FocusRequester() }
-
-        LaunchedEffect(Unit) {
-            initialQualityRequester.requestFocusSafe()
-        }
-
-        Dialog(
-            onDismissRequest = { showQualityDialog = false },
-            properties = DialogProperties(
-                usePlatformDefaultWidth = false,
-                dismissOnBackPress = true,
-                dismissOnClickOutside = true
-            )
-        ) {
-            Surface(
-                color = CinemaDark,
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, CinemaBorder),
-                modifier = Modifier
-                    .fillMaxWidth(if (isTvMode) 0.80f else 0.94f)
-                    .wrapContentHeight()
-                    .padding(16.dp)
-            ) {
-                if (isTvMode) {
-                    // ГОРИЗОНТАЛЬНЫЙ TV-ДИАЛОГ
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(20.dp)
-                    ) {
-                        // Левая колонка
-                        Column(
-                            modifier = Modifier
-                                .width(220.dp)
-                                .padding(vertical = 4.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.HighQuality,
-                                    contentDescription = null,
-                                    tint = CinemaPrimary,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Text(
-                                    text = "Качество видео",
-                                    color = CinemaTextWhite,
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Text(
-                                text = "Выберите желаемое разрешение видеопотока:",
-                                color = CinemaTextGray,
-                                fontSize = 11.sp
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-
-                            Surface(
-                                color = CinemaCard,
-                                shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, CinemaBorder),
-                                modifier = Modifier
-                                    .focusRequester(cancelButtonRequester)
-                                    .onKeyEvent { keyEvent ->
-                                        if (keyEvent.type == KeyEventType.KeyDown &&
-                                            keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_RIGHT
-                                        ) {
-                                            initialQualityRequester.requestFocusSafe()
-                                            true
-                                        } else false
-                                    }
-                                    .tvFocusableItem(
-                                        onClick = {
-                                            HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                                            showQualityDialog = false
-                                        },
-                                        shape = RoundedCornerShape(8.dp),
-                                        focusedBorderColor = CinemaPrimary
-                                    )
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = null,
-                                        tint = CinemaTextGray,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Text(
-                                        text = "Закрыть",
-                                        color = CinemaTextWhite,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                            }
-                        }
-
-                        // Разделитель
-                        Box(
-                            modifier = Modifier
-                                .width(1.dp)
-                                .height(100.dp)
-                                .background(CinemaBorder)
-                        )
-
-                        // Правая часть: горизонтальный ряд карточек
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .horizontalScroll(qualityScrollState)
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            cleanStreams.forEachIndexed { index, stream ->
-                                val isSelected = index == selectedStreamIndex
-                                val itemRequester = if (isSelected) initialQualityRequester else null
-
-                                Surface(
-                                    color = if (isSelected) CinemaPrimary.copy(alpha = 0.22f) else CinemaCard,
-                                    shape = RoundedCornerShape(12.dp),
-                                    border = BorderStroke(
-                                        if (isSelected) 2.dp else 1.dp,
-                                        if (isSelected) CinemaPrimary else CinemaBorder
-                                    ),
-                                    modifier = Modifier
-                                        .width(116.dp)
-                                        .height(84.dp)
-                                        .onKeyEvent { keyEvent ->
-                                            if (keyEvent.type == KeyEventType.KeyDown &&
-                                                keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT &&
-                                                index == 0
-                                            ) {
-                                                cancelButtonRequester.requestFocusSafe()
-                                                true
-                                            } else false
-                                        }
-                                        .tvFocusableItem(
-                                            onClick = {
-                                                HapticEngine.get().perform(HapticType.SELECTION)
-                                                selectedStreamIndex = index
-                                                preferredQualityName = stream.quality
-                                                playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
-                                                showQualityDialog = false
-                                            },
-                                            scaleFactor = 1.05f,
-                                            shape = RoundedCornerShape(12.dp),
-                                            focusRequester = itemRequester,
-                                            focusedBorderColor = CinemaPrimary
-                                        )
-                                ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(8.dp),
-                                        verticalArrangement = Arrangement.Center,
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        Text(
-                                            text = stream.quality,
-                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        if (isSelected) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Check,
-                                                    contentDescription = null,
-                                                    tint = CinemaPrimary,
-                                                    modifier = Modifier.size(13.dp)
-                                                )
-                                                Text(
-                                                    text = "Текущее",
-                                                    color = CinemaPrimary,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.SemiBold
-                                                )
-                                            }
-                                        } else {
-                                            Text(
-                                                text = when {
-                                                    stream.quality.contains("1080") -> "Full HD"
-                                                    stream.quality.contains("720") -> "HD"
-                                                    stream.quality.contains("4K", true) || stream.quality.contains("2160") -> "Ultra HD"
-                                                    else -> "SD"
-                                                },
-                                                color = CinemaTextGray,
-                                                fontSize = 11.sp
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // МОБИЛЬНАЯ ВЕРСИЯ
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(18.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.HighQuality,
-                                contentDescription = null,
-                                tint = CinemaPrimary,
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Text(
-                                text = "Качество видео",
-                                color = CinemaTextWhite,
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Выберите желаемое разрешение видеопотока:",
-                            color = CinemaTextGray,
-                            fontSize = 12.sp
-                        )
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(qualityScrollState)
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            cleanStreams.forEachIndexed { index, stream ->
-                                val isSelected = index == selectedStreamIndex
-
-                                Surface(
-                                    color = if (isSelected) CinemaPrimary.copy(alpha = 0.22f) else CinemaCard,
-                                    shape = RoundedCornerShape(12.dp),
-                                    border = BorderStroke(
-                                        if (isSelected) 2.dp else 1.dp,
-                                        if (isSelected) CinemaPrimary else CinemaBorder
-                                    ),
-                                    modifier = Modifier
-                                        .width(112.dp)
-                                        .height(78.dp)
-                                        .clickable {
-                                            HapticEngine.get().perform(HapticType.SELECTION)
-                                            selectedStreamIndex = index
-                                            preferredQualityName = stream.quality
-                                            playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
-                                            showQualityDialog = false
-                                        }
-                                ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(8.dp),
-                                        verticalArrangement = Arrangement.Center,
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        Text(
-                                            text = stream.quality,
-                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                            fontSize = 15.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        if (isSelected) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Check,
-                                                    contentDescription = null,
-                                                    tint = CinemaPrimary,
-                                                    modifier = Modifier.size(13.dp)
-                                                )
-                                                Text(
-                                                    text = "Текущее",
-                                                    color = CinemaPrimary,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.SemiBold
-                                                )
-                                            }
-                                        } else {
-                                            Text(
-                                                text = when {
-                                                    stream.quality.contains("1080") -> "Full HD"
-                                                    stream.quality.contains("720") -> "HD"
-                                                    stream.quality.contains("4K", true) || stream.quality.contains("2160") -> "Ultra HD"
-                                                    else -> "SD"
-                                                },
-                                                color = CinemaTextGray,
-                                                fontSize = 11.sp
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            TextButton(
-                                onClick = {
-                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                                    showQualityDialog = false
-                                }
-                            ) {
-                                Text("Закрыть", color = CinemaPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Speed Selection Dialog (with 1.5x, 2x, etc.)
-    if (showSpeedDialog) {
-        val availableSpeeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
-        AlertDialog(
-            onDismissRequest = { showSpeedDialog = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false),
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Speed,
-                        contentDescription = null,
-                        tint = CinemaPrimary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Скорость воспроизведения", color = CinemaTextWhite)
-                }
-            },
-            containerColor = CinemaDark,
-            text = {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.verticalScroll(rememberScrollState())
-                ) {
-                    availableSpeeds.forEach { speed ->
-                        val isSelected = speed == playbackSpeed
-                        val label = when (speed) {
-                            1.0f -> "1.0x (Обычная)"
-                            1.5f -> "1.5x (Быстрая)"
-                            2.0f -> "2.0x (Двойная)"
-                            else -> "${speed}x"
-                        }
-
-                        Surface(
-                            color = if (isSelected) CinemaPrimary.copy(alpha = 0.15f) else Color.Transparent,
-                            shape = RoundedCornerShape(8.dp),
-                            border = if (isSelected) BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.4f)) else null,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    HapticEngine.get().perform(HapticType.SELECTION)
-                                    playbackSpeed = speed
-                                    exoPlayer.setPlaybackSpeed(speed)
-                                    showSpeedDialog = false
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 10.dp, horizontal = 14.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = label,
-                                    color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    fontSize = 14.sp
-                                )
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = CinemaPrimary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-              }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                    showSpeedDialog = false
-                }) {
-                    Text("Закрыть", color = CinemaPrimary)
-                }
-            }
-        )
-    }
-
-    // Subtitles Selection and Styling Dialog
-    if (showSubtitlesDialog) {
-        AlertDialog(
-            onDismissRequest = { showSubtitlesDialog = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false),
-            title = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Subtitles,
-                        contentDescription = null,
-                        tint = CinemaPrimary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Text("Субтитры", color = CinemaTextWhite, fontWeight = FontWeight.Bold)
-                }
-            },
-            containerColor = CinemaDark,
-            text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    // Option 1: Turn off
-                    val isOff = !isSubtitlesEnabled || selectedSubtitleTrack == null
-                    Surface(
-                        color = if (isOff) CinemaPrimary.copy(alpha = 0.15f) else Color.Transparent,
-                        shape = RoundedCornerShape(8.dp),
-                        border = if (isOff) BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.4f)) else null,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                isSubtitlesEnabled = false
-                                selectedSubtitleTrack = null
-                                applySubtitleTrack(null, false)
-                                prefs.edit().putString("preferred_subtitle_lang", "off").apply()
-                                RezkaService.setPreferredSubtitleLang("off")
-                                FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = "off")
-                                showSubtitlesDialog = false
-                                screenNotificationMessage = "Субтитры выключены"
-                            }
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 11.dp, horizontal = 14.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Выключены",
-                                color = if (isOff) CinemaPrimary else CinemaTextWhite,
-                                fontWeight = if (isOff) FontWeight.Bold else FontWeight.Normal,
-                                fontSize = 14.sp
-                            )
-                            if (isOff) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = CinemaPrimary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    HorizontalDivider(
-                        color = CinemaBorder.copy(alpha = 0.4f),
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
-
-                    // Option 2: List of available subtitle tracks
-                    if (availableSubtitles.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 12.dp, horizontal = 8.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "Для этой озвучки нет отдельных дорожек субтитров",
-                                color = CinemaTextGray,
-                                fontSize = 13.sp,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    } else {
-                        availableSubtitles.forEach { track ->
-                            val isSelected = isSubtitlesEnabled && selectedSubtitleTrack?.url == track.url
-                            Surface(
-                                color = if (isSelected) CinemaPrimary.copy(alpha = 0.15f) else Color.Transparent,
-                                shape = RoundedCornerShape(8.dp),
-                                border = if (isSelected) BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.4f)) else null,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        selectedSubtitleTrack = track
-                                        isSubtitlesEnabled = true
-                                        applySubtitleTrack(track, true)
-                                        prefs.edit().putString("preferred_subtitle_lang", track.language).apply()
-                                        RezkaService.setPreferredSubtitleLang(track.language)
-                                        FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = track.language)
-                                        showSubtitlesDialog = false
-                                        screenNotificationMessage = "Субтитры: ${track.title}"
-                                    }
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 10.dp, horizontal = 14.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f, fill = false)) {
-                                        Text(
-                                            text = track.title,
-                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                            fontSize = 14.sp
-                                        )
-                                        if (track.language.isNotEmpty() && track.language != "und") {
-                                            Text(
-                                                text = track.language.uppercase(),
-                                                color = CinemaTextGray,
-                                                fontSize = 11.sp
-                                            )
-                                        }
-                                    }
-                                    if (isSelected) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = null,
-                                            tint = CinemaPrimary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Option 3: Subtitle Text Size scaling selector
-                    HorizontalDivider(
-                        color = CinemaBorder.copy(alpha = 0.4f),
-                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
-                    )
-                    Text(
-                        text = "Размер шрифта субтитров",
-                        color = CinemaTextGray,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        val sizeOptions = listOf(
-                            "Мелкий" to 0.042f,
-                            "Обычный" to 0.053f,
-                            "Крупный" to 0.068f,
-                            "Макс" to 0.082f
-                        )
-                        sizeOptions.forEach { (label, scale) ->
-                            val isChosen = kotlin.math.abs(subtitleTextScale - scale) < 0.005f
-                            Surface(
-                                color = if (isChosen) CinemaPrimary else CinemaSurface,
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable {
-                                        subtitleTextScale = scale
-                                        prefs.edit().putFloat("subtitle_text_scale", scale).apply()
-                                        RezkaService.setSubtitleTextScale(scale)
-                                        FirebaseSyncManager.onSettingsUpdated(subtitleTextScale = scale)
-                                    }
-                            ) {
-                                Text(
-                                    text = label,
-                                    color = if (isChosen) Color.Black else CinemaTextWhite,
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isChosen) FontWeight.Bold else FontWeight.Normal,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(vertical = 7.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                    showSubtitlesDialog = false
-                }) {
-                    Text("Закрыть", color = CinemaPrimary)
-                }
-            }
-        )
-    }
-
-    // Translator (Dubbing) Selection Dialog
-    if (showTranslatorDialog) {
-        AlertDialog(
-            onDismissRequest = { showTranslatorDialog = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false),
-            containerColor = CinemaDark,
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.RecordVoiceOver,
-                        contentDescription = null,
-                        tint = CinemaPrimary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Выбор озвучки",
-                        color = CinemaTextWhite,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 380.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    translators.forEach { trans ->
-                        val isSelected = trans.id == currentTranslator?.id
-                        Surface(
-                            color = if (isSelected) CinemaPrimary.copy(alpha = 0.2f) else Color.Transparent,
-                            shape = RoundedCornerShape(8.dp),
-                            border = if (isSelected) BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)) else BorderStroke(0.5.dp, CinemaBorder.copy(alpha = 0.3f)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    HapticEngine.get().perform(HapticType.SELECTION)
-                                    showTranslatorDialog = false
-                                    val currentPos = exoPlayer.currentPosition
-                                    onSelectTranslator?.invoke(trans, currentPos)
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 10.dp, horizontal = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(
-                                    modifier = Modifier.weight(1f, fill = false),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (trans.flagUrl.isNotEmpty()) {
-                                        AsyncImage(
-                                            model = trans.flagUrl,
-                                            contentDescription = null,
-                                            contentScale = ContentScale.Fit,
-                                            modifier = Modifier
-                                                .padding(end = 8.dp)
-                                                .height(14.dp)
-                                                .widthIn(max = 22.dp)
-                                                .clip(RoundedCornerShape(2.dp))
-                                        )
-                                    }
-                                    Text(
-                                        text = trans.name,
-                                        color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        fontSize = 14.sp
-                                    )
-                                    if (trans.isPremium && trans.premiumUrl.isNotEmpty()) {
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        AsyncImage(
-                                            model = trans.premiumUrl,
-                                            contentDescription = "Премиум",
-                                            contentScale = ContentScale.Fit,
-                                            modifier = Modifier
-                                                .height(14.dp)
-                                                .widthIn(max = 22.dp)
-                                        )
-                                    }
-                                }
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        tint = CinemaPrimary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                    showTranslatorDialog = false
-                }) {
-                    Text("Закрыть", color = CinemaPrimary)
-                }
-            }
-        )
     }
 }
 

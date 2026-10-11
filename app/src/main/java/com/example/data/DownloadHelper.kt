@@ -2,8 +2,10 @@ package com.example.data
 
 import android.app.DownloadManager
 import android.content.Context
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
 import kotlinx.coroutines.CoroutineScope
@@ -20,6 +22,117 @@ object DownloadHelper {
     private const val TAG = "DownloadHelper"
 
     /**
+     * Гарантирует наличие файла .nomedia в указанной директории,
+     * чтобы системная Галерея и медиасканеры не индексировали её содержимое.
+     * Минимальная нагрузка на CPU (одна быстрая проверка exists()).
+     */
+    fun ensureNoMedia(dir: File) {
+        try {
+            if (!dir.exists()) {
+                dir.mkdirs()
+            }
+            val noMedia = File(dir, ".nomedia")
+            if (!noMedia.exists()) {
+                noMedia.createNewFile()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Не удалось создать .nomedia в ${dir.absolutePath}: ${e.message}")
+        }
+    }
+
+    /**
+     * Удаляет записи файлов оффлайн библиотеки из системного MediaStore,
+     * если они ранее были ошибочно проиндексированы системной Галереей.
+     */
+    fun cleanOfflineFromMediaStore(context: Context) {
+        try {
+            val offlineDir = getOfflineDirectory(context)
+            val offlinePath = offlineDir.absolutePath
+            val resolver = context.contentResolver
+
+            // 1. Очистка видеозаписей
+            try {
+                val videoUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                val where = "${MediaStore.Video.Media.DATA} LIKE ?"
+                val args = arrayOf("$offlinePath%")
+                val count = resolver.delete(videoUri, where, args)
+                if (count > 0) {
+                    Log.d(TAG, "Удалено $count видео оффлайн библиотеки из MediaStore")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Ошибка очистки видео из MediaStore: ${e.message}")
+            }
+
+            // 2. Очистка постеров/картинок
+            try {
+                val imageUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                val where = "${MediaStore.Images.Media.DATA} LIKE ?"
+                val args = arrayOf("$offlinePath%")
+                val count = resolver.delete(imageUri, where, args)
+                if (count > 0) {
+                    Log.d(TAG, "Удалено $count изображений оффлайн библиотеки из MediaStore")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Ошибка очистки картинок из MediaStore: ${e.message}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "cleanOfflineFromMediaStore: ${e.message}")
+        }
+    }
+
+    /**
+     * Удаляет конкретный файл из базы данных MediaStore
+     */
+    fun cleanFileFromMediaStore(context: Context, filePath: String) {
+        if (filePath.isBlank()) return
+        try {
+            val resolver = context.contentResolver
+            val where = "${MediaStore.MediaColumns.DATA} = ?"
+            val args = arrayOf(filePath)
+            resolver.delete(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, where, args)
+            resolver.delete(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, where, args)
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Защищает всю оффлайн библиотеку от появления в Галерее устройства.
+     * Рекурсивно создает .nomedia во всех подпапках и уведомляет MediaScanner.
+     */
+    fun protectOfflineDirectoryFromGallery(context: Context) {
+        try {
+            val offlineDir = getOfflineDirectory(context)
+            ensureNoMedia(offlineDir)
+
+            // Также защищаем папку постеров
+            val postersDir = getOfflinePostersDirectory(context)
+            ensureNoMedia(postersDir)
+
+            // Проверяем все подпапки фильмов/сериалов
+            offlineDir.listFiles()?.forEach { file ->
+                if (file.isDirectory) {
+                    ensureNoMedia(file)
+                }
+            }
+
+            // Уведомляем MediaScanner о файле .nomedia для немедленного применения
+            val noMediaFile = File(offlineDir, ".nomedia")
+            if (noMediaFile.exists()) {
+                MediaScannerConnection.scanFile(
+                    context,
+                    arrayOf(noMediaFile.absolutePath),
+                    null,
+                    null
+                )
+            }
+
+            // Очищаем существующие следы из базы MediaStore
+            cleanOfflineFromMediaStore(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "protectOfflineDirectoryFromGallery: ${e.message}")
+        }
+    }
+
+    /**
      * Возвращает выделенный каталог оффлайн библиотеки:
      * /Android/data/<package_name>/files/offline
      */
@@ -29,6 +142,7 @@ object DownloadHelper {
         if (!dir.exists()) {
             dir.mkdirs()
         }
+        ensureNoMedia(dir)
         return dir
     }
 
@@ -40,6 +154,7 @@ object DownloadHelper {
         if (!dir.exists()) {
             dir.mkdirs()
         }
+        ensureNoMedia(dir)
         return dir
     }
 
@@ -53,6 +168,7 @@ object DownloadHelper {
         if (!dir.exists()) {
             dir.mkdirs()
         }
+        ensureNoMedia(dir)
         return dir
     }
 
@@ -407,6 +523,7 @@ object DownloadHelper {
             try {
                 val resolvedFile = resolveOfflineVideoFile(entity, context)
                 if (resolvedFile != null && resolvedFile.exists()) {
+                    cleanFileFromMediaStore(context, resolvedFile.absolutePath)
                     resolvedFile.delete()
                 }
             } catch (e: Exception) {
@@ -441,10 +558,12 @@ object DownloadHelper {
     suspend fun clearAllOffline(context: Context, repository: RezkaRepository) {
         withContext(Dispatchers.IO) {
             try {
+                cleanOfflineFromMediaStore(context)
                 val dir = getOfflineDirectory(context)
                 if (dir.exists()) {
                     dir.deleteRecursively()
                     dir.mkdirs()
+                    ensureNoMedia(dir)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Ошибка очистки каталога: ${e.message}")

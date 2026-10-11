@@ -15,6 +15,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
@@ -2765,7 +2766,7 @@ fun DetailScreen(
                     shape = RoundedCornerShape(16.dp),
                     border = BorderStroke(1.dp, CinemaBorder),
                     modifier = Modifier
-                        .fillMaxWidth(if (isTvMode) 0.80f else 0.94f)
+                        .fillMaxWidth(if (isTvMode) 0.80f else 0.86f)
                         .wrapContentHeight()
                         .padding(16.dp)
                 ) {
@@ -2822,11 +2823,6 @@ fun DetailScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
-                                Text(
-                                    text = "Выберите разрешение для запуска:",
-                                    color = CinemaTextGray,
-                                    fontSize = 11.sp
-                                )
 
                                 Spacer(modifier = Modifier.height(6.dp))
 
@@ -2945,12 +2941,9 @@ fun DetailScreen(
                                                 focusedBorderColor = CinemaPrimary
                                             )
                                     ) {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .padding(8.dp),
-                                            verticalArrangement = Arrangement.Center,
-                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier.fillMaxSize().padding(8.dp)
                                         ) {
                                             Text(
                                                 text = stream.quality,
@@ -2958,143 +2951,94 @@ fun DetailScreen(
                                                 fontSize = 16.sp,
                                                 fontWeight = FontWeight.Bold
                                             )
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(
-                                                text = when {
-                                                    stream.quality.contains("1080") -> "Full HD"
-                                                    stream.quality.contains("720") -> "HD"
-                                                    stream.quality.contains("4K", true) || stream.quality.contains("2160") -> "Ultra HD"
-                                                    else -> "SD"
-                                                },
-                                                color = CinemaPrimary,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
                                         }
                                     }
                                 }
                             }
                         }
                     } else {
-                        // МОБИЛЬНАЯ ВЕРСИЯ (вертикальная колонка с горизонтальным скроллом карточек)
+                        // МОБИЛЬНАЯ ВЕРСИЯ: единый цельный блок выбора качества в едином стиле приложения
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(18.dp)
+                                .padding(16.dp)
+                                .verticalScroll(qualityScrollState),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Surface(
+                                color = CinemaCard,
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, CinemaBorder),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.HighQuality,
-                                    contentDescription = null,
-                                    tint = CinemaPrimary,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Text(
-                                    text = "Выберите качество",
-                                    color = CinemaTextWhite,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "Выберите разрешение для запуска воспроизведения:",
-                                color = CinemaTextGray,
-                                fontSize = 12.sp
-                            )
-                            Spacer(modifier = Modifier.height(14.dp))
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    streams.forEachIndexed { idx, stream ->
+                                        val onSelectQuality: () -> Unit = {
+                                            HapticEngine.get().perform(HapticType.CONFIRM)
+                                            val streamsToPlay = streams
+                                            val title = pendingPlayTitle
+                                            val subtitle = pendingPlaySubtitle
+                                            val startPos = pendingPlayStartPos
+                                            pendingStreamsForDialog = null
 
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(qualityScrollState)
-                                    .padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                streams.forEachIndexed { idx, stream ->
-                                    val onSelectQuality: () -> Unit = {
-                                        HapticEngine.get().perform(HapticType.CONFIRM)
-                                        val streamsToPlay = streams
-                                        val title = pendingPlayTitle
-                                        val subtitle = pendingPlaySubtitle
-                                        val startPos = pendingPlayStartPos
-                                        pendingStreamsForDialog = null
-
-                                        if (selectedPlayer != RezkaService.PLAYER_INTERNAL) {
-                                            com.example.data.ExternalPlayerManager.launchPlayback(
-                                                context = context,
-                                                streamUrl = stream.url,
-                                                title = title,
-                                                subtitle = subtitle,
-                                                startPositionMs = startPos,
-                                                subtitles = stream.subtitles,
-                                                playerKey = selectedPlayer
-                                            )
-                                        } else {
-                                            playerTitle = title
-                                            playerSubtitle = subtitle
-                                            playerStartPosition = startPos
-                                            initialQualityIndex = idx
-                                            activePlayerStreams = streamsToPlay
-                                            isPlayerOpen = true
+                                            if (selectedPlayer != RezkaService.PLAYER_INTERNAL) {
+                                                com.example.data.ExternalPlayerManager.launchPlayback(
+                                                    context = context,
+                                                    streamUrl = stream.url,
+                                                    title = title,
+                                                    subtitle = subtitle,
+                                                    startPositionMs = startPos,
+                                                    subtitles = stream.subtitles,
+                                                    playerKey = selectedPlayer
+                                                )
+                                            } else {
+                                                playerTitle = title
+                                                playerSubtitle = subtitle
+                                                playerStartPosition = startPos
+                                                initialQualityIndex = idx
+                                                activePlayerStreams = streamsToPlay
+                                                isPlayerOpen = true
+                                            }
                                         }
-                                    }
 
-                                    Surface(
-                                        color = CinemaCard,
-                                        shape = RoundedCornerShape(12.dp),
-                                        border = BorderStroke(1.dp, CinemaBorder),
-                                        modifier = Modifier
-                                            .width(112.dp)
-                                            .height(78.dp)
-                                            .clickable { onSelectQuality() }
-                                    ) {
-                                        Column(
+                                        Box(
+                                            contentAlignment = Alignment.Center,
                                             modifier = Modifier
-                                                .fillMaxSize()
-                                                .padding(8.dp),
-                                            verticalArrangement = Arrangement.Center,
-                                            horizontalAlignment = Alignment.CenterHorizontally
+                                                .fillMaxWidth()
+                                                .height(48.dp)
+                                                .clickable { onSelectQuality() }
                                         ) {
                                             Text(
                                                 text = stream.quality,
                                                 color = CinemaTextWhite,
-                                                fontSize = 15.sp,
-                                                fontWeight = FontWeight.Bold
+                                                fontSize = 16.sp,
+                                                fontWeight = FontWeight.SemiBold
                                             )
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(
-                                                text = when {
-                                                    stream.quality.contains("1080") -> "Full HD"
-                                                    stream.quality.contains("720") -> "HD"
-                                                    stream.quality.contains("4K", true) || stream.quality.contains("2160") -> "Ultra HD"
-                                                    else -> "SD"
-                                                },
-                                                color = CinemaPrimary,
-                                                fontSize = 11.sp
+                                        }
+
+                                        if (idx < streams.size - 1) {
+                                            HorizontalDivider(
+                                                color = CinemaBorder.copy(alpha = 0.5f),
+                                                thickness = 0.5.dp
                                             )
                                         }
                                     }
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(14.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End
+                            TextButton(
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                    pendingStreamsForDialog = null
+                                },
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                TextButton(
-                                    onClick = {
-                                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                                        pendingStreamsForDialog = null
-                                    }
-                                ) {
-                                    Text("Отмена", color = CinemaPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                                }
+                                Text(
+                                    text = "Отмена",
+                                    color = CinemaPrimary,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
                             }
                         }
                     }
