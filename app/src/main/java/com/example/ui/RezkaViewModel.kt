@@ -747,7 +747,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addSearchQueryToHistory(query: String) {
         val trimmed = query.trim()
-        if (trimmed.length < 2) return
+        if (trimmed.isEmpty()) return
         val current = _searchHistory.value.toMutableList()
         // Удаляем только точные совпадения, чтобы похожие запросы (например, "Веном" и "Веном 2") не перезаписывали друг друга
         current.removeAll { it.equals(trimmed, ignoreCase = true) }
@@ -761,12 +761,13 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Фиксирует поисковый запрос в историю ровно один раз при наступлении одного из событий:
      * - Нажатие ввода на клавиатуре (Enter / Search)
+     * - Скрытие клавиатуры (кнопка Back / жесты)
      * - Начало скролла выдачи
      * - Выбор фильма из результатов
      */
     fun commitSearchQuery(query: String = searchQuery) {
         val trimmed = query.trim()
-        if (trimmed.length < 2) return
+        if (trimmed.isEmpty()) return
         if (trimmed.equals(lastCommittedQuery, ignoreCase = true)) return
         lastCommittedQuery = trimmed
         addSearchQueryToHistory(trimmed)
