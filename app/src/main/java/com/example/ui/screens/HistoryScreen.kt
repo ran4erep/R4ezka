@@ -296,6 +296,54 @@ fun HistoryScreen(
                     val markWatchedFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
                     val deleteItemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
 
+                    val navigateToHistoryItem: (Int, Boolean) -> Unit = { targetIndex, focusButton ->
+                        val total = historyList.size
+                        if (total > 0) {
+                            val clampedIndex = targetIndex.coerceIn(0, total - 1)
+                            viewModel.setTvHistoryFocusedItem(historyList[clampedIndex].itemId, clampedIndex)
+                            coroutineScope.launch {
+                                try {
+                                    val layoutInfo = gridState.layoutInfo
+                                    val visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == clampedIndex }
+                                    val isFullyVisible = if (visibleItem != null) {
+                                        val top = visibleItem.offset.y
+                                        val bottom = top + visibleItem.size.height
+                                        top >= layoutInfo.viewportStartOffset && bottom <= layoutInfo.viewportEndOffset
+                                    } else false
+
+                                    if (!isFullyVisible) {
+                                        gridState.scrollToItem(clampedIndex)
+                                    }
+                                } catch (_: Throwable) {
+                                    try {
+                                        gridState.scrollToItem(clampedIndex)
+                                    } catch (_: Throwable) {}
+                                }
+
+                                val targetHistory = historyList[clampedIndex]
+                                val requester = if (focusButton) {
+                                    if (targetHistory.isFullyWatched) {
+                                        deleteItemFocusRequesters.getOrPut(clampedIndex) { FocusRequester() }
+                                    } else {
+                                        markWatchedFocusRequesters.getOrPut(clampedIndex) { FocusRequester() }
+                                    }
+                                } else {
+                                    getFocusRequesterForIndex(clampedIndex)
+                                }
+
+                                for (attempt in 0..10) {
+                                    if (attempt > 0) {
+                                        kotlinx.coroutines.delay(20L)
+                                    }
+                                    try {
+                                        requester.requestFocus()
+                                        break
+                                    } catch (_: Throwable) {}
+                                }
+                            }
+                        }
+                    }
+
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(tvGridCols),
                         state = gridState,
@@ -305,7 +353,6 @@ fun HistoryScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .bounceOverscroll(androidx.compose.foundation.gestures.Orientation.Vertical)
-                            .dpadScrollable(gridState)
                             .onKeyEvent { keyEvent ->
                                 if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
                                     if (onNavigateLeftToSidebar != null) {
@@ -320,22 +367,6 @@ fun HistoryScreen(
                             items = historyList,
                             key = { _, it -> it.itemId }
                         ) { index, history ->
-                            val navigateToItem: (Int) -> Unit = { targetIndex ->
-                                val total = historyList.size
-                                if (total > 0) {
-                                    val clampedIndex = targetIndex.coerceIn(0, total - 1)
-                                    coroutineScope.launch {
-                                        try {
-                                            val isVisible = gridState.layoutInfo.visibleItemsInfo.any { it.index == clampedIndex }
-                                            if (!isVisible) {
-                                                gridState.scrollToItem(clampedIndex)
-                                            }
-                                        } catch (_: Exception) {}
-                                        getFocusRequesterForIndex(clampedIndex).requestFocusSafe()
-                                    }
-                                }
-                            }
-
                             val cardRequester = getFocusRequesterForIndex(index)
                             val markWatchedRequester = markWatchedFocusRequesters.getOrPut(index) { FocusRequester() }
                             val deleteRequester = deleteItemFocusRequesters.getOrPut(index) { FocusRequester() }
@@ -370,17 +401,21 @@ fun HistoryScreen(
                                         )
                                         onNavigateToDetail(item)
                                     },
-                                    onNavigateIndex = navigateToItem,
+                                    onNavigateIndex = { targetIdx -> navigateToHistoryItem(targetIdx, false) },
                                     onUp = {
                                         if (index >= tvGridCols) {
-                                            deleteItemFocusRequesters.getOrPut(index - tvGridCols) { FocusRequester() }.requestFocusSafe()
+                                            navigateToHistoryItem(index - tvGridCols, true)
+                                        } else {
+                                            coroutineScope.launch {
+                                                try { gridState.scrollToItem(0) } catch (_: Throwable) {}
+                                            }
                                         }
                                     },
                                     onLeft = {
                                         if (isFirstCol) {
                                             onNavigateLeftToSidebar?.invoke()
                                         } else {
-                                            navigateToItem(index - 1)
+                                            navigateToHistoryItem(index - 1, false)
                                         }
                                     },
                                     onDown = {
@@ -434,7 +469,7 @@ fun HistoryScreen(
                                                         android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
                                                             val nextIndex = index + tvGridCols
                                                             if (nextIndex < historyList.size) {
-                                                                getFocusRequesterForIndex(nextIndex).requestFocusSafe()
+                                                                navigateToHistoryItem(nextIndex, false)
                                                                 true
                                                             } else true
                                                         }
@@ -518,7 +553,7 @@ fun HistoryScreen(
                                                             android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
                                                                 val nextIndex = index + tvGridCols
                                                                 if (nextIndex < historyList.size) {
-                                                                    getFocusRequesterForIndex(nextIndex).requestFocusSafe()
+                                                                    navigateToHistoryItem(nextIndex, false)
                                                                     true
                                                                 } else true
                                                             }
@@ -592,7 +627,7 @@ fun HistoryScreen(
                                                             android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
                                                                 val nextIndex = index + tvGridCols
                                                                 if (nextIndex < historyList.size) {
-                                                                    getFocusRequesterForIndex(nextIndex).requestFocusSafe()
+                                                                    navigateToHistoryItem(nextIndex, false)
                                                                     true
                                                                 } else true
                                                             }
