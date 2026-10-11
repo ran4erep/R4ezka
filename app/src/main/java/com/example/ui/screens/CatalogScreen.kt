@@ -1087,6 +1087,7 @@ fun RezkaItemCard(
     focusRequester: FocusRequester? = null,
     onNavigateIndex: ((Int) -> Unit)? = null,
     onUp: (() -> Unit)? = null,
+    onDown: (() -> Unit)? = null,
     onLeft: (() -> Unit)? = null,
     onFocused: (() -> Unit)? = null
 ) {
@@ -1115,16 +1116,21 @@ fun RezkaItemCard(
                 if (keyEvent.type == KeyEventType.KeyDown) {
                     when (keyEvent.nativeKeyEvent.keyCode) {
                         AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                            val targetIndex = index + safeCols
-                            if (onNavigateIndex != null) {
-                                if (targetIndex < totalItems) {
-                                    onNavigateIndex(targetIndex)
-                                    true
-                                } else if (index < totalItems - 1) {
-                                    onNavigateIndex(totalItems - 1)
-                                    true
-                                } else true
-                            } else false
+                            if (onDown != null) {
+                                onDown()
+                                true
+                            } else {
+                                val targetIndex = index + safeCols
+                                if (onNavigateIndex != null) {
+                                    if (targetIndex < totalItems) {
+                                        onNavigateIndex(targetIndex)
+                                        true
+                                    } else if (index < totalItems - 1) {
+                                        onNavigateIndex(totalItems - 1)
+                                        true
+                                    } else true
+                                } else false
+                            }
                         }
                         AndroidKeyEvent.KEYCODE_DPAD_UP -> {
                             if (index >= safeCols) {
