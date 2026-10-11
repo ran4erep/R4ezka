@@ -685,86 +685,35 @@ fun TvRemoteInputField(
                     )
                 } else {
                     // Режим редактирования: активируется ТОЛЬКО по нажатию ОК на пульте
-                    BasicTextField(
+                    TvSearchInputField(
                         value = value,
                         onValueChange = onValueChange,
-                        singleLine = singleLine,
-                        visualTransformation = visualTransformation,
-                        textStyle = TextStyle(
-                            color = CinemaTextWhite,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
-                        ),
-                        cursorBrush = SolidColor(CinemaPrimary),
-                        keyboardOptions = keyboardOptions,
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                onCommit?.invoke()
-                                isEditing = false
-                                keyboardController?.hide()
-                                localRequester.requestFocusSafe()
-                            },
-                            onSearch = {
-                                onCommit?.invoke()
-                                isEditing = false
-                                keyboardController?.hide()
-                                localRequester.requestFocusSafe()
-                            },
-                            onGo = {
-                                onCommit?.invoke()
-                                isEditing = false
-                                keyboardController?.hide()
-                                localRequester.requestFocusSafe()
-                            }
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(internalFieldRequester)
-                            .onFocusChanged { focusState ->
-                                if (focusState.isFocused) {
-                                    hasBeenFocused = true
-                                } else if (hasBeenFocused && isEditing) {
-                                    isEditing = false
-                                    keyboardController?.hide()
-                                }
-                            }
-                            .onKeyEvent { keyEvent ->
-                                if (keyEvent.type == KeyEventType.KeyDown) {
-                                    val elapsed = System.currentTimeMillis() - lastActivationTime
-                                    when (keyEvent.nativeKeyEvent.keyCode) {
-                                        android.view.KeyEvent.KEYCODE_ENTER,
-                                        android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
-                                        android.view.KeyEvent.KEYCODE_DPAD_CENTER -> {
-                                            if (elapsed > 250L) {
-                                                onCommit?.invoke()
-                                                isEditing = false
-                                                keyboardController?.hide()
-                                                localRequester.requestFocusSafe()
-                                                true
-                                            } else {
-                                                true
-                                            }
-                                        }
-                                        android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                            if (isEditing) {
-                                                wasEditing = false
-                                                isEditing = false
-                                                keyboardController?.hide()
-                                            }
-                                            false
-                                        }
-                                        android.view.KeyEvent.KEYCODE_DPAD_UP -> {
-                                            if (isEditing) {
-                                                wasEditing = false
-                                                isEditing = false
-                                                keyboardController?.hide()
-                                            }
-                                            false
-                                        }
-                                        else -> false
-                                    }
-                                } else false
-                            }
+                        placeholder = placeholder,
+                        fontSizeSp = 14f,
+                        modifier = Modifier.fillMaxWidth(),
+                        onExitEditing = {
+                            wasEditing = false
+                            isEditing = false
+                            keyboardController?.hide()
+                            localRequester.requestFocusSafe()
+                        },
+                        onCommit = {
+                            wasEditing = false
+                            isEditing = false
+                            keyboardController?.hide()
+                            onCommit?.invoke()
+                            localRequester.requestFocusSafe()
+                        },
+                        onDown = {
+                            wasEditing = false
+                            isEditing = false
+                            keyboardController?.hide()
+                        },
+                        onUp = {
+                            wasEditing = false
+                            isEditing = false
+                            keyboardController?.hide()
+                        }
                     )
                 }
             }
