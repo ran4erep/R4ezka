@@ -16,6 +16,7 @@ val CinemaDark = Color(0xFF14141E)
 val CinemaSurface = Color(0xFF1E1E2A)
 val CinemaCard = Color(0xFF1E1E2A)
 val CinemaPrimary = Color(0xFFFF2D55) // Rich active pinkish red
+val CinemaRed = Color(0xFFEF4444) // Bright red for delete / alerts
 val CinemaSecondary = Color(0xFF323246)
 val CinemaAmber = Color(0xFFFFB300) // Warm gold for ratings
 val CinemaGreen = Color(0xFF4CAF50) // Online / Success green

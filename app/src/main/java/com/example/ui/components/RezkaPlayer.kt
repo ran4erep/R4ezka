@@ -32,6 +32,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
@@ -104,6 +105,8 @@ import com.example.data.StreamUrl
 import com.example.data.SubtitleTrack
 import com.example.data.Translator
 import com.example.ui.tv.LocalTvShowCursor
+import com.example.ui.tv.tvFocusableItem
+import com.example.ui.tv.requestFocusSafe
 import com.example.ui.haptics.HapticEngine
 import com.example.ui.haptics.HapticType
 import coil.compose.AsyncImage
@@ -3404,52 +3407,151 @@ fun RezkaPlayer(
         }
     }
 
-    // Quality Selection Dialog
+    // Quality Selection Dialog (Горизонтальное адаптивное окно для ТВ и мобильных)
     if (showQualityDialog) {
+        val initialQualityRequester = remember { FocusRequester() }
+        val qualityScrollState = rememberScrollState()
+
+        LaunchedEffect(Unit) {
+            initialQualityRequester.requestFocusSafe()
+        }
+
         AlertDialog(
             onDismissRequest = { showQualityDialog = false },
             properties = DialogProperties(usePlatformDefaultWidth = false),
-            title = { Text("Качество видео", color = CinemaTextWhite) },
+            shape = RoundedCornerShape(16.dp),
             containerColor = CinemaDark,
+            modifier = Modifier
+                .widthIn(min = 520.dp, max = 760.dp)
+                .padding(16.dp),
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.HighQuality,
+                        contentDescription = null,
+                        tint = CinemaPrimary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "Качество видео",
+                        color = CinemaTextWhite,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
             text = {
-                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    cleanStreams.forEachIndexed { index, stream ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    HapticEngine.get().perform(HapticType.SELECTION)
-                                    selectedStreamIndex = index
-                                    preferredQualityName = stream.quality
-                                    playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
-                                    showQualityDialog = false
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Выберите желаемое разрешение видеопотока:",
+                        color = CinemaTextGray,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Горизонтальный ряд карточек качества видео
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(qualityScrollState)
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        cleanStreams.forEachIndexed { index, stream ->
+                            val isSelected = index == selectedStreamIndex
+                            val itemRequester = if (isSelected) initialQualityRequester else null
+
+                            Surface(
+                                color = if (isSelected) CinemaPrimary.copy(alpha = 0.22f) else CinemaCard,
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(
+                                    if (isSelected) 2.dp else 1.dp,
+                                    if (isSelected) CinemaPrimary else Color.White.copy(alpha = 0.12f)
+                                ),
+                                modifier = Modifier
+                                    .width(112.dp)
+                                    .height(78.dp)
+                                    .tvFocusableItem(
+                                        onClick = {
+                                            HapticEngine.get().perform(HapticType.SELECTION)
+                                            selectedStreamIndex = index
+                                            preferredQualityName = stream.quality
+                                            playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
+                                            showQualityDialog = false
+                                        },
+                                        scaleFactor = 1.05f,
+                                        shape = RoundedCornerShape(12.dp),
+                                        focusRequester = itemRequester
+                                    )
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(8.dp),
+                                    verticalArrangement = Arrangement.Center,
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = stream.quality,
+                                        color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    if (isSelected) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = CinemaPrimary,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Text(
+                                                text = "Текущее",
+                                                color = CinemaPrimary,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    } else {
+                                        Text(
+                                            text = when {
+                                                stream.quality.contains("1080") -> "Full HD"
+                                                stream.quality.contains("720") -> "HD"
+                                                stream.quality.contains("4K", true) || stream.quality.contains("2160") -> "Ultra HD"
+                                                else -> "SD"
+                                            },
+                                            color = CinemaTextGray,
+                                            fontSize = 11.sp
+                                        )
+                                    }
                                 }
-                                .padding(vertical = 12.dp, horizontal = 16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = stream.quality,
-                                color = if (index == selectedStreamIndex) CinemaPrimary else CinemaTextWhite,
-                                fontWeight = if (index == selectedStreamIndex) FontWeight.Bold else FontWeight.Normal
-                            )
-                            if (index == selectedStreamIndex) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = CinemaPrimary
-                                )
                             }
                         }
                     }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                    showQualityDialog = false
-                }) {
-                    Text("Закрыть", color = CinemaPrimary)
+            confirmButton = {},
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                        showQualityDialog = false
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.tvFocusableItem(
+                        onClick = { showQualityDialog = false },
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                ) {
+                    Text("Закрыть", color = CinemaPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         )
