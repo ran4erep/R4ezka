@@ -75,6 +75,7 @@ fun HistoryScreen(
     isTopScreen: Boolean = true,
     onRegisterFocusRestorer: (((() -> Unit)) -> Unit)? = null,
     isTvMode: Boolean = false,
+    tvResolvedGrid: com.example.ui.tv.ResolvedCardGrid? = null,
     modifier: Modifier = Modifier
 ) {
     val historyList by viewModel.aggregatedWatchHistory.collectAsStateWithLifecycle()
@@ -274,12 +275,16 @@ fun HistoryScreen(
             } else if (isTvMode) {
                 // ---- РЕЖИМ ДЛЯ ТЕЛЕВИЗОРОВ: специализированная ТВ-сетка, согласованная с каталогом ----
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight) {
-                        com.example.ui.tv.CardGridEngine.calculateForTv(
-                            cardGridMode = cardGridMode,
-                            availableWidth = maxWidth,
-                            availableHeight = maxHeight
-                        )
+                    val resolvedGrid = if (isTvMode && tvResolvedGrid != null) {
+                        tvResolvedGrid
+                    } else {
+                        remember(cardGridMode, maxWidth, maxHeight) {
+                            com.example.ui.tv.CardGridEngine.calculateForTv(
+                                cardGridMode = cardGridMode,
+                                availableWidth = maxWidth,
+                                availableHeight = maxHeight
+                            )
+                        }
                     }
 
                     val tvGridCols = resolvedGrid.columns

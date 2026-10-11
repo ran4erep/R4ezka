@@ -15,7 +15,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -70,6 +69,7 @@ fun FavoritesScreen(
     isTopScreen: Boolean = true,
     onRegisterFocusRestorer: (((() -> Unit)) -> Unit)? = null,
     isTvMode: Boolean = false,
+    tvResolvedGrid: com.example.ui.tv.ResolvedCardGrid? = null,
     modifier: Modifier = Modifier
 ) {
     val favorites by viewModel.favorites.collectAsState()
@@ -248,20 +248,24 @@ fun FavoritesScreen(
                         restoreFocus()
                     }
 
-                    val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight, isLandscape, isTvMode) {
-                        if (isTvMode) {
-                            com.example.ui.tv.CardGridEngine.calculateForTv(
-                                cardGridMode = cardGridMode,
-                                availableWidth = maxWidth,
-                                availableHeight = maxHeight
-                            )
-                        } else {
-                            com.example.ui.tv.CardGridEngine.calculate(
-                                cardGridMode = cardGridMode,
-                                availableWidth = maxWidth - 32.dp,
-                                availableHeight = maxHeight - 16.dp,
-                                isLandscapeOrTv = isLandscape
-                            )
+                    val resolvedGrid = if (isTvMode && tvResolvedGrid != null) {
+                        tvResolvedGrid
+                    } else {
+                        remember(cardGridMode, maxWidth, maxHeight, isLandscape, isTvMode) {
+                            if (isTvMode) {
+                                com.example.ui.tv.CardGridEngine.calculateForTv(
+                                    cardGridMode = cardGridMode,
+                                    availableWidth = maxWidth,
+                                    availableHeight = maxHeight
+                                )
+                            } else {
+                                com.example.ui.tv.CardGridEngine.calculate(
+                                    cardGridMode = cardGridMode,
+                                    availableWidth = maxWidth - 32.dp,
+                                    availableHeight = maxHeight - 16.dp,
+                                    isLandscapeOrTv = isLandscape
+                                )
+                            }
                         }
                     }
 
@@ -534,13 +538,6 @@ private fun TvFavoriteCard(
 
     var isFocused by remember { mutableStateOf(false) }
 
-    val playCircleSize = remember(columnCount) {
-        if (columnCount >= 8) 22.dp else if (columnCount >= 6) 28.dp else if (columnCount >= 5) 34.dp else 40.dp
-    }
-    val playIconSize = remember(columnCount) {
-        if (columnCount >= 8) 13.dp else if (columnCount >= 6) 17.dp else if (columnCount >= 5) 20.dp else 24.dp
-    }
-
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -631,30 +628,6 @@ private fun TvFavoriteCard(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
-
-                // Полупрозрачный оверлей с круглой иконкой Play по центру постера (как на телефоне)
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = if (isFocused) 0.15f else 0.28f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = if (isFocused) CinemaPrimary else Color.Black.copy(alpha = 0.5f),
-                        border = BorderStroke(1.dp, if (isFocused) CinemaPrimary else Color.White.copy(alpha = 0.35f)),
-                        modifier = Modifier.size(playCircleSize)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "Смотреть",
-                                tint = if (isFocused) CinemaBlack else CinemaTextWhite,
-                                modifier = Modifier.size(playIconSize)
-                            )
-                        }
-                    }
-                }
 
                 // Adaptive Episode Badge (Series only)
                 AdaptivePosterBadge(

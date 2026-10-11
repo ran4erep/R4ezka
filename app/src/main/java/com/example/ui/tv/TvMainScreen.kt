@@ -305,11 +305,26 @@ fun TvMainScreen(
         // ---- 2. MAIN CONTENT AREA ----
         // Полная изоляция курсора: курсор действует внутри основного окна,
         // а на боковую панель переходит ИСКЛЮЧИТЕЛЬНО по нажатию влево!
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
         ) {
+            val isCompactHeight = maxHeight < 500.dp
+            val topBarPadding = if (isCompactHeight) 6.dp else 10.dp
+            val filtersBarHeight = 98.dp
+            val filtersSpacer = 10.dp
+            val catalogNetHeight = (maxHeight - topBarPadding - filtersBarHeight - filtersSpacer).coerceAtLeast(200.dp)
+            val catalogNetWidth = (maxWidth - 32.dp).coerceAtLeast(200.dp)
+
+            val tvResolvedGrid = remember(cardGridMode, catalogNetWidth, catalogNetHeight) {
+                CardGridEngine.calculateForTv(
+                    cardGridMode = cardGridMode,
+                    availableWidth = catalogNetWidth,
+                    availableHeight = catalogNetHeight
+                )
+            }
+
             when (selectedDestination) {
                 TvNavDestination.CATALOG -> {
                     TvCatalogContent(
@@ -331,7 +346,8 @@ fun TvMainScreen(
                         sidebarFocusRequester = sidebarFocusRequesters[TvNavDestination.CATALOG] ?: remember { FocusRequester() },
                         entryFocusRequester = rightContentFocusRequester,
                         isTopScreen = isTopScreen,
-                        onRegisterFocusRestorer = { restorer -> catalogFocusRestorer = restorer }
+                        onRegisterFocusRestorer = { restorer -> catalogFocusRestorer = restorer },
+                        tvResolvedGrid = tvResolvedGrid
                     )
                 }
                 TvNavDestination.FAVORITES -> {
@@ -342,7 +358,8 @@ fun TvMainScreen(
                         firstItemFocusRequester = favoritesFirstItemRequester,
                         isTopScreen = isTopScreen,
                         onRegisterFocusRestorer = { restorer -> favoritesFocusRestorer = restorer },
-                        isTvMode = true
+                        isTvMode = true,
+                        tvResolvedGrid = tvResolvedGrid
                     )
                 }
                 TvNavDestination.HISTORY -> {
@@ -353,7 +370,8 @@ fun TvMainScreen(
                         firstItemFocusRequester = historyFirstItemRequester,
                         isTopScreen = isTopScreen,
                         onRegisterFocusRestorer = { restorer -> historyFocusRestorer = restorer },
-                        isTvMode = true
+                        isTvMode = true,
+                        tvResolvedGrid = tvResolvedGrid
                     )
                 }
                 TvNavDestination.SETTINGS -> {
@@ -552,7 +570,8 @@ private fun TvCatalogContent(
     sidebarFocusRequester: FocusRequester,
     entryFocusRequester: FocusRequester,
     isTopScreen: Boolean = true,
-    onRegisterFocusRestorer: (((() -> Unit)) -> Unit)? = null
+    onRegisterFocusRestorer: (((() -> Unit)) -> Unit)? = null,
+    tvResolvedGrid: ResolvedCardGrid? = null
 ) {
     val gridState = rememberSavedLazyGridState("catalog", viewModel)
     var lastFocusedIndex by rememberSaveable { mutableStateOf(viewModel.getTvCatalogFocusedIndex() ?: 0) }
@@ -1018,7 +1037,7 @@ private fun TvCatalogContent(
                                     }
                                 }
                             } else {
-                                val resolvedGrid = remember(cardGridMode, maxWidth, maxHeight) {
+                                val resolvedGrid = tvResolvedGrid ?: remember(cardGridMode, maxWidth, maxHeight) {
                                     CardGridEngine.calculateForTv(
                                         cardGridMode = cardGridMode,
                                         availableWidth = maxWidth,

@@ -76,7 +76,8 @@ object CardGridEngine {
             // Пропорции карточки (постер + заголовок снизу)
             val approxCardHeight = (availableHeight / targetRows).coerceAtLeast(60.dp)
             val approxCardWidth = (approxCardHeight * 0.64f).coerceAtLeast(50.dp)
-            val calculatedCols = ((availableWidth + 10.dp) / (approxCardWidth + 10.dp)).toInt()
+            val rawCols = (availableWidth + 10.dp).value / (approxCardWidth + 10.dp).value
+            val calculatedCols = kotlin.math.round(rawCols).toInt()
             targetCols = calculatedCols.coerceIn(3, 10)
         }
 
@@ -114,22 +115,10 @@ object CardGridEngine {
         availableWidth: Dp,
         availableHeight: Dp
     ): ResolvedCardGrid {
-        val parsed = RezkaService.parseCardGrid(cardGridMode)
-        if (parsed != null) {
-            return calculate(
-                cardGridMode = cardGridMode,
-                availableWidth = availableWidth,
-                availableHeight = availableHeight,
-                isLandscapeOrTv = true
-            )
-        }
-        // В режиме "Авто" для ТВ согласуем эталонную рабочую высоту с каталогом (~420dp),
-        // чтобы карточки в каталоге, избранном и истории имели идентичный гармоничный размер и число колонок
-        val effectiveHeight = if (availableHeight in 440.dp..660.dp) 420.dp else availableHeight
         return calculate(
             cardGridMode = cardGridMode,
             availableWidth = availableWidth,
-            availableHeight = effectiveHeight,
+            availableHeight = availableHeight,
             isLandscapeOrTv = true
         )
     }
