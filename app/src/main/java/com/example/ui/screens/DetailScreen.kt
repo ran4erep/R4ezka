@@ -2743,14 +2743,31 @@ fun DetailScreen(
             }
         }
 
-        // Dialog for "Ask" quality selection before starting playback (Горизонтальное адаптивное окно для ТВ и смартфонов)
+        // Dialog for "Ask" quality selection before starting playback (Адаптивная сетка для ТВ и вертикальный список для смартфонов)
         pendingStreamsForDialog?.let { streams ->
             val qualityScrollState = rememberScrollState()
-            val initialQualityRequester = remember { FocusRequester() }
             val cancelButtonRequester = remember { FocusRequester() }
 
+            // Динамический движок сетки (Adaptive Quality Grid Engine) без хардкода:
+            // Рассчитывает оптимальное число колонок в зависимости от количества доступных качеств (1..N).
+            val columnsCount = remember(streams.size) {
+                when {
+                    streams.size <= 3 -> maxOf(1, streams.size)
+                    streams.size <= 8 -> (streams.size + 1) / 2
+                    else -> (streams.size + 2) / 3
+                }
+            }
+            val chunkedStreams = remember(streams, columnsCount) {
+                streams.chunked(columnsCount)
+            }
+            val qualityFocusRequesters = remember(streams.size) {
+                List(streams.size) { FocusRequester() }
+            }
+
             LaunchedEffect(Unit) {
-                initialQualityRequester.requestFocusSafe()
+                if (qualityFocusRequesters.isNotEmpty()) {
+                    qualityFocusRequesters[0].requestFocusSafe()
+                }
             }
 
             Dialog(
@@ -2766,15 +2783,16 @@ fun DetailScreen(
                     shape = RoundedCornerShape(16.dp),
                     border = BorderStroke(1.dp, CinemaBorder),
                     modifier = Modifier
-                        .fillMaxWidth(if (isTvMode) 0.80f else 0.86f)
+                        .fillMaxWidth(if (isTvMode) 0.82f else 0.86f)
                         .wrapContentHeight()
                         .padding(16.dp)
                 ) {
                     if (isTvMode) {
-                        // ГОРИЗОНТАЛЬНЫЙ TV-ДИАЛОГ ДЛЯ ТЕЛЕВИЗОРА
+                        // АДАПТИВНОЕ ОКНО ДЛЯ ТЕЛЕВИЗОРА С СЕТКОЙ КАЧЕСТВ
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .height(IntrinsicSize.Min)
                                 .padding(20.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(20.dp)
@@ -2824,7 +2842,7 @@ fun DetailScreen(
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.height(6.dp))
+                                Spacer(modifier = Modifier.weight(1f, fill = false))
 
                                 Surface(
                                     color = CinemaCard,
@@ -2836,7 +2854,9 @@ fun DetailScreen(
                                             if (keyEvent.type == KeyEventType.KeyDown &&
                                                 keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_RIGHT
                                             ) {
-                                                initialQualityRequester.requestFocusSafe()
+                                                if (qualityFocusRequesters.isNotEmpty()) {
+                                                    qualityFocusRequesters[0].requestFocusSafe()
+                                                }
                                                 true
                                             } else false
                                         }
@@ -2870,87 +2890,165 @@ fun DetailScreen(
                                 }
                             }
 
-                            // Тонкий вертикальный разделитель
+                            // Тонкий вертикальный адаптивный разделитель
                             Box(
                                 modifier = Modifier
                                     .width(1.dp)
-                                    .height(110.dp)
+                                    .fillMaxHeight()
                                     .background(CinemaBorder)
                             )
 
-                            // Правая часть: Горизонтальный список карточек качества
-                            Row(
+                            // Правая часть: Адаптивная сетка карточек качества без горизонтального скролла
+                            Column(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .horizontalScroll(qualityScrollState)
                                     .padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                streams.forEachIndexed { idx, stream ->
-                                    val itemRequester = if (idx == 0) initialQualityRequester else null
-                                    val onSelectQuality: () -> Unit = {
-                                        HapticEngine.get().perform(HapticType.CONFIRM)
-                                        val streamsToPlay = streams
-                                        val title = pendingPlayTitle
-                                        val subtitle = pendingPlaySubtitle
-                                        val startPos = pendingPlayStartPos
-                                        pendingStreamsForDialog = null
-
-                                        if (selectedPlayer != RezkaService.PLAYER_INTERNAL) {
-                                            com.example.data.ExternalPlayerManager.launchPlayback(
-                                                context = context,
-                                                streamUrl = stream.url,
-                                                title = title,
-                                                subtitle = subtitle,
-                                                startPositionMs = startPos,
-                                                subtitles = stream.subtitles,
-                                                playerKey = selectedPlayer
-                                            )
-                                        } else {
-                                            playerTitle = title
-                                            playerSubtitle = subtitle
-                                            playerStartPosition = startPos
-                                            initialQualityIndex = idx
-                                            activePlayerStreams = streamsToPlay
-                                            isPlayerOpen = true
-                                        }
-                                    }
-
-                                    Surface(
-                                        color = CinemaCard,
-                                        shape = RoundedCornerShape(12.dp),
-                                        border = BorderStroke(1.dp, CinemaBorder),
-                                        modifier = Modifier
-                                            .width(116.dp)
-                                            .height(84.dp)
-                                            .onKeyEvent { keyEvent ->
-                                                if (keyEvent.type == KeyEventType.KeyDown &&
-                                                    keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT &&
-                                                    idx == 0
-                                                ) {
-                                                    cancelButtonRequester.requestFocusSafe()
-                                                    true
-                                                } else false
-                                            }
-                                            .tvFocusableItem(
-                                                onClick = onSelectQuality,
-                                                scaleFactor = 1.05f,
-                                                shape = RoundedCornerShape(12.dp),
-                                                focusRequester = itemRequester,
-                                                focusedBorderColor = CinemaPrimary
-                                            )
+                                chunkedStreams.forEachIndexed { rowIndex, rowStreams ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Box(
-                                            contentAlignment = Alignment.Center,
-                                            modifier = Modifier.fillMaxSize().padding(8.dp)
-                                        ) {
-                                            Text(
-                                                text = stream.quality,
-                                                color = CinemaTextWhite,
-                                                fontSize = 16.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
+                                        rowStreams.forEachIndexed { colIndex, stream ->
+                                            val globalIndex = rowIndex * columnsCount + colIndex
+                                            val itemRequester = qualityFocusRequesters.getOrNull(globalIndex)
+
+                                            val onSelectQuality: () -> Unit = {
+                                                HapticEngine.get().perform(HapticType.CONFIRM)
+                                                val streamsToPlay = streams
+                                                val title = pendingPlayTitle
+                                                val subtitle = pendingPlaySubtitle
+                                                val startPos = pendingPlayStartPos
+                                                pendingStreamsForDialog = null
+
+                                                if (selectedPlayer != RezkaService.PLAYER_INTERNAL) {
+                                                    com.example.data.ExternalPlayerManager.launchPlayback(
+                                                        context = context,
+                                                        streamUrl = stream.url,
+                                                        title = title,
+                                                        subtitle = subtitle,
+                                                        startPositionMs = startPos,
+                                                        subtitles = stream.subtitles,
+                                                        playerKey = selectedPlayer
+                                                    )
+                                                } else {
+                                                    playerTitle = title
+                                                    playerSubtitle = subtitle
+                                                    playerStartPosition = startPos
+                                                    initialQualityIndex = globalIndex
+                                                    activePlayerStreams = streamsToPlay
+                                                    isPlayerOpen = true
+                                                }
+                                            }
+
+                                            val isUltraQuality = stream.quality.contains("Ultra", ignoreCase = true) ||
+                                                    stream.quality.contains("4K", ignoreCase = true) ||
+                                                    stream.quality.contains("2K", ignoreCase = true)
+
+                                            Surface(
+                                                color = CinemaCard,
+                                                shape = RoundedCornerShape(12.dp),
+                                                border = BorderStroke(
+                                                    1.dp,
+                                                    if (isUltraQuality) CinemaPrimary.copy(alpha = 0.6f) else CinemaBorder
+                                                ),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .height(68.dp)
+                                                    .onKeyEvent { keyEvent ->
+                                                        if (keyEvent.type == KeyEventType.KeyDown) {
+                                                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                                                AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                                    if (colIndex == 0) {
+                                                                        cancelButtonRequester.requestFocusSafe()
+                                                                        true
+                                                                    } else {
+                                                                        val prevIdx = globalIndex - 1
+                                                                        qualityFocusRequesters.getOrNull(prevIdx)?.requestFocusSafe()
+                                                                        true
+                                                                    }
+                                                                }
+                                                                AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                                                    if (colIndex < rowStreams.size - 1) {
+                                                                        val nextIdx = globalIndex + 1
+                                                                        qualityFocusRequesters.getOrNull(nextIdx)?.requestFocusSafe()
+                                                                        true
+                                                                    } else {
+                                                                        true
+                                                                    }
+                                                                }
+                                                                AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                                    if (rowIndex > 0) {
+                                                                        val upIdx = (rowIndex - 1) * columnsCount + colIndex
+                                                                        qualityFocusRequesters.getOrNull(upIdx)?.requestFocusSafe()
+                                                                        true
+                                                                    } else {
+                                                                        true
+                                                                    }
+                                                                }
+                                                                AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                                    if (rowIndex < chunkedStreams.size - 1) {
+                                                                        val downIdx = (rowIndex + 1) * columnsCount + colIndex
+                                                                        val target = if (downIdx < streams.size) downIdx else streams.lastIndex
+                                                                        qualityFocusRequesters.getOrNull(target)?.requestFocusSafe()
+                                                                        true
+                                                                    } else {
+                                                                        true
+                                                                    }
+                                                                }
+                                                                else -> false
+                                                            }
+                                                        } else false
+                                                    }
+                                                    .tvFocusableItem(
+                                                        onClick = onSelectQuality,
+                                                        scaleFactor = 1.05f,
+                                                        shape = RoundedCornerShape(12.dp),
+                                                        focusRequester = itemRequester,
+                                                        focusedBorderColor = CinemaPrimary
+                                                    )
+                                            ) {
+                                                Box(
+                                                    contentAlignment = Alignment.Center,
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                                ) {
+                                                    Column(
+                                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                                        verticalArrangement = Arrangement.Center
+                                                    ) {
+                                                        Text(
+                                                            text = stream.quality,
+                                                            color = CinemaTextWhite,
+                                                            fontSize = if (isUltraQuality) 16.sp else 15.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        if (isUltraQuality) {
+                                                            Spacer(modifier = Modifier.height(2.dp))
+                                                            Text(
+                                                                text = "МАКСИМАЛЬНОЕ",
+                                                                color = CinemaPrimary,
+                                                                fontSize = 9.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                letterSpacing = 0.5.sp
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Равномерные заполнители для последней строки для сохранения ровных колонок сетки
+                                        if (rowStreams.size < columnsCount) {
+                                            val emptySlots = columnsCount - rowStreams.size
+                                            for (emptyIndex in 0 until emptySlots) {
+                                                Spacer(modifier = Modifier.weight(1f))
+                                            }
                                         }
                                     }
                                 }

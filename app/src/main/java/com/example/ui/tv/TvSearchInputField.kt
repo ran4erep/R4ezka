@@ -92,6 +92,10 @@ class TvPreImeEditText(context: Context) : EditText(context) {
         if (keyCode == KeyEvent.KEYCODE_BACK || keyCode == KeyEvent.KEYCODE_ESCAPE) {
             if (event.action == KeyEvent.ACTION_UP) {
                 hideKeyboard()
+                val currentText = text?.toString().orEmpty().trim()
+                if (currentText.isNotEmpty()) {
+                    onCommit?.invoke()
+                }
                 onBackPreIme?.invoke()
             }
             return true
@@ -114,6 +118,10 @@ class TvPreImeEditText(context: Context) : EditText(context) {
             KeyEvent.KEYCODE_DPAD_DOWN -> {
                 if (onDpadDown != null) {
                     hideKeyboard()
+                    val currentText = text?.toString().orEmpty().trim()
+                    if (currentText.isNotEmpty()) {
+                        onCommit?.invoke()
+                    }
                     onDpadDown?.invoke()
                     return true
                 }
@@ -128,6 +136,10 @@ class TvPreImeEditText(context: Context) : EditText(context) {
             KeyEvent.KEYCODE_DPAD_LEFT -> {
                 if (selectionStart == 0 && onDpadLeft != null) {
                     hideKeyboard()
+                    val currentText = text?.toString().orEmpty().trim()
+                    if (currentText.isNotEmpty()) {
+                        onCommit?.invoke()
+                    }
                     onDpadLeft?.invoke()
                     return true
                 }
@@ -136,6 +148,10 @@ class TvPreImeEditText(context: Context) : EditText(context) {
                 val len = text?.length ?: 0
                 if (selectionEnd >= len && onDpadRight != null) {
                     hideKeyboard()
+                    val currentText = text?.toString().orEmpty().trim()
+                    if (currentText.isNotEmpty()) {
+                        onCommit?.invoke()
+                    }
                     onDpadRight?.invoke()
                     return true
                 }
@@ -156,6 +172,10 @@ class TvPreImeEditText(context: Context) : EditText(context) {
             val keyboardVisible = keypadHeight > screenHeight * 0.15
             if (isKeyboardEverDetected && !keyboardVisible) {
                 post {
+                    val currentText = text?.toString().orEmpty().trim()
+                    if (currentText.isNotEmpty()) {
+                        onCommit?.invoke()
+                    }
                     onBackPreIme?.invoke()
                 }
             }

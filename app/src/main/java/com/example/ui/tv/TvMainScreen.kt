@@ -2091,16 +2091,26 @@ fun TvCompactSearchBar(
     val isKeyboardVisible by rememberTvKeyboardVisibility()
     var wasKeyboardOpened by remember { mutableStateOf(false) }
 
-    // Отслеживание закрытия системной экранной клавиатуры: мгновенно выходим из режима ввода, убираем курсор и переводим фокус на карточку поиска
+    // Безопасное завершение редактирования с гарантированной фиксацией введённого текста в историю поиска
+    val commitAndExitEditing: (String) -> Unit = { text ->
+        val trimmed = text.trim()
+        if (trimmed.isNotEmpty()) {
+            onSearchCommit?.invoke(trimmed)
+        }
+        isEditing = false
+        keyboardController?.hide()
+        searchBarFocusRequester?.requestFocusSafe()
+    }
+
+    // Отслеживание закрытия системной экранной клавиатуры: мгновенно фиксируем введённый запрос в истории,
+    // выходим из режима ввода, убираем курсор и переводим фокус на карточку поиска
     LaunchedEffect(isKeyboardVisible, isEditing) {
         if (isEditing) {
             if (isKeyboardVisible) {
                 wasKeyboardOpened = true
             } else if (wasKeyboardOpened) {
                 wasKeyboardOpened = false
-                isEditing = false
-                keyboardController?.hide()
-                searchBarFocusRequester?.requestFocusSafe()
+                commitAndExitEditing(query)
             }
         } else {
             wasKeyboardOpened = false
@@ -2126,12 +2136,10 @@ fun TvCompactSearchBar(
         }
     }
 
-    // При открытой экранной клавиатуре по кнопке "Назад" на пульте скрываем клавиатуру
+    // При открытой экранной клавиатуре по кнопке "Назад" на пульте сохраняем запрос в историю, скрываем клавиатуру
     // и возвращаем фокус на карточку поиска в нередактируемом режиме
     BackHandler(enabled = isEditing) {
-        isEditing = false
-        keyboardController?.hide()
-        searchBarFocusRequester?.requestFocusSafe()
+        commitAndExitEditing(query)
     }
 
     Surface(
@@ -2258,10 +2266,7 @@ fun TvCompactSearchBar(
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(
                             onSearch = {
-                                onSearchCommit?.invoke(query)
-                                isEditing = false
-                                keyboardController?.hide()
-                                searchBarFocusRequester?.requestFocusSafe()
+                                commitAndExitEditing(query)
                             }
                         ),
                         modifier = Modifier
@@ -2271,22 +2276,21 @@ fun TvCompactSearchBar(
                                 if (keyEvent.type == KeyEventType.KeyDown) {
                                     when (keyEvent.nativeKeyEvent.keyCode) {
                                         AndroidKeyEvent.KEYCODE_BACK -> {
-                                            isEditing = false
-                                            keyboardController?.hide()
-                                            searchBarFocusRequester?.requestFocusSafe()
+                                            commitAndExitEditing(query)
                                             true
                                         }
                                         AndroidKeyEvent.KEYCODE_ENTER,
                                         AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
                                         AndroidKeyEvent.KEYCODE_DPAD_CENTER -> {
-                                            onSearchCommit?.invoke(query)
-                                            isEditing = false
-                                            keyboardController?.hide()
-                                            searchBarFocusRequester?.requestFocusSafe()
+                                            commitAndExitEditing(query)
                                             true
                                         }
                                         AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
                                             if (query.isNotEmpty()) {
+                                                val trimmed = query.trim()
+                                                if (trimmed.isNotEmpty()) {
+                                                    onSearchCommit?.invoke(trimmed)
+                                                }
                                                 isEditing = false
                                                 keyboardController?.hide()
                                                 clearButtonFocusRequester.requestFocusSafe()
@@ -2299,6 +2303,10 @@ fun TvCompactSearchBar(
                                             } else false
                                         }
                                         AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                            val trimmed = query.trim()
+                                            if (trimmed.isNotEmpty()) {
+                                                onSearchCommit?.invoke(trimmed)
+                                            }
                                             isEditing = false
                                             keyboardController?.hide()
                                             onDown?.invoke()
@@ -2306,6 +2314,10 @@ fun TvCompactSearchBar(
                                         }
                                         AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
                                             if (onLeft != null) {
+                                                val trimmed = query.trim()
+                                                if (trimmed.isNotEmpty()) {
+                                                    onSearchCommit?.invoke(trimmed)
+                                                }
                                                 isEditing = false
                                                 keyboardController?.hide()
                                                 onLeft()
