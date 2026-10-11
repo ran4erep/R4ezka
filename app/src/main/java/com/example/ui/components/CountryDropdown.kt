@@ -134,6 +134,7 @@ fun TvCountryDropdown(
     onCountrySelected: (CountryItem) -> Unit,
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
+    onFocus: (() -> Unit)? = null,
     onUp: (() -> Unit)? = null,
     onDown: (() -> Unit)? = null,
     onLeft: (() -> Unit)? = null,
@@ -290,6 +291,9 @@ fun TvCountryDropdown(
                 }
                 .tvFocusableItem(
                     onClick = { expanded = !expanded },
+                    onFocusChanged = { isFocused ->
+                        if (isFocused) onFocus?.invoke()
+                    },
                     scaleFactor = 1.04f,
                     shape = RoundedCornerShape(10.dp),
                     focusRequester = triggerRequester

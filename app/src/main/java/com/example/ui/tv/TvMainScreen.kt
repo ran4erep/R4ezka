@@ -1299,10 +1299,11 @@ private fun TvCatalogFiltersBar(
     var isSearchInputFocused by remember { mutableStateOf(false) }
     var focusedHistoryIndex by remember { mutableStateOf<Int?>(null) }
     var focusedHistoryPart by remember { mutableStateOf<String?>("query") }
+    var pendingFocusHistoryOnOpen by remember { mutableStateOf(false) }
 
     val recentQueries = remember(searchHistory) { searchHistory.take(5) }
     val hasSearchHistory = recentQueries.isNotEmpty()
-    val showSearchHistory = hasSearchHistory && (isSearchInputFocused || focusedHistoryIndex != null)
+    val showSearchHistory = hasSearchHistory && (isSearchInputFocused || focusedHistoryIndex != null || pendingFocusHistoryOnOpen)
     val historyFocusRequesters = remember(recentQueries) {
         recentQueries.map { FocusRequester() }
     }
@@ -1311,19 +1312,48 @@ private fun TvCatalogFiltersBar(
     }
     val clearAllFocusRequester = remember { FocusRequester() }
 
+    val onHideHistory = {
+        focusedHistoryIndex = null
+        isSearchInputFocused = false
+        pendingFocusHistoryOnOpen = false
+    }
+
     val navigateUpFromFilters: () -> Unit = {
         if (hasSearchHistory && historyFocusRequesters.isNotEmpty()) {
-            val targetIdx = (focusedHistoryIndex ?: 0).coerceIn(0, historyFocusRequesters.lastIndex)
-            focusedHistoryIndex = targetIdx
-            historyFocusRequesters[targetIdx].requestFocusSafe()
+            focusedHistoryIndex = 0
+            focusedHistoryPart = "query"
+            pendingFocusHistoryOnOpen = true
         } else {
+            onHideHistory()
             searchBarFocusRequester.requestFocusSafe()
+        }
+    }
+
+    // Автоматический перехват фокуса при открытии истории по нажатию ВВЕРХ с фильтров
+    LaunchedEffect(pendingFocusHistoryOnOpen, showSearchHistory) {
+        if (pendingFocusHistoryOnOpen && showSearchHistory) {
+            for (attempt in 0..6) {
+                val requester = historyFocusRequesters.firstOrNull()
+                if (requester != null) {
+                    val focused = try {
+                        requester.requestFocusSafe()
+                        true
+                    } catch (_: Throwable) {
+                        false
+                    }
+                    if (focused) {
+                        pendingFocusHistoryOnOpen = false
+                        break
+                    }
+                }
+                delay(20)
+            }
         }
     }
 
     val handleRemoveQuery: (Int, String) -> Unit = { index, query ->
         if (recentQueries.size <= 1) {
-            focusedHistoryIndex = null
+            onHideHistory()
             searchBarFocusRequester.requestFocusSafe()
         } else if (index < recentQueries.lastIndex) {
             focusedHistoryIndex = index
@@ -1338,7 +1368,7 @@ private fun TvCatalogFiltersBar(
     }
 
     val handleClearAllHistory: () -> Unit = {
-        focusedHistoryIndex = null
+        onHideHistory()
         searchBarFocusRequester.requestFocusSafe()
         onClearSearchHistory?.invoke()
     }
@@ -1367,11 +1397,11 @@ private fun TvCatalogFiltersBar(
             onLeft = { sidebarFocusRequester.requestFocusSafe() },
             onDown = {
                 if (hasSearchHistory && historyFocusRequesters.isNotEmpty()) {
-                    val targetIdx = (focusedHistoryIndex ?: 0).coerceIn(0, historyFocusRequesters.lastIndex)
-                    focusedHistoryIndex = targetIdx
+                    focusedHistoryIndex = 0
                     focusedHistoryPart = "query"
-                    historyFocusRequesters[targetIdx].requestFocusSafe()
+                    pendingFocusHistoryOnOpen = true
                 } else {
+                    onHideHistory()
                     categoryFocusRequester.requestFocusSafe()
                 }
             },
@@ -1428,27 +1458,16 @@ private fun TvCatalogFiltersBar(
 
                     // Единый монолитный элемент истории со встроенным крестиком внутри
                     Surface(
-                        color = when {
-                            isDelFocused -> CinemaRed.copy(alpha = 0.2f)
-                            isQueryFocused -> CinemaPrimary.copy(alpha = 0.15f)
-                            else -> CinemaDark
-                        },
+                        color = CinemaDark,
                         shape = RoundedCornerShape(8.dp),
-                        border = BorderStroke(
-                            1.dp,
-                            when {
-                                isDelFocused -> CinemaRed
-                                isQueryFocused -> CinemaPrimary
-                                else -> CinemaBorder
-                            }
-                        ),
+                        border = BorderStroke(1.dp, CinemaBorder),
                         modifier = Modifier.padding(vertical = 1.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.height(28.dp)
+                            modifier = Modifier.height(30.dp)
                         ) {
-                            // 1. Текстовая область запроса
+                            // 1. Текстовая область запроса (пункт истории с отдельным акцентным курсором)
                             Box(
                                 modifier = Modifier
                                     .focusRequester(histRequester)
@@ -1456,11 +1475,12 @@ private fun TvCatalogFiltersBar(
                                         if (keyEvent.type == KeyEventType.KeyDown) {
                                             when (keyEvent.nativeKeyEvent.keyCode) {
                                                 AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                    onHideHistory()
                                                     searchBarFocusRequester.requestFocusSafe()
                                                     true
                                                 }
                                                 AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                                    focusedHistoryIndex = null
+                                                    onHideHistory()
                                                     categoryFocusRequester.requestFocusSafe()
                                                     true
                                                 }
@@ -1500,9 +1520,10 @@ private fun TvCatalogFiltersBar(
                                         },
                                         scaleFactor = 1.0f,
                                         shape = RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp),
-                                        hideBorder = true
+                                        focusedBorderColor = CinemaPrimary,
+                                        hideBorder = false
                                     )
-                                    .padding(start = 10.dp, end = 6.dp),
+                                    .padding(start = 10.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
                                 contentAlignment = Alignment.CenterStart
                             ) {
                                 Text(
@@ -1521,10 +1542,10 @@ private fun TvCatalogFiltersBar(
                                 modifier = Modifier
                                     .width(1.dp)
                                     .height(14.dp)
-                                    .background(Color.White.copy(alpha = 0.15f))
+                                    .background(CinemaBorder)
                             )
 
-                            // 2. Встроенный крестик для удаления запроса из истории
+                            // 2. Встроенный крестик для удаления запроса (с отдельным акцентным курсором)
                             Box(
                                 modifier = Modifier
                                     .focusRequester(delRequester)
@@ -1532,11 +1553,12 @@ private fun TvCatalogFiltersBar(
                                         if (keyEvent.type == KeyEventType.KeyDown) {
                                             when (keyEvent.nativeKeyEvent.keyCode) {
                                                 AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                    onHideHistory()
                                                     searchBarFocusRequester.requestFocusSafe()
                                                     true
                                                 }
                                                 AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                                    focusedHistoryIndex = null
+                                                    onHideHistory()
                                                     categoryFocusRequester.requestFocusSafe()
                                                     true
                                                 }
@@ -1570,7 +1592,8 @@ private fun TvCatalogFiltersBar(
                                         },
                                         scaleFactor = 1.0f,
                                         shape = RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp),
-                                        hideBorder = true
+                                        focusedBorderColor = CinemaPrimary,
+                                        hideBorder = false
                                     )
                                     .padding(horizontal = 7.dp, vertical = 4.dp),
                                 contentAlignment = Alignment.Center
@@ -1578,7 +1601,7 @@ private fun TvCatalogFiltersBar(
                                 Icon(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = "Удалить запрос",
-                                    tint = if (isDelFocused) CinemaRed else CinemaTextGray,
+                                    tint = if (isDelFocused) CinemaPrimary else CinemaTextGray,
                                     modifier = Modifier.size(11.dp)
                                 )
                             }
@@ -1597,11 +1620,12 @@ private fun TvCatalogFiltersBar(
                             if (keyEvent.type == KeyEventType.KeyDown) {
                                 when (keyEvent.nativeKeyEvent.keyCode) {
                                     AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                        onHideHistory()
                                         searchBarFocusRequester.requestFocusSafe()
                                         true
                                     }
                                     AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                        focusedHistoryIndex = null
+                                        onHideHistory()
                                         categoryFocusRequester.requestFocusSafe()
                                         true
                                     }
@@ -1622,7 +1646,9 @@ private fun TvCatalogFiltersBar(
                                 if (focused) onFiltersFocused?.invoke()
                             },
                             scaleFactor = 1.0f,
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            focusedBorderColor = CinemaPrimary,
+                            hideBorder = false
                         )
                         .testTag("tv_clear_search_history_btn")
                 ) {
@@ -1689,10 +1715,14 @@ private fun TvCatalogFiltersBar(
                 getLabel = { it.second },
                 modifier = Modifier.weight(1f),
                 focusRequester = categoryFocusRequester,
+                onFocus = onHideHistory,
                 onUp = navigateUpFromFilters,
                 onLeft = { sidebarFocusRequester.requestFocusSafe() },
                 onRight = { sectionFocusRequester.requestFocusSafe() },
-                onDown = onFocusGrid
+                onDown = {
+                    onHideHistory()
+                    onFocusGrid()
+                }
             )
 
             // Dropdown 2: Раздел
@@ -1713,10 +1743,14 @@ private fun TvCatalogFiltersBar(
                 getLabel = { it.getDisplayName() },
                 modifier = Modifier.weight(1f),
                 focusRequester = sectionFocusRequester,
+                onFocus = onHideHistory,
                 onUp = navigateUpFromFilters,
                 onLeft = { categoryFocusRequester.requestFocusSafe() },
                 onRight = { genreFocusRequester.requestFocusSafe() },
-                onDown = onFocusGrid
+                onDown = {
+                    onHideHistory()
+                    onFocusGrid()
+                }
             )
 
             // Dropdown 3: Жанр
@@ -1732,10 +1766,14 @@ private fun TvCatalogFiltersBar(
                 getLabel = { it.name },
                 modifier = Modifier.weight(1f),
                 focusRequester = genreFocusRequester,
+                onFocus = onHideHistory,
                 onUp = navigateUpFromFilters,
                 onLeft = { sectionFocusRequester.requestFocusSafe() },
                 onRight = { yearFocusRequester.requestFocusSafe() },
-                onDown = onFocusGrid
+                onDown = {
+                    onHideHistory()
+                    onFocusGrid()
+                }
             )
 
             // Dropdown 4: Год
@@ -1751,10 +1789,14 @@ private fun TvCatalogFiltersBar(
                 getLabel = { it.name },
                 modifier = Modifier.weight(1f),
                 focusRequester = yearFocusRequester,
+                onFocus = onHideHistory,
                 onUp = navigateUpFromFilters,
                 onLeft = { genreFocusRequester.requestFocusSafe() },
                 onRight = { countryFocusRequester.requestFocusSafe() },
-                onDown = onFocusGrid
+                onDown = {
+                    onHideHistory()
+                    onFocusGrid()
+                }
             )
 
             // Dropdown 5: Страна
@@ -1768,9 +1810,13 @@ private fun TvCatalogFiltersBar(
                 onCountrySelected = onCountrySelected,
                 modifier = Modifier.weight(1f),
                 focusRequester = countryFocusRequester,
+                onFocus = onHideHistory,
                 onUp = navigateUpFromFilters,
                 onLeft = { yearFocusRequester.requestFocusSafe() },
-                onDown = onFocusGrid
+                onDown = {
+                    onHideHistory()
+                    onFocusGrid()
+                }
             )
         }
     }
@@ -1790,6 +1836,7 @@ fun <T> TvRezkaDropdown(
     modifier: Modifier = Modifier,
     surfaceModifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
+    onFocus: (() -> Unit)? = null,
     onUp: (() -> Unit)? = null,
     onDown: (() -> Unit)? = null,
     onLeft: (() -> Unit)? = null,
@@ -1841,6 +1888,9 @@ fun <T> TvRezkaDropdown(
                 }
                 .tvFocusableItem(
                     onClick = { expanded = !expanded },
+                    onFocusChanged = { isFocused ->
+                        if (isFocused) onFocus?.invoke()
+                    },
                     scaleFactor = 1.04f,
                     shape = RoundedCornerShape(10.dp),
                     focusRequester = triggerRequester,
