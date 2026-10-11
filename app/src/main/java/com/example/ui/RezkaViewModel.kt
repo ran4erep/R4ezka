@@ -75,6 +75,11 @@ data class MovieCommentsState(
 
 data class ScrollPosition(val index: Int = 0, val offset: Int = 0)
 
+data class TvDetailSavedFocus(
+    val focusKey: String,
+    val listIndex: Int = -1
+)
+
 class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     val repository = (application as RezkaApplication).repository
     val isOnline: StateFlow<Boolean> = NetworkMonitor.isOnline
@@ -150,6 +155,25 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getTvHistoryFocusedItemId(): String? = tvHistoryFocusedItemId
     fun getTvHistoryFocusedIndex(): Int? = tvHistoryFocusedIndex
+
+    // Сохранение фокуса интерактивных элементов на странице фильма (режиссёры, актёры, подборки "Из серии", списки, франшизы и т.д.)
+    private val tvDetailSavedFocusMap = java.util.concurrent.ConcurrentHashMap<String, TvDetailSavedFocus>()
+
+    fun setTvDetailFocusedItem(itemId: String, focusKey: String, listIndex: Int = -1) {
+        if (itemId.isNotEmpty() && focusKey.isNotEmpty()) {
+            tvDetailSavedFocusMap[itemId] = TvDetailSavedFocus(focusKey, listIndex)
+        }
+    }
+
+    fun getTvDetailFocusedItem(itemId: String): TvDetailSavedFocus? {
+        return if (itemId.isNotEmpty()) tvDetailSavedFocusMap[itemId] else null
+    }
+
+    fun clearTvDetailFocusedItem(itemId: String) {
+        if (itemId.isNotEmpty()) {
+            tvDetailSavedFocusMap.remove(itemId)
+        }
+    }
 
     private val _catalogScrollResetEvent = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 1)
     val catalogScrollResetEvent: SharedFlow<Unit> = _catalogScrollResetEvent.asSharedFlow()

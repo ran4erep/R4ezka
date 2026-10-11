@@ -373,6 +373,7 @@ fun DetailScreen(
             isDecryptingStreams = false
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         } else {
+            viewModel.clearTvDetailFocusedItem(item.id)
             viewModel.clearDetail()
             onBack()
         }
@@ -945,7 +946,8 @@ fun DetailScreen(
                         onNavigateToThematic = { name, url -> onNavigateToThematic(name, url) },
                         isPlayerOpen = isPlayerOpen,
                         scrollState = lazyListState,
-                        fromHistory = fromHistory
+                        fromHistory = fromHistory,
+                        viewModel = viewModel
                     )
                 } else {
                     // ---- SCROLLABLE MOBILE DETAIL PAGE (with TV/D-Pad support) ----

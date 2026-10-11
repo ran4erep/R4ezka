@@ -53,11 +53,31 @@ import coil.compose.AsyncImage
 import com.example.data.*
 import com.example.ui.navigation.sharedPosterElement
 import com.example.ui.MovieCommentsState
+import com.example.ui.RezkaViewModel
 import com.example.ui.screens.CommentUserAvatar
 import com.example.ui.screens.DetailMetaRow
 import com.example.ui.screens.DetailRatingsRow
 import com.example.ui.screens.YouTubeLogoIcon
 import com.example.ui.theme.*
+
+/**
+ * Высокопроизводительный реестр FocusRequester для интерактивных элементов ТВ-страницы.
+ * Обеспечивает кэширование и мгновенный доступ O(1) без лишних аллокаций памяти.
+ */
+class TvFocusRegistry {
+    private val requesters = HashMap<String, FocusRequester>()
+
+    fun get(key: String): FocusRequester {
+        var req = requesters[key]
+        if (req == null) {
+            req = FocusRequester()
+            requesters[key] = req
+        }
+        return req
+    }
+
+    fun find(key: String): FocusRequester? = requesters[key]
+}
 
 /**
  * Кинематографический экран фильма для ТВ, повторяющий дизайн и структуру мобильной версии:
@@ -96,9 +116,11 @@ fun TvDetailContent(
     isPlayerOpen: Boolean = false,
     scrollState: androidx.compose.foundation.lazy.LazyListState? = null,
     fromHistory: Boolean = false,
+    viewModel: RezkaViewModel? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val focusRegistry = remember { TvFocusRegistry() }
     val backButtonFocusRequester = remember { FocusRequester() }
     val trailerButtonFocusRequester = remember { FocusRequester() }
     val favoriteButtonFocusRequester = remember { FocusRequester() }
@@ -108,7 +130,11 @@ fun TvDetailContent(
     val translatorDropdownFocusRequester = remember { FocusRequester() }
     val movieDownloadButtonFocusRequester = remember { FocusRequester() }
     val rightScrollState = scrollState ?: rememberLazyListState()
-    var isActorsExpanded by remember { mutableStateOf(false) }
+
+    val initialSavedFocus = remember(detail.id) { viewModel?.getTvDetailFocusedItem(detail.id) }
+    var isActorsExpanded by remember(detail.id) {
+        mutableStateOf(initialSavedFocus?.focusKey?.startsWith("actor_") == true)
+    }
 
     val effectiveActors = remember(detail) {
         if (detail.actorsList.isNotEmpty()) {
@@ -149,14 +175,51 @@ fun TvDetailContent(
         if (commentsState.comments.isNotEmpty()) commentsState.comments else detail.comments
     }
 
+    val infoCardIndex = 1
+    val actorsCardIndex = remember(effectiveActors) { if (effectiveActors.isNotEmpty()) 2 else -1 }
+    val descriptionCardIndex = remember(effectiveActors) { if (effectiveActors.isNotEmpty()) 3 else 2 }
+    val franchiseCardIndex = remember(detail.franchiseItems, descriptionCardIndex) {
+        if (detail.franchiseItems.isNotEmpty()) descriptionCardIndex + 1 else -1
+    }
+
     // Фокус и скролл при входе на страницу фильма/сериала на ТВ:
+    // - Если возврат назад со ссылки (savedFocus != null): сохраняем скролл и восстанавливаем фокус на той же самой ссылке
     // - Если переход из истории (fromHistory == true): автоматически прокручивает страницу до кнопок просмотра
     //   и ставит фокус на кнопке "Смотреть" (для фильма) или на текущей серии (для сериала)
-    // - Обычный переход: фокус на кнопке "К просмотру" и сброс скролла наверх
+    // - Обычный новый переход: фокус на кнопке "К просмотру" и сброс скролла наверх
     var hasHandledHistoryFocus by remember(detail.id) { mutableStateOf(false) }
 
     LaunchedEffect(detail.id, selectedEpisodeId, fromHistory) {
-        if (!fromHistory) {
+        val savedFocus = viewModel?.getTvDetailFocusedItem(detail.id)
+        if (savedFocus != null) {
+            ImagePreloaderEngine.preloadDetailImages(context, detail)
+            if (savedFocus.listIndex >= 0) {
+                val layoutInfo = rightScrollState.layoutInfo
+                val isVisible = layoutInfo.visibleItemsInfo.any { it.index == savedFocus.listIndex }
+                if (!isVisible) {
+                    try {
+                        rightScrollState.scrollToItem(savedFocus.listIndex)
+                    } catch (_: Throwable) {}
+                }
+            }
+            var focusRestored = false
+            for (attempt in 0..20) {
+                kotlinx.coroutines.delay(if (attempt == 0) 30L else 40L)
+                val targetRequester = focusRegistry.find(savedFocus.focusKey)
+                if (targetRequester != null) {
+                    try {
+                        targetRequester.requestFocus()
+                        focusRestored = true
+                        break
+                    } catch (_: Throwable) {}
+                }
+            }
+            if (!focusRestored) {
+                try {
+                    scrollToWatchButtonFocusRequester.requestFocus()
+                } catch (_: Throwable) {}
+            }
+        } else if (!fromHistory) {
             ImagePreloaderEngine.preloadDetailImages(context, detail)
             try {
                 rightScrollState.scrollToItem(0)
@@ -897,6 +960,16 @@ fun TvDetailContent(
                                             onNavigateToThematic(link.name, link.url)
                                         }
                                     },
+                                    onLinkClickedWithKey = { link, key ->
+                                        viewModel?.setTvDetailFocusedItem(detail.id, key, infoCardIndex)
+                                        if (link.url.isNotBlank()) {
+                                            onNavigateToThematic(link.name, link.url)
+                                        }
+                                    },
+                                    onFocusedLink = { key ->
+                                        viewModel?.setTvDetailFocusedItem(detail.id, key, infoCardIndex)
+                                    },
+                                    focusRegistry = focusRegistry,
                                     leftFocusRequester = backButtonFocusRequester,
                                     lazyListState = rightScrollState
                                 )
@@ -934,6 +1007,16 @@ fun TvDetailContent(
                                             onNavigateToThematic(link.name, link.url)
                                         }
                                     },
+                                    onLinkClickedWithKey = { link, key ->
+                                        viewModel?.setTvDetailFocusedItem(detail.id, key, infoCardIndex)
+                                        if (link.url.isNotBlank()) {
+                                            onNavigateToThematic(link.name, link.url)
+                                        }
+                                    },
+                                    onFocusedLink = { key ->
+                                        viewModel?.setTvDetailFocusedItem(detail.id, key, infoCardIndex)
+                                    },
+                                    focusRegistry = focusRegistry,
                                     leftFocusRequester = backButtonFocusRequester,
                                     lazyListState = rightScrollState
                                 )
@@ -954,6 +1037,16 @@ fun TvDetailContent(
                                             onNavigateToThematic(link.name, link.url)
                                         }
                                     },
+                                    onLinkClickedWithKey = { link, key ->
+                                        viewModel?.setTvDetailFocusedItem(detail.id, key, infoCardIndex)
+                                        if (link.url.isNotBlank()) {
+                                            onNavigateToThematic(link.name, link.url)
+                                        }
+                                    },
+                                    onFocusedLink = { key ->
+                                        viewModel?.setTvDetailFocusedItem(detail.id, key, infoCardIndex)
+                                    },
+                                    focusRegistry = focusRegistry,
                                     leftFocusRequester = backButtonFocusRequester,
                                     lazyListState = rightScrollState
                                 )
@@ -1054,15 +1147,24 @@ fun TvDetailContent(
                                 Spacer(modifier = Modifier.height(8.dp))
 
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    displayActors.forEach { actorLink ->
+                                    displayActors.forEachIndexed { actorIndex, actorLink ->
                                         val isClickable = actorLink.url.isNotBlank()
+                                        val actorKey = remember(actorLink) { "actor_${actorLink.url.ifBlank { "${actorIndex}_${actorLink.name}" }}" }
+                                        val actorRequester = focusRegistry.get(actorKey)
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .then(
                                                     if (isClickable) {
                                                         Modifier.tvFocusableItem(
-                                                            onClick = { onNavigateToThematic(actorLink.name, actorLink.url) },
+                                                            onClick = {
+                                                                viewModel?.setTvDetailFocusedItem(detail.id, actorKey, actorsCardIndex)
+                                                                onNavigateToThematic(actorLink.name, actorLink.url)
+                                                            },
+                                                            onFocused = {
+                                                                viewModel?.setTvDetailFocusedItem(detail.id, actorKey, actorsCardIndex)
+                                                            },
+                                                            focusRequester = actorRequester,
                                                             scaleFactor = 1.0f,
                                                             shape = RoundedCornerShape(6.dp),
                                                             lazyListState = rightScrollState
@@ -1172,8 +1274,10 @@ fun TvDetailContent(
                                     modifier = Modifier.padding(8.dp),
                                     verticalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    detail.franchiseItems.forEach { franchiseItem ->
+                                    detail.franchiseItems.forEachIndexed { franchiseIndex, franchiseItem ->
                                         val isCurrent = franchiseItem.isCurrent
+                                        val franchiseKey = remember(franchiseItem) { "franchise_${franchiseItem.id.ifBlank { "${franchiseIndex}_${franchiseItem.url}" }}" }
+                                        val franchiseRequester = focusRegistry.get(franchiseKey)
                                         Surface(
                                             color = if (isCurrent) CinemaPrimary.copy(alpha = 0.12f) else Color.Transparent,
                                             shape = RoundedCornerShape(8.dp),
@@ -1189,6 +1293,7 @@ fun TvDetailContent(
                                                 .tvFocusableItem(
                                                     onClick = {
                                                         if (!isCurrent && franchiseItem.url.isNotEmpty()) {
+                                                            viewModel?.setTvDetailFocusedItem(detail.id, franchiseKey, franchiseCardIndex)
                                                             val targetItem = RezkaItem(
                                                                 id = franchiseItem.id.ifEmpty { franchiseItem.url.hashCode().toString() },
                                                                 title = franchiseItem.title,
@@ -1201,6 +1306,10 @@ fun TvDetailContent(
                                                             onNavigateToMovie(targetItem)
                                                         }
                                                     },
+                                                    onFocused = {
+                                                        viewModel?.setTvDetailFocusedItem(detail.id, franchiseKey, franchiseCardIndex)
+                                                    },
+                                                    focusRequester = franchiseRequester,
                                                     scaleFactor = 1.02f,
                                                     focusedBorderColor = CinemaPrimary,
                                                     focusedBorderWidth = 2.5.dp,
@@ -2046,6 +2155,9 @@ fun TvDetailMetaRowWithLinks(
     onLinkClick: (LinkItem) -> Unit,
     leftFocusRequester: FocusRequester? = null,
     lazyListState: androidx.compose.foundation.lazy.LazyListState? = null,
+    focusRegistry: TvFocusRegistry? = null,
+    onFocusedLink: ((String) -> Unit)? = null,
+    onLinkClickedWithKey: ((LinkItem, String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -2075,6 +2187,8 @@ fun TvDetailMetaRowWithLinks(
         ) {
             links.forEachIndexed { linkIndex, link ->
                 val isClickable = link.url.isNotBlank() || link.name.isNotBlank()
+                val linkKey = remember(label, link) { "link_${label}_${link.url.ifBlank { link.name }}" }
+                val itemRequester = focusRegistry?.get(linkKey)
                 Surface(
                     color = CinemaDark,
                     shape = RoundedCornerShape(6.dp),
@@ -2097,7 +2211,13 @@ fun TvDetailMetaRowWithLinks(
                                         } else false
                                     }
                                     .tvFocusableItem(
-                                        onClick = { onLinkClick(link) },
+                                        onClick = {
+                                            onLinkClickedWithKey?.invoke(link, linkKey) ?: onLinkClick(link)
+                                        },
+                                        onFocused = {
+                                            onFocusedLink?.invoke(linkKey)
+                                        },
+                                        focusRequester = itemRequester,
                                         scaleFactor = 1.05f,
                                         focusedBorderColor = CinemaPrimary,
                                         focusedBorderWidth = 2.dp,
