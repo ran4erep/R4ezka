@@ -53,6 +53,7 @@ import com.example.data.CountryItem
 import com.example.ui.haptics.HapticEngine
 import com.example.ui.haptics.HapticType
 import com.example.ui.theme.*
+import com.example.ui.tv.TvSearchInputField
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusableItem
 import kotlinx.coroutines.launch
@@ -444,77 +445,48 @@ fun TvCountryDropdown(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     } else {
-                                        LaunchedEffect(Unit) {
-                                            searchInputRequester.requestFocusSafe()
-                                            keyboardController?.show()
-                                        }
-
-                                        BasicTextField(
+                                        TvSearchInputField(
                                             value = searchQuery,
                                             onValueChange = { searchQuery = it },
-                                            singleLine = true,
-                                            textStyle = TextStyle(
-                                                color = CinemaTextWhite,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium
-                                            ),
-                                            cursorBrush = SolidColor(CinemaPrimary),
-                                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                                            keyboardActions = KeyboardActions(
-                                                onSearch = {
+                                            placeholder = "Введите страну...",
+                                            fontSizeSp = 12f,
+                                            modifier = Modifier.fillMaxWidth(),
+                                            onExitEditing = {
+                                                isEditingSearch = false
+                                                keyboardController?.hide()
+                                                searchFieldRequester.requestFocusSafe()
+                                            },
+                                            onCommit = {
+                                                isEditingSearch = false
+                                                keyboardController?.hide()
+                                                focusManager.clearFocus()
+                                                if (filteredCountries.isNotEmpty()) {
+                                                    firstCountryRequester.requestFocusSafe()
+                                                } else {
+                                                    searchFieldRequester.requestFocusSafe()
+                                                }
+                                            },
+                                            onDown = {
+                                                isEditingSearch = false
+                                                keyboardController?.hide()
+                                                focusManager.clearFocus()
+                                                if (filteredCountries.isNotEmpty()) {
+                                                    firstCountryRequester.requestFocusSafe()
+                                                } else {
+                                                    searchFieldRequester.requestFocusSafe()
+                                                }
+                                            },
+                                            onUp = {
+                                                isEditingSearch = false
+                                                keyboardController?.hide()
+                                                allCountriesRequester.requestFocusSafe()
+                                            },
+                                            onRight = {
+                                                if (searchQuery.isNotEmpty()) {
                                                     isEditingSearch = false
                                                     keyboardController?.hide()
-                                                    focusManager.clearFocus()
-                                                    if (filteredCountries.isNotEmpty()) {
-                                                        firstCountryRequester.requestFocusSafe()
-                                                    }
+                                                    clearButtonRequester.requestFocusSafe()
                                                 }
-                                            ),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .focusRequester(searchInputRequester)
-                                                .onKeyEvent { keyEvent ->
-                                                    if (keyEvent.type == KeyEventType.KeyDown) {
-                                                        when (keyEvent.nativeKeyEvent.keyCode) {
-                                                            AndroidKeyEvent.KEYCODE_BACK -> {
-                                                                isEditingSearch = false
-                                                                keyboardController?.hide()
-                                                                searchFieldRequester.requestFocusSafe()
-                                                                true
-                                                            }
-                                                            AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                                                if (searchQuery.isNotEmpty()) {
-                                                                    isEditingSearch = false
-                                                                    keyboardController?.hide()
-                                                                    clearButtonRequester.requestFocusSafe()
-                                                                    true
-                                                                } else false
-                                                            }
-                                                            AndroidKeyEvent.KEYCODE_ENTER,
-                                                            AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
-                                                            AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-                                                            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                                                                isEditingSearch = false
-                                                                keyboardController?.hide()
-                                                                focusManager.clearFocus()
-                                                                if (filteredCountries.isNotEmpty()) {
-                                                                    firstCountryRequester.requestFocusSafe()
-                                                                }
-                                                                true
-                                                            }
-                                                            else -> false
-                                                        }
-                                                    } else false
-                                                },
-                                            decorationBox = { innerTextField ->
-                                                if (searchQuery.isEmpty()) {
-                                                    Text(
-                                                        text = "Введите страну...",
-                                                        color = CinemaMuted,
-                                                        fontSize = 11.5.sp
-                                                    )
-                                                }
-                                                innerTextField()
                                             }
                                         )
                                     }
