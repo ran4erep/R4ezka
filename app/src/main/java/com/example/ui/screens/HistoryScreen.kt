@@ -66,15 +66,33 @@ fun HistoryScreen(
         viewModel.checkHistorySeriesUpdates(force = true)
     }
 
-    val itemRequester = firstItemFocusRequester ?: remember { FocusRequester() }
+    val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+    fun getFocusRequesterForIndex(idx: Int): FocusRequester {
+        return if (idx == 0 && firstItemFocusRequester != null) {
+            firstItemFocusRequester
+        } else {
+            itemFocusRequesters.getOrPut(idx) { FocusRequester() }
+        }
+    }
+
     var hasSetInitialFocus by remember { mutableStateOf(false) }
     LaunchedEffect(historyList.size) {
         if (!hasSetInitialFocus && historyList.isNotEmpty()) {
             hasSetInitialFocus = true
-            for (attempt in 0..12) {
+            val savedItemId = viewModel.getTvHistoryFocusedItemId()
+            val savedIndex = viewModel.getTvHistoryFocusedIndex()
+            val targetIndex = when {
+                savedItemId != null -> {
+                    val idx = historyList.indexOfFirst { it.itemId == savedItemId }
+                    if (idx >= 0) idx else (savedIndex?.coerceIn(0, historyList.lastIndex) ?: 0)
+                }
+                savedIndex != null -> savedIndex.coerceIn(0, historyList.lastIndex)
+                else -> 0
+            }
+            for (attempt in 0..14) {
                 kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
                 try {
-                    itemRequester.requestFocus()
+                    getFocusRequesterForIndex(targetIndex).requestFocus()
                     break
                 } catch (_: Throwable) {}
             }
@@ -159,7 +177,7 @@ fun HistoryScreen(
                 }
         ) {
             if (historyList.isEmpty()) {
-                val emptyFocusRequester = itemRequester
+                val emptyFocusRequester = firstItemFocusRequester ?: remember { FocusRequester() }
                 LaunchedEffect(Unit) {
                     emptyFocusRequester.requestFocusSafe()
                 }
@@ -223,9 +241,10 @@ fun HistoryScreen(
                             history = history,
                             isBouncing = history.itemId == loadingMovieId,
                             isFirst = index == 0,
-                            focusRequester = if (index == 0) itemRequester else null,
+                            focusRequester = getFocusRequesterForIndex(index),
                             onLeft = onNavigateLeftToSidebar,
                             onClick = {
+                                viewModel.setTvHistoryFocusedItem(history.itemId, index)
                                 val itemType = if (history.isSeries) RezkaType.SERIES else RezkaType.MOVIE
                                 val targetUrl = RezkaService.adjustUrlToCurrentMirror(history.url, itemType, history.itemId)
                                 val item = RezkaItem(

@@ -178,15 +178,28 @@ fun FavoritesScreen(
                         }
                     }
 
-                    // Автофокус по умолчанию на первый элемент в избранном
+                    // Автофокус на последний выбранный или первый элемент в избранном
                     var hasSetInitialFocus by remember { mutableStateOf(false) }
                     LaunchedEffect(favorites.size) {
                         if (!hasSetInitialFocus && favorites.isNotEmpty()) {
                             hasSetInitialFocus = true
-                            for (attempt in 0..12) {
+                            val savedItemId = viewModel.getTvFavoritesFocusedItemId()
+                            val savedIndex = viewModel.getTvFavoritesFocusedIndex()
+                            val targetIndex = when {
+                                savedItemId != null -> {
+                                    val idx = favorites.indexOfFirst { it.id == savedItemId }
+                                    if (idx >= 0) idx else (savedIndex?.coerceIn(0, favorites.lastIndex) ?: 0)
+                                }
+                                savedIndex != null -> savedIndex.coerceIn(0, favorites.lastIndex)
+                                else -> 0
+                            }
+                            try {
+                                gridState.scrollToItem(targetIndex)
+                            } catch (_: Throwable) {}
+                            for (attempt in 0..14) {
                                 kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
                                 try {
-                                    getFocusRequesterForIndex(0).requestFocus()
+                                    getFocusRequesterForIndex(targetIndex).requestFocus()
                                     break
                                 } catch (_: Throwable) {}
                             }
@@ -279,7 +292,10 @@ fun FavoritesScreen(
                                         }
                                     },
                                     focusRequester = getFocusRequesterForIndex(index),
-                                    onClick = { onNavigateToDetail(item) },
+                                    onClick = {
+                                        viewModel.setTvFavoritesFocusedItem(fav.id, index)
+                                        onNavigateToDetail(item)
+                                    },
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 

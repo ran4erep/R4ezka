@@ -103,16 +103,33 @@ fun TvDetailContent(
     val scrollToWatchButtonFocusRequester = remember { FocusRequester() }
     val shareButtonFocusRequester = remember { FocusRequester() }
     val mainActionFocusRequester = remember { FocusRequester() }
+    val translatorDropdownFocusRequester = remember { FocusRequester() }
     val movieDownloadButtonFocusRequester = remember { FocusRequester() }
     val rightScrollState = scrollState ?: rememberLazyListState()
     var isActorsExpanded by remember { mutableStateOf(false) }
 
-    val tvTranslatorsWatchIndex = remember(detail) {
-        var idx = 4 // 0: Header & actions, 1: Info card, 2: Actors, 3: Description
-        if (detail.franchiseItems.isNotEmpty()) {
-            idx++
+    val effectiveActors = remember(detail) {
+        if (detail.actorsList.isNotEmpty()) {
+            detail.actorsList
+        } else {
+            detail.actors.map { LinkItem(it, "") }
         }
-        idx
+    }
+
+    val tvTranslatorsWatchIndex = remember(detail, effectiveActors) {
+        var idx = 2 // 0: Header & actions, 1: Info card
+        if (effectiveActors.isNotEmpty()) {
+            idx++ // 2: Actors
+        }
+        idx++ // Description
+        if (detail.franchiseItems.isNotEmpty()) {
+            idx++ // Franchise
+        }
+        idx // translators dropdown index
+    }
+
+    val watchMovieButtonIndex = remember(tvTranslatorsWatchIndex, detail) {
+        if (detail.translators.isNotEmpty()) tvTranslatorsWatchIndex + 1 else tvTranslatorsWatchIndex
     }
 
     val displayComments = remember(commentsState.comments, detail.comments) {
@@ -290,7 +307,7 @@ fun TvDetailContent(
                             modifier = Modifier.size(if (isCompactHeight) 16.dp else 18.dp)
                         )
                         Text(
-                            text = "Назад к каталогу",
+                            text = "Назад",
                             color = CinemaTextWhite,
                             fontSize = if (isCompactHeight) 11.sp else 12.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -532,8 +549,28 @@ fun TvDetailContent(
                                     .tvFocusableItem(
                                         onClick = {
                                             coroutineScope.launch {
-                                                if (tvTranslatorsWatchIndex >= 0) {
-                                                    rightScrollState.animateScrollToItem(tvTranslatorsWatchIndex)
+                                                val isSeries = detail.type == RezkaType.SERIES
+                                                val targetRequester = if (isSeries && detail.translators.isNotEmpty()) {
+                                                    translatorDropdownFocusRequester
+                                                } else {
+                                                    mainActionFocusRequester
+                                                }
+                                                val targetIndex = if (isSeries) {
+                                                    tvTranslatorsWatchIndex
+                                                } else {
+                                                    watchMovieButtonIndex
+                                                }
+                                                if (targetIndex >= 0) {
+                                                    try {
+                                                        rightScrollState.animateScrollToItem(targetIndex)
+                                                    } catch (_: Throwable) {}
+                                                }
+                                                for (attempt in 0..16) {
+                                                    kotlinx.coroutines.delay(if (attempt == 0) 30L else 50L)
+                                                    try {
+                                                        targetRequester.requestFocus()
+                                                        break
+                                                    } catch (_: Throwable) {}
                                                 }
                                             }
                                         },
@@ -740,19 +777,7 @@ fun TvDetailContent(
                 // ---- 2. Тот самый блок с информацией (ИДЕНТИЧНО телефону) ----
                 item {
                     Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusProperties {
-                                left = backButtonFocusRequester
-                            }
-                            .tvFocusableItem(
-                                onClick = {},
-                                scaleFactor = 1.0f,
-                                shape = RoundedCornerShape(12.dp),
-                                focusedBorderWidth = 1.5.dp,
-                                focusedBorderColor = CinemaPrimary.copy(alpha = 0.45f),
-                                lazyListState = rightScrollState
-                            ),
+                        modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = CinemaDark),
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -784,21 +809,24 @@ fun TvDetailContent(
                                 )
                             }
 
-                            if (detail.directorsList.isNotEmpty()) {
+                            val directorsToShow = if (detail.directorsList.isNotEmpty()) {
+                                detail.directorsList
+                            } else if (detail.director.isNotEmpty()) {
+                                detail.director.split(",").map { LinkItem(it.trim(), "") }
+                            } else emptyList()
+
+                            if (directorsToShow.isNotEmpty()) {
                                 TvDetailMetaRowWithLinks(
                                     icon = Icons.Default.MovieFilter,
                                     label = "Режиссёр:",
-                                    links = detail.directorsList,
+                                    links = directorsToShow,
                                     onLinkClick = { link ->
-                                        onNavigateToThematic(link.name, link.url)
+                                        if (link.url.isNotBlank()) {
+                                            onNavigateToThematic(link.name, link.url)
+                                        }
                                     },
+                                    leftFocusRequester = backButtonFocusRequester,
                                     lazyListState = rightScrollState
-                                )
-                            } else if (detail.director.isNotEmpty()) {
-                                DetailMetaRow(
-                                    icon = Icons.Default.MovieFilter,
-                                    label = "Режиссёр:",
-                                    value = detail.director
                                 )
                             }
 
@@ -818,21 +846,24 @@ fun TvDetailContent(
                                 )
                             }
 
-                            if (detail.seriesCollectionList.isNotEmpty()) {
+                            val seriesCollectionToShow = if (detail.seriesCollectionList.isNotEmpty()) {
+                                detail.seriesCollectionList
+                            } else if (detail.seriesCollection.isNotEmpty()) {
+                                listOf(LinkItem(detail.seriesCollection, ""))
+                            } else emptyList()
+
+                            if (seriesCollectionToShow.isNotEmpty()) {
                                 TvDetailMetaRowWithLinks(
                                     icon = Icons.Default.CollectionsBookmark,
                                     label = "Из серии:",
-                                    links = detail.seriesCollectionList,
+                                    links = seriesCollectionToShow,
                                     onLinkClick = { link ->
-                                        onNavigateToThematic(link.name, link.url)
+                                        if (link.url.isNotBlank()) {
+                                            onNavigateToThematic(link.name, link.url)
+                                        }
                                     },
+                                    leftFocusRequester = backButtonFocusRequester,
                                     lazyListState = rightScrollState
-                                )
-                            } else if (detail.seriesCollection.isNotEmpty()) {
-                                DetailMetaRow(
-                                    icon = Icons.Default.CollectionsBookmark,
-                                    label = "Из серии:",
-                                    value = detail.seriesCollection
                                 )
                             }
 
@@ -847,8 +878,11 @@ fun TvDetailContent(
                                     label = "Входит в списки:",
                                     links = collectionsToShow,
                                     onLinkClick = { link ->
-                                        onNavigateToThematic(link.name, link.url)
+                                        if (link.url.isNotBlank()) {
+                                            onNavigateToThematic(link.name, link.url)
+                                        }
                                     },
+                                    leftFocusRequester = backButtonFocusRequester,
                                     lazyListState = rightScrollState
                                 )
                             }
@@ -865,11 +899,6 @@ fun TvDetailContent(
                 }
 
                 // ---- 3. В главных ролях (Актеры, идентично телефону со ссылками и ТВ-фокусом) ----
-                val effectiveActors = if (detail.actorsList.isNotEmpty()) {
-                    detail.actorsList
-                } else {
-                    detail.actors.map { LinkItem(it, "") }
-                }
                 if (effectiveActors.isNotEmpty()) {
                     item {
                         val initialActorCount = 4
@@ -1167,6 +1196,7 @@ fun TvDetailContent(
                             onOptionSelected = { trans -> onSelectTranslator(trans) },
                             getLabel = { it.name },
                             modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f),
+                            focusRequester = translatorDropdownFocusRequester,
                             lazyListState = rightScrollState,
                             surfaceModifier = Modifier
                                 .focusProperties { left = backButtonFocusRequester }
@@ -1942,6 +1972,7 @@ fun TvDetailMetaRowWithLinks(
     label: String,
     links: List<LinkItem>,
     onLinkClick: (LinkItem) -> Unit,
+    leftFocusRequester: FocusRequester? = null,
     lazyListState: androidx.compose.foundation.lazy.LazyListState? = null,
     modifier: Modifier = Modifier
 ) {
@@ -1970,8 +2001,8 @@ fun TvDetailMetaRowWithLinks(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            links.forEach { link ->
-                val isClickable = link.url.isNotBlank()
+            links.forEachIndexed { linkIndex, link ->
+                val isClickable = link.url.isNotBlank() || link.name.isNotBlank()
                 Surface(
                     color = CinemaDark,
                     shape = RoundedCornerShape(6.dp),
@@ -1979,12 +2010,28 @@ fun TvDetailMetaRowWithLinks(
                     modifier = Modifier
                         .then(
                             if (isClickable) {
-                                Modifier.tvFocusableItem(
-                                    onClick = { onLinkClick(link) },
-                                    scaleFactor = 1.05f,
-                                    shape = RoundedCornerShape(6.dp),
-                                    lazyListState = lazyListState
-                                )
+                                Modifier
+                                    .focusProperties {
+                                        if (linkIndex == 0 && leftFocusRequester != null) {
+                                            left = leftFocusRequester
+                                        }
+                                    }
+                                    .onKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                            if (linkIndex == 0 && leftFocusRequester != null) {
+                                                leftFocusRequester.requestFocusSafe()
+                                                true
+                                            } else false
+                                        } else false
+                                    }
+                                    .tvFocusableItem(
+                                        onClick = { onLinkClick(link) },
+                                        scaleFactor = 1.05f,
+                                        focusedBorderColor = CinemaPrimary,
+                                        focusedBorderWidth = 2.dp,
+                                        shape = RoundedCornerShape(6.dp),
+                                        lazyListState = lazyListState
+                                    )
                             } else Modifier
                         )
                 ) {

@@ -56,19 +56,6 @@ import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusableItem
 import kotlinx.coroutines.launch
 
-private val countryItemSearchCache = java.util.concurrent.ConcurrentHashMap<String, String>()
-
-private fun getCountryItemSearchKey(item: CountryItem): String {
-    val key = "${item.query}|${item.name}"
-    return countryItemSearchCache.getOrPut(key) {
-        val cleanName = CountryFlags.stripFlags(item.name).trim().lowercase()
-        val cleanQuery = CountryFlags.cleanCountryName(item.query).lowercase()
-        val rawNameLower = item.name.lowercase()
-        val rawQueryLower = item.query.lowercase()
-        "$cleanName $cleanQuery $rawNameLower $rawQueryLower"
-    }
-}
-
 /**
  * Высокопроизводительная фильтрация списка стран по поисковому запросу.
  * Выполняется в памяти за микросекунды с предвычисленными поисковыми ключами без лишних аллокаций.
@@ -79,10 +66,15 @@ fun filterCountryItems(countries: List<CountryItem>, query: String): List<Countr
 
     val cleanSearch = CountryFlags.cleanCountryName(trimmed).lowercase()
     val rawSearchLower = trimmed.lowercase()
+    val isSame = cleanSearch == rawSearchLower
 
     return countries.filter { item ->
-        val searchKey = getCountryItemSearchKey(item)
-        searchKey.contains(cleanSearch) || searchKey.contains(rawSearchLower)
+        val key = item.searchKey
+        if (isSame) {
+            key.contains(cleanSearch)
+        } else {
+            key.contains(cleanSearch) || key.contains(rawSearchLower)
+        }
     }
 }
 
@@ -161,8 +153,11 @@ fun TvCountryDropdown(
         countriesList.firstOrNull { it.query.isEmpty() } ?: CountryItem("Все страны", "")
     }
 
-    val filteredCountries = remember(countriesList, searchQuery) {
-        val rawCountries = countriesList.filter { it.query.isNotEmpty() }
+    val rawCountries = remember(countriesList) {
+        countriesList.filter { it.query.isNotEmpty() }
+    }
+
+    val filteredCountries = remember(rawCountries, searchQuery) {
         if (searchQuery.isBlank()) {
             rawCountries
         } else {
@@ -637,8 +632,11 @@ fun RezkaCountryDropdown(
         options.firstOrNull { it.query.isEmpty() } ?: CountryItem("Все страны", "")
     }
 
-    val filteredCountries = remember(options, searchQuery) {
-        val rawCountries = options.filter { it.query.isNotEmpty() }
+    val rawCountries = remember(options) {
+        options.filter { it.query.isNotEmpty() }
+    }
+
+    val filteredCountries = remember(rawCountries, searchQuery) {
         if (searchQuery.isBlank()) {
             rawCountries
         } else {
