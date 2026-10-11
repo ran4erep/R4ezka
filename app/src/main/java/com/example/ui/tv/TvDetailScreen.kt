@@ -93,12 +93,11 @@ fun TvDetailContent(
     onAppendNextCommentsPage: () -> Unit = {},
     onNavigateToMovie: (RezkaItem) -> Unit = {},
     onNavigateToThematic: (String, String) -> Unit = { _, _ -> },
-    scrollState: androidx.compose.foundation.lazy.LazyListState? = null,
     isPlayerOpen: Boolean = false,
+    scrollState: androidx.compose.foundation.lazy.LazyListState? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val focusManager = LocalFocusManager.current
     val backButtonFocusRequester = remember { FocusRequester() }
     val trailerButtonFocusRequester = remember { FocusRequester() }
     val favoriteButtonFocusRequester = remember { FocusRequester() }
@@ -153,22 +152,25 @@ fun TvDetailContent(
         }
     }
 
-    // При выходе из плеера гарантированно восстанавливаем фокус на кнопке "Смотреть" или текущем эпизоде
+    // Автоматическое восстановление фокуса на кнопке "Смотреть" (фильм) или текущем эпизоде (сериал) при выходе из плеера
     var wasPlayerOpen by remember { mutableStateOf(false) }
     LaunchedEffect(isPlayerOpen) {
         if (wasPlayerOpen && !isPlayerOpen) {
-            for (attempt in 0..14) {
+            if (detail.type == RezkaType.SERIES) {
+                try {
+                    rightScrollState.scrollToItem(watchMovieButtonIndex.coerceAtLeast(2))
+                } catch (_: Throwable) {}
+            } else {
+                try {
+                    rightScrollState.scrollToItem(watchMovieButtonIndex.coerceAtLeast(1))
+                } catch (_: Throwable) {}
+            }
+            for (attempt in 0..10) {
                 kotlinx.coroutines.delay(if (attempt == 0) 30L else 40L)
                 try {
                     mainActionFocusRequester.requestFocus()
                     break
-                } catch (_: Throwable) {
-                    if (attempt == 14) {
-                        try {
-                            translatorDropdownFocusRequester.requestFocusSafe()
-                        } catch (_: Throwable) {}
-                    }
-                }
+                } catch (_: Throwable) {}
             }
         }
         wasPlayerOpen = isPlayerOpen
@@ -309,10 +311,7 @@ fun TvDetailContent(
                             } else false
                         }
                         .tvFocusableItem(
-                            onClick = {
-                                focusManager.clearFocus(force = true)
-                                onBack()
-                            },
+                            onClick = onBack,
                             scaleFactor = 1.05f,
                             shape = RoundedCornerShape(10.dp),
                             focusRequester = backButtonFocusRequester
