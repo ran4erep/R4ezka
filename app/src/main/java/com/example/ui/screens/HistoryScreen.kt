@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -390,19 +391,16 @@ fun HistoryScreen(
 
                                 Spacer(modifier = Modifier.height(spacerHeight))
 
+                                val btnShape = RoundedCornerShape(if (isDense) 6.dp else 8.dp)
                                 if (isFullyWatched) {
                                     val haptic = HapticEngine.get()
-                                    Surface(
-                                        onClick = {
-                                            haptic.perform(HapticType.WARNING)
-                                            viewModel.deleteHistoryByItemId(history.itemId)
-                                        },
-                                        color = CinemaDark,
-                                        shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
-                                        border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.8f)),
+                                    Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(buttonHeight)
+                                            .clip(btnShape)
+                                            .background(CinemaDark)
+                                            .border(1.dp, CinemaPrimary.copy(alpha = 0.8f), btnShape)
                                             .focusRequester(deleteRequester)
                                             .onKeyEvent { keyEvent ->
                                                 if (keyEvent.type == KeyEventType.KeyDown) {
@@ -446,10 +444,11 @@ fun HistoryScreen(
                                                 },
                                                 scaleFactor = 1.0f,
                                                 focusedBorderColor = CinemaPrimary,
-                                                shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
+                                                shape = btnShape,
                                                 focusRequester = deleteRequester
                                             )
-                                            .testTag("delete_history_${history.itemId}")
+                                            .testTag("delete_history_${history.itemId}"),
+                                        contentAlignment = Alignment.Center
                                     ) {
                                         Row(
                                             modifier = Modifier.fillMaxSize(),
@@ -467,7 +466,9 @@ fun HistoryScreen(
                                                 text = "Удалить",
                                                 color = CinemaTextWhite,
                                                 fontSize = if (tvGridCols >= 7) 9.sp else if (isDense) 10.sp else 11.sp,
-                                                fontWeight = FontWeight.Bold
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                softWrap = false
                                             )
                                         }
                                     }
@@ -479,16 +480,13 @@ fun HistoryScreen(
                                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Surface(
-                                            onClick = {
-                                                viewModel.toggleHistoryWatched(history.itemId)
-                                            },
-                                            color = CinemaDark,
-                                            shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
-                                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                                        Box(
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .fillMaxHeight()
+                                                .clip(btnShape)
+                                                .background(CinemaDark)
+                                                .border(1.dp, Color.White.copy(alpha = 0.12f), btnShape)
                                                 .focusRequester(markWatchedRequester)
                                                 .onKeyEvent { keyEvent ->
                                                     if (keyEvent.type == KeyEventType.KeyDown) {
@@ -526,11 +524,12 @@ fun HistoryScreen(
                                                         viewModel.toggleHistoryWatched(history.itemId)
                                                     },
                                                     scaleFactor = 1.0f,
-                                                    focusedBorderColor = CinemaGreen,
-                                                    shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
+                                                    focusedBorderColor = CinemaPrimary,
+                                                    shape = btnShape,
                                                     focusRequester = markWatchedRequester
                                                 )
-                                                .testTag("mark_watched_history_${history.itemId}")
+                                                .testTag("mark_watched_history_${history.itemId}"),
+                                            contentAlignment = Alignment.Center
                                         ) {
                                             Row(
                                                 modifier = Modifier.fillMaxSize(),
@@ -543,30 +542,26 @@ fun HistoryScreen(
                                                     tint = CinemaMuted,
                                                     modifier = Modifier.size(if (isDense) 13.dp else 15.dp)
                                                 )
-                                                if (tvGridCols <= 5) {
-                                                    Spacer(modifier = Modifier.width(3.dp))
-                                                    Text(
-                                                        text = "Просм.",
-                                                        color = CinemaTextGray,
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
-                                                }
+                                                Spacer(modifier = Modifier.width(3.dp))
+                                                Text(
+                                                    text = "Просмотрено",
+                                                    color = CinemaTextGray,
+                                                    fontSize = if (tvGridCols >= 7) 8.sp else if (isDense) 9.sp else 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    softWrap = false
+                                                )
                                             }
                                         }
 
                                         val haptic = HapticEngine.get()
-                                        Surface(
-                                            onClick = {
-                                                haptic.perform(HapticType.WARNING)
-                                                viewModel.deleteHistoryByItemId(history.itemId)
-                                            },
-                                            color = CinemaDark,
-                                            shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
-                                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                                        Box(
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .fillMaxHeight()
+                                                .clip(btnShape)
+                                                .background(CinemaDark)
+                                                .border(1.dp, Color.White.copy(alpha = 0.12f), btnShape)
                                                 .focusRequester(deleteRequester)
                                                 .onKeyEvent { keyEvent ->
                                                     if (keyEvent.type == KeyEventType.KeyDown) {
@@ -603,10 +598,11 @@ fun HistoryScreen(
                                                     },
                                                     scaleFactor = 1.0f,
                                                     focusedBorderColor = CinemaPrimary,
-                                                    shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
+                                                    shape = btnShape,
                                                     focusRequester = deleteRequester
                                                 )
-                                                .testTag("delete_history_${history.itemId}")
+                                                .testTag("delete_history_${history.itemId}"),
+                                            contentAlignment = Alignment.Center
                                         ) {
                                             Row(
                                                 modifier = Modifier.fillMaxSize(),
@@ -619,15 +615,15 @@ fun HistoryScreen(
                                                     tint = CinemaMuted,
                                                     modifier = Modifier.size(if (isDense) 13.dp else 15.dp)
                                                 )
-                                                if (tvGridCols <= 5) {
-                                                    Spacer(modifier = Modifier.width(3.dp))
-                                                    Text(
-                                                        text = "Удал.",
-                                                        color = CinemaTextGray,
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
-                                                }
+                                                Spacer(modifier = Modifier.width(3.dp))
+                                                Text(
+                                                    text = "Удалить",
+                                                    color = CinemaTextGray,
+                                                    fontSize = if (tvGridCols >= 7) 8.sp else if (isDense) 9.sp else 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    softWrap = false
+                                                )
                                             }
                                         }
                                     }
@@ -1190,49 +1186,6 @@ fun TvHistoryCard(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Значок состояния (в правом верхнем углу)
-                if (isFullyWatched) {
-                    Surface(
-                        color = CinemaGreen,
-                        shape = RoundedCornerShape(4.dp),
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(if (isUltraDense) 3.dp else 5.dp)
-                    ) {
-                        Text(
-                            text = "✓ 100%",
-                            color = Color.White,
-                            fontSize = if (isUltraDense) 7.sp else 8.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                        )
-                    }
-                } else if (history.isSeries) {
-                    AdaptivePosterBadge(
-                        rawText = "Сезон ${history.latestSeason}, Серия ${history.latestEpisode}",
-                        isSeries = true,
-                        columnsCount = columnCount,
-                        cardHeight = cardHeight,
-                        cardWidth = cardWidth,
-                        modifier = Modifier.align(Alignment.TopEnd)
-                    )
-                } else if (progressPercentage > 0) {
-                    Surface(
-                        color = CinemaPrimary,
-                        shape = RoundedCornerShape(4.dp),
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(if (isUltraDense) 3.dp else 5.dp)
-                    ) {
-                        Text(
-                            text = "$progressPercentage%",
-                            color = Color.White,
-                            fontSize = if (isUltraDense) 7.sp else 8.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                        )
-                    }
-                }
 
                 // Нижняя полоса прогресса просмотра на постере (как в Netflix/YouTube/Rezka)
                 LinearProgressIndicator(

@@ -2,6 +2,8 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -344,6 +346,9 @@ fun FavoritesScreen(
                                     seriesBadgeMode = seriesBadgeMode,
                                     isBouncing = item.id == loadingMovieId,
                                     onNavigateIndex = navigateToItem,
+                                    onDown = {
+                                        deleteRequester.requestFocusSafe()
+                                    },
                                     onUp = {
                                         if (index >= gridColumns) {
                                             deleteItemFocusRequesters.getOrPut(index - gridColumns) { FocusRequester() }.requestFocusSafe()
@@ -361,30 +366,20 @@ fun FavoritesScreen(
                                         viewModel.setTvFavoritesFocusedItem(fav.id, index)
                                         onNavigateToDetail(item)
                                     },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .onKeyEvent { keyEvent ->
-                                            if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
-                                                deleteRequester.requestFocusSafe()
-                                                true
-                                            } else false
-                                        }
+                                    modifier = Modifier.fillMaxWidth()
                                 )
 
                                 Spacer(modifier = Modifier.height(spacerHeight))
 
                                 val haptic = HapticEngine.get()
-                                Surface(
-                                    onClick = {
-                                        haptic.perform(HapticType.WARNING)
-                                        viewModel.removeFavorite(fav.id)
-                                    },
-                                    color = CinemaDark,
-                                    shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
-                                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.8f)),
+                                val btnShape = RoundedCornerShape(if (isDense) 6.dp else 8.dp)
+                                Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(buttonHeight)
+                                        .clip(btnShape)
+                                        .background(CinemaDark)
+                                        .border(1.dp, CinemaPrimary.copy(alpha = 0.8f), btnShape)
                                         .focusRequester(deleteRequester)
                                         .onKeyEvent { keyEvent ->
                                             if (keyEvent.type == KeyEventType.KeyDown) {
@@ -428,10 +423,11 @@ fun FavoritesScreen(
                                             },
                                             scaleFactor = 1.0f,
                                             focusedBorderColor = CinemaPrimary,
-                                            shape = RoundedCornerShape(if (isDense) 6.dp else 8.dp),
+                                            shape = btnShape,
                                             focusRequester = deleteRequester
                                         )
-                                        .testTag("remove_favorite_${fav.id}")
+                                        .testTag("remove_favorite_${fav.id}"),
+                                    contentAlignment = Alignment.Center
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxSize(),
@@ -449,7 +445,9 @@ fun FavoritesScreen(
                                             text = "Удалить",
                                             color = CinemaTextWhite,
                                             fontSize = if (gridColumns >= 7) 9.sp else if (isDense) 10.sp else 11.sp,
-                                            fontWeight = FontWeight.Bold
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                     }
                                 }
