@@ -862,13 +862,6 @@ fun CatalogScreen(
                             }
                         }
 
-                        // Если выбран фильтр по стране и найдено мало карточек, автоматически подгружаем следующую страницу
-                        LaunchedEffect(displayedItems.size, currentCountry, isEndReached, isLoadingMore) {
-                            if (isOnline && currentCountry.isNotEmpty() && displayedItems.size < 20 && !isEndReached && !isLoadingMore && searchInput.isEmpty()) {
-                                viewModel.loadNextPage()
-                            }
-                        }
-
                         if (displayedItems.isEmpty()) {
                             if (!isOnline) {
                                 Column(

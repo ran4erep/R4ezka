@@ -98,8 +98,12 @@ fun TvMainScreen(
     isTopScreen: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    var selectedDestination by remember { mutableStateOf(TvNavDestination.CATALOG) }
+    val selectedDestination by viewModel.tvNavDestination.collectAsState()
     var isSidebarFocused by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = isTopScreen && selectedDestination != TvNavDestination.CATALOG) {
+        viewModel.setTvNavDestination(TvNavDestination.CATALOG)
+    }
 
     LaunchedEffect(selectedDestination, isTopScreen) {
         if (selectedDestination == TvNavDestination.HISTORY && isTopScreen) {
@@ -219,7 +223,7 @@ fun TvMainScreen(
                         overrideIcon = icon,
                         focusRequester = sidebarFocusRequesters[dest],
                         onRight = navigateToCurrentMainContent,
-                        onClick = { selectedDestination = dest }
+                        onClick = { viewModel.setTvNavDestination(dest) }
                     )
                 }
             }
@@ -507,6 +511,7 @@ private fun TvCatalogContent(
     val gridState = rememberSavedLazyGridState("catalog", viewModel)
     var lastFocusedIndex by rememberSaveable { mutableStateOf(viewModel.getTvCatalogFocusedIndex() ?: 0) }
     var isFiltersAreaFocused by remember { mutableStateOf(false) }
+    var isSearchInputFocused by remember { mutableStateOf(false) }
 
     val currentCatalogKey = remember(currentType, currentSection, currentGenre, currentYear, currentCountry, viewModel.searchQuery) {
         "${currentType.name}_${currentSection.name}_${currentGenre}_${currentYear}_${currentCountry}_${viewModel.searchQuery.trim()}"
@@ -532,7 +537,9 @@ private fun TvCatalogContent(
 
     val restoreCatalogFocus: () -> Unit = {
         coroutineScope.launch {
-            if (isFiltersAreaFocused) {
+            if (isSearchInputFocused) {
+                searchBarFocusRequester.requestFocusSafe()
+            } else if (isFiltersAreaFocused) {
                 categoryDropdownFocusRequester.requestFocusSafe()
             } else {
                 val visibleIndices = gridState.layoutInfo.visibleItemsInfo.map { it.index }
@@ -563,13 +570,16 @@ private fun TvCatalogContent(
             lastFocusedIndex = 0
             viewModel.clearTvCatalogFocusedItem()
             viewModel.resetScrollPosition("catalog")
-            coroutineScope.launch {
-                for (attempt in 0..14) {
-                    kotlinx.coroutines.delay(if (attempt == 0) 30L else 50L)
-                    try {
-                        getFocusRequesterForIndex(0).requestFocus()
-                        break
-                    } catch (_: Throwable) {}
+            // Переводим фокус на первый элемент каталога ТОЛЬКО если пользователь не находится в строке поиска или фильтрах!
+            if (!isFiltersAreaFocused && !isSearchInputFocused) {
+                coroutineScope.launch {
+                    for (attempt in 0..14) {
+                        kotlinx.coroutines.delay(if (attempt == 0) 30L else 50L)
+                        try {
+                            getFocusRequesterForIndex(0).requestFocus()
+                            break
+                        } catch (_: Throwable) {}
+                    }
                 }
             }
         }
@@ -580,14 +590,19 @@ private fun TvCatalogContent(
             gridState.scrollToItem(0, 0)
             lastFocusedIndex = 0
             viewModel.clearTvCatalogFocusedItem()
-            try {
-                getFocusRequesterForIndex(0).requestFocusSafe()
-            } catch (_: Exception) {}
+            // Защита фокуса: если пользователь печатает в поиске или выбирает фильтры, фокус не сбрасывается в сетку!
+            if (!isFiltersAreaFocused && !isSearchInputFocused) {
+                try {
+                    getFocusRequesterForIndex(0).requestFocusSafe()
+                } catch (_: Exception) {}
+            }
         }
     }
 
     val focusGrid: () -> Unit = {
         coroutineScope.launch {
+            isFiltersAreaFocused = false
+            isSearchInputFocused = false
             val visibleIndices = gridState.layoutInfo.visibleItemsInfo.map { it.index }
             val targetIndex = if (lastFocusedIndex in visibleIndices) {
                 lastFocusedIndex
@@ -631,6 +646,8 @@ private fun TvCatalogContent(
             return@LaunchedEffect
         }
         if (hasRestoredFocus) return@LaunchedEffect
+        // Не перехватываем фокус в сетку, если пользователь в строке поиска или фильтрах!
+        if (isFiltersAreaFocused || isSearchInputFocused) return@LaunchedEffect
         if (currentType != RezkaType.COLLECTIONS && catalogState is CatalogState.Success) {
             val items = displayedItems
             if (items.isNotEmpty()) {
@@ -761,12 +778,17 @@ private fun TvCatalogContent(
                 countryFocusRequester = countryDropdownFocusRequester,
                 onFocusGrid = focusGrid,
                 sidebarFocusRequester = sidebarFocusRequester,
-                onSearchQueryChanged = {
-                    searchInput = it
-                    viewModel.onSearchQueryChanged(it)
+                onSearchQueryChanged = { newText ->
+                    searchInput = newText
+                    viewModel.onSearchQueryChanged(newText)
                 },
-                onSearchCommit = {
-                    viewModel.commitSearchQuery(searchInput)
+                onSearchCommit = { committedQuery ->
+                    val query = (committedQuery ?: searchInput).trim()
+                    if (query.isNotEmpty()) {
+                        searchInput = query
+                        viewModel.onSearchQueryChanged(query)
+                        viewModel.commitSearchQuery(query)
+                    }
                 },
                 onRemoveSearchQuery = { query ->
                     viewModel.removeSearchQueryFromHistory(query)
@@ -776,6 +798,10 @@ private fun TvCatalogContent(
                 },
                 onFiltersFocused = {
                     isFiltersAreaFocused = true
+                },
+                onSearchFocusChanged = { focused ->
+                    isSearchInputFocused = focused
+                    if (focused) isFiltersAreaFocused = true
                 },
                 onTypeSelected = { type ->
                     viewModel.selectCategoryFilter(type)
@@ -1192,10 +1218,11 @@ private fun TvCatalogFiltersBar(
     searchQuery: String,
     searchHistory: List<String> = emptyList(),
     onSearchQueryChanged: (String) -> Unit,
-    onSearchCommit: (() -> Unit)? = null,
+    onSearchCommit: ((String?) -> Unit)? = null,
     onRemoveSearchQuery: ((String) -> Unit)? = null,
     onClearSearchHistory: (() -> Unit)? = null,
     onFiltersFocused: (() -> Unit)? = null,
+    onSearchFocusChanged: ((Boolean) -> Unit)? = null,
     onTypeSelected: (RezkaType?) -> Unit,
     onSectionSelected: (SectionType) -> Unit,
     onGenreSelected: (String) -> Unit,
@@ -1259,7 +1286,7 @@ private fun TvCatalogFiltersBar(
             prompt = "Назовите фильм или сериал"
         ) { spokenText ->
             onSearchQueryChanged(spokenText)
-            onSearchCommit?.invoke()
+            onSearchCommit?.invoke(spokenText)
         }
 
         // 1. Поиск (сверху) - строка поиска во всю ширину со встроенной кнопкой голосового ввода для ТВ
@@ -1282,6 +1309,7 @@ private fun TvCatalogFiltersBar(
             onFocusChanged = { focused ->
                 isSearchInputFocused = focused
                 if (focused) onFiltersFocused?.invoke()
+                onSearchFocusChanged?.invoke(focused)
             },
             modifier = Modifier.fillMaxWidth()
         )
@@ -1366,7 +1394,7 @@ private fun TvCatalogFiltersBar(
                                 .tvFocusableItem(
                                     onClick = {
                                         onSearchQueryChanged(histItem)
-                                        onSearchCommit?.invoke()
+                                        onSearchCommit?.invoke(histItem)
                                     },
                                     onFocusChanged = { focused ->
                                         if (focused) {
@@ -1891,19 +1919,22 @@ fun TvCompactSearchBar(
     onLeft: (() -> Unit)? = null,
     onRight: (() -> Unit)? = null,
     onDown: (() -> Unit)? = null,
-    onSearchCommit: (() -> Unit)? = null,
+    onSearchCommit: ((String?) -> Unit)? = null,
     onFocusChanged: ((Boolean) -> Unit)? = null
 ) {
     var isEditing by remember { mutableStateOf(false) }
-    var hasBeenFocused by remember { mutableStateOf(false) }
-    val focusRequester = remember { FocusRequester() }
+    val textFieldFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    val focusManager = LocalFocusManager.current
 
-    // При выходе из режима редактирования гарантированно восстанавливаем фокус на строке поиска
+    // При переключении режима ввода синхронизируем клавиатуру и фокус
     LaunchedEffect(isEditing) {
-        if (!isEditing) {
-            hasBeenFocused = false
+        if (isEditing) {
+            onFocusChanged?.invoke(true)
+            delay(50L)
+            textFieldFocusRequester.requestFocusSafe()
+            keyboardController?.show()
+        } else {
+            // При выходе из режима редактирования гарантированно восстанавливаем фокус на строке поиска
             for (attempt in 0..4) {
                 delay(if (attempt == 0) 30L else 40L)
                 try {
@@ -1911,12 +1942,11 @@ fun TvCompactSearchBar(
                     break
                 } catch (_: Throwable) {}
             }
-        } else {
-            onFocusChanged?.invoke(true)
         }
     }
 
-    // При открытой клавиатуре по кнопке Назад пульта скрываем клавиатуру и сохраняем фокус на строке поиска
+    // При открытой экранной клавиатуре по кнопке "Назад" на пульте скрываем клавиатуру
+    // и сохраняем фокус на строке поиска без сброса набранного текста
     BackHandler(enabled = isEditing) {
         isEditing = false
         keyboardController?.hide()
@@ -1939,7 +1969,8 @@ fun TvCompactSearchBar(
                 up = FocusRequester.Cancel
             }
             .onFocusChanged { focusState ->
-                onFocusChanged?.invoke(focusState.isFocused || isEditing)
+                val isFocusedNow = focusState.isFocused || isEditing
+                onFocusChanged?.invoke(isFocusedNow)
             }
             .onKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyDown) {
@@ -1974,7 +2005,6 @@ fun TvCompactSearchBar(
                     Modifier.tvFocusableItem(
                         onClick = {
                             isEditing = true
-                            hasBeenFocused = false
                         },
                         onFocused = {
                             onFocusChanged?.invoke(true)
@@ -1984,7 +2014,14 @@ fun TvCompactSearchBar(
                         shape = RoundedCornerShape(10.dp),
                         focusRequester = searchBarFocusRequester
                     )
-                } else Modifier
+                } else {
+                    Modifier.tvPulsingFocusBorder(
+                        isFocused = true,
+                        focusedBorderColor = CinemaPrimary,
+                        shape = RoundedCornerShape(10.dp),
+                        baseBorderWidth = 2.dp
+                    )
+                }
             )
             .testTag("tv_search_bar")
     ) {
@@ -2021,11 +2058,6 @@ fun TvCompactSearchBar(
                     )
                 } else {
                     // Режим редактирования: активируется ТОЛЬКО по явному нажатию кнопки ОК на пульте
-                    LaunchedEffect(Unit) {
-                        focusRequester.requestFocusSafe()
-                        keyboardController?.show()
-                    }
-
                     BasicTextField(
                         value = query,
                         onValueChange = onQueryChanged,
@@ -2039,35 +2071,25 @@ fun TvCompactSearchBar(
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(
                             onSearch = {
-                                onSearchCommit?.invoke()
+                                onSearchCommit?.invoke(query)
                                 isEditing = false
                                 keyboardController?.hide()
-                                focusManager.clearFocus()
                             }
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .focusRequester(focusRequester)
+                            .focusRequester(textFieldFocusRequester)
                             .onKeyEvent { keyEvent ->
                                 if (keyEvent.type == KeyEventType.KeyDown &&
                                     (keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
                                      keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
                                      keyEvent.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER)
                                 ) {
-                                    onSearchCommit?.invoke()
+                                    onSearchCommit?.invoke(query)
                                     isEditing = false
                                     keyboardController?.hide()
-                                    focusManager.clearFocus()
                                     true
                                 } else false
-                            }
-                            .onFocusChanged { focusState ->
-                                if (focusState.isFocused) {
-                                    hasBeenFocused = true
-                                } else if (hasBeenFocused && isEditing) {
-                                    isEditing = false
-                                    keyboardController?.hide()
-                                }
                             },
                         decorationBox = { innerTextField ->
                             if (query.isEmpty()) {

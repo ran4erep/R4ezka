@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.RezkaApplication
 import com.example.data.*
+import com.example.ui.tv.TvNavDestination
 import java.text.Collator
 import java.util.Collections
 import java.util.Locale
@@ -95,6 +96,14 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         scrollPositions.remove(key)
     }
 
+    // Сохранение последнего выбранного раздела ТВ (Каталог, Избранное, История, Настройки)
+    private val _tvNavDestination = MutableStateFlow(TvNavDestination.CATALOG)
+    val tvNavDestination: StateFlow<TvNavDestination> = _tvNavDestination.asStateFlow()
+
+    fun setTvNavDestination(destination: TvNavDestination) {
+        _tvNavDestination.value = destination
+    }
+
     // Сохранение последнего выбранного / сфокусированного фильма в ТВ-каталоге для возврата фокуса
     @Volatile
     private var tvCatalogFocusedItemId: String? = null
@@ -113,6 +122,34 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         tvCatalogFocusedItemId = null
         tvCatalogFocusedIndex = null
     }
+
+    // Сохранение последнего выбранного элемента в ТВ-избранном для возврата фокуса
+    @Volatile
+    private var tvFavoritesFocusedItemId: String? = null
+    @Volatile
+    private var tvFavoritesFocusedIndex: Int? = null
+
+    fun setTvFavoritesFocusedItem(itemId: String?, index: Int?) {
+        tvFavoritesFocusedItemId = itemId
+        tvFavoritesFocusedIndex = index
+    }
+
+    fun getTvFavoritesFocusedItemId(): String? = tvFavoritesFocusedItemId
+    fun getTvFavoritesFocusedIndex(): Int? = tvFavoritesFocusedIndex
+
+    // Сохранение последнего выбранного элемента в ТВ-истории для возврата фокуса
+    @Volatile
+    private var tvHistoryFocusedItemId: String? = null
+    @Volatile
+    private var tvHistoryFocusedIndex: Int? = null
+
+    fun setTvHistoryFocusedItem(itemId: String?, index: Int?) {
+        tvHistoryFocusedItemId = itemId
+        tvHistoryFocusedIndex = index
+    }
+
+    fun getTvHistoryFocusedItemId(): String? = tvHistoryFocusedItemId
+    fun getTvHistoryFocusedIndex(): Int? = tvHistoryFocusedIndex
 
     private val _catalogScrollResetEvent = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 1)
     val catalogScrollResetEvent: SharedFlow<Unit> = _catalogScrollResetEvent.asSharedFlow()
