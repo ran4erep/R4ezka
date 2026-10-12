@@ -616,8 +616,14 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/settings.json")
                     .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
-                httpClient.newCall(request).execute().close()
-                Log.d(TAG, "Settings synced to cloud: mirror=$mirror, quality=$quality, autoNext=$autoNextEpisode, sub=$preferredSubtitleLang, subScale=$subtitleTextScale, resize=$resizeMode, tvMode=$tvMode, cardGridMode=$cardGridMode, defaultType=$defaultCatalogType, defaultSection=$defaultCatalogSection")
+                httpClient.newCall(request).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        Log.d(TAG, "Settings synced to cloud: mirror=$mirror, quality=$quality, autoNext=$autoNextEpisode, sub=$preferredSubtitleLang, subScale=$subtitleTextScale, resize=$resizeMode, tvMode=$tvMode, cardGridMode=$cardGridMode, defaultType=$defaultCatalogType, defaultSection=$defaultCatalogSection")
+                    } else {
+                        val errorBody = try { resp.body?.string() ?: "" } catch (_: Exception) { "" }
+                        Log.w(TAG, "Failed to sync settings to Firebase (HTTP ${resp.code}): $errorBody")
+                    }
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync settings to Firebase: ${e.message}")
             }

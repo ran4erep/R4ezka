@@ -1566,6 +1566,7 @@ object RezkaService {
 
     const val KEY_DEFAULT_CATALOG_TYPE = "default_catalog_type"
     const val KEY_DEFAULT_CATALOG_SECTION = "default_catalog_section"
+    const val KEY_SETTINGS_UPDATED_AT = "settings_updated_at"
     const val KEY_DNS_PREFERENCE = "dns_preference"
     const val KEY_CUSTOM_DNS = "dns_custom_address"
 
@@ -1580,6 +1581,11 @@ object RezkaService {
 
     private val _defaultCatalogSection = MutableStateFlow(SectionType.LATEST)
     val defaultCatalogSection: StateFlow<SectionType> = _defaultCatalogSection.asStateFlow()
+
+    private val _settingsUpdatedAt = MutableStateFlow(0L)
+    val settingsUpdatedAt: StateFlow<Long> = _settingsUpdatedAt.asStateFlow()
+
+    fun getSettingsUpdatedAt(): Long = prefs?.getLong(KEY_SETTINGS_UPDATED_AT, 0L) ?: _settingsUpdatedAt.value
 
     private var prefs: SharedPreferences? = null
 
@@ -1652,6 +1658,9 @@ object RezkaService {
             SectionType.LATEST
         }
         _defaultCatalogSection.value = parsedSection
+
+        val savedSettingsUpdatedAt = prefs?.getLong(KEY_SETTINGS_UPDATED_AT, 0L) ?: 0L
+        _settingsUpdatedAt.value = savedSettingsUpdatedAt
 
         // Локальные настройки DNS (не синхронизируются с облаком)
         val savedPrefId = prefs?.getString(KEY_DNS_PREFERENCE, DnsPreference.AUTO.id)
@@ -1769,12 +1778,22 @@ object RezkaService {
     fun setDefaultCatalogType(type: RezkaType?) {
         val valid = if (type == RezkaType.COLLECTIONS) null else type
         _defaultCatalogType.value = valid
-        prefs?.edit()?.putString(KEY_DEFAULT_CATALOG_TYPE, valid?.name ?: "ALL")?.apply()
+        val now = System.currentTimeMillis()
+        _settingsUpdatedAt.value = now
+        prefs?.edit()
+            ?.putString(KEY_DEFAULT_CATALOG_TYPE, valid?.name ?: "ALL")
+            ?.putLong(KEY_SETTINGS_UPDATED_AT, now)
+            ?.commit()
     }
 
     fun setDefaultCatalogSection(section: SectionType) {
         _defaultCatalogSection.value = section
-        prefs?.edit()?.putString(KEY_DEFAULT_CATALOG_SECTION, section.name)?.apply()
+        val now = System.currentTimeMillis()
+        _settingsUpdatedAt.value = now
+        prefs?.edit()
+            ?.putString(KEY_DEFAULT_CATALOG_SECTION, section.name)
+            ?.putLong(KEY_SETTINGS_UPDATED_AT, now)
+            ?.commit()
     }
 
     /**
