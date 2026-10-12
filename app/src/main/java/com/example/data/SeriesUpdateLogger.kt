@@ -1,6 +1,5 @@
 package com.example.data
 
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -22,11 +21,10 @@ import java.util.Locale
  * Высокопроизводительный движок логирования проверок серий в текстовый файл.
  * 
  * Оптимизации:
- * 1. Выполнение I/O операций асинхронно на Dispatchers.IO с малым потреблением CPU.
- * 2. Защита от разрастания файла (ротация/триминг до 500 КБ).
- * 3. Сохранение сразу в 2 места:
- *    - Внутреннее/внешнее хранилище приложения: /Android/data/<package>/files/series_checks_log.txt
- *    - Публичная папка Downloads: /sdcard/Download/rezka_series_checks_log.txt (для легкого доступа через любой файловый менеджер)
+ * 1. Выполнение I/O операций асинхронно на Dispatchers.IO с минимальным потреблением CPU и памяти.
+ * 2. Хранение исключительно в изолированном хранилище приложения без засорения системной папки Загрузки (Downloads).
+ * 3. Защита от разрастания файла (ротация/стриминг буфера до 512 КБ).
+ * 4. Безопасная передача через системный FileProvider (Intent.ACTION_SEND) без создания мусорных копий.
  */
 object SeriesUpdateLogger {
     private const val TAG = "SeriesUpdateLogger"
@@ -44,24 +42,30 @@ object SeriesUpdateLogger {
     }
 
     /**
-     * Получает основной текстовый файл логов
+     * Получает основной текстовый файл логов в изолированном хранилище приложения.
+     * Ни при каких обстоятельствах не размещается в публичной папке Загрузки.
      */
     fun getLogFile(context: Context): File {
+        val internalFile = File(context.filesDir, LOG_FILE_NAME)
         val extDir = context.getExternalFilesDir(null)
-        val file = if (extDir != null) {
-            File(extDir, LOG_FILE_NAME)
-        } else {
-            File(context.filesDir, LOG_FILE_NAME)
+        val extFile = extDir?.let { File(it, LOG_FILE_NAME) }
+        return when {
+            internalFile.exists() -> internalFile
+            extFile != null && extFile.exists() -> extFile
+            else -> internalFile
         }
-        return file
     }
 
     /**
-     * Инициализирует и мгновенно создает файл логов при первом запуске
+     * Инициализирует файл логов в изолированном каталоге и очищает старый лог из Загрузок,
+     * если он был создан предыдущими версиями.
      */
     suspend fun init(context: Context) = withContext(Dispatchers.IO) {
         fileMutex.withLock {
             try {
+                // Удаляем остаточный файл из папки Загрузки, чтобы не засорять устройство
+                cleanupLegacyDownloadsLog(context)
+
                 val file = getLogFile(context)
                 if (!file.exists()) {
                     file.parentFile?.mkdirs()
@@ -73,11 +77,10 @@ object SeriesUpdateLogger {
                         append("====================================================\n\n")
                     }
                     file.writeText(header, Charsets.UTF_8)
-                    Log.i(TAG, "Файл логов создался мгновенно: ${file.absolutePath}")
+                    Log.i(TAG, "Файл логов инициализирован в изолированном хранилище: ${file.absolutePath}")
                 }
-                syncToPublicDownloads(context, file)
             } catch (e: Exception) {
-                Log.e(TAG, "Ошибка создания файла логов: ${e.message}", e)
+                Log.e(TAG, "Ошибка инициализации файла логов: ${e.message}", e)
             }
         }
     }
@@ -99,7 +102,7 @@ object SeriesUpdateLogger {
     }
 
     /**
-     * Записывает произвольную строку в текстовый лог
+     * Записывает строку в текстовый лог приложения без создания копий в Загрузках
      */
     suspend fun appendLog(context: Context, message: String) = withContext(Dispatchers.IO) {
         fileMutex.withLock {
@@ -112,16 +115,13 @@ object SeriesUpdateLogger {
                     checkAndAutoClearDaily(file)
                 }
 
-                // Ротация: если размер файла превысил 512 КБ, оставляем последние 200 КБ
+                // Ротация: если размер файла превысил лимит, обрезаем старые строки
                 if (file.length() > MAX_LOG_FILE_SIZE) {
                     trimLogFile(file)
                 }
 
                 val entry = "[${getTimestamp()}] $message\n"
                 file.appendText(entry, Charsets.UTF_8)
-
-                // Фоновая синхронизация с публичной папкой Загрузки (Downloads)
-                syncToPublicDownloads(context, file)
             } catch (e: Exception) {
                 Log.e(TAG, "Ошибка записи в лог-файл: ${e.message}", e)
             }
@@ -304,7 +304,7 @@ object SeriesUpdateLogger {
     }
 
     /**
-     * Очищает содержимое файла логов
+     * Очищает содержимое файла логов в изолированном хранилище
      */
     suspend fun clearLog(context: Context) = withContext(Dispatchers.IO) {
         fileMutex.withLock {
@@ -317,7 +317,8 @@ object SeriesUpdateLogger {
                     append("====================================================\n\n")
                 }
                 file.writeText(header, Charsets.UTF_8)
-                syncToPublicDownloads(context, file)
+                // Удаляем остаточный файл из папки Загрузки, если он там присутствовал
+                cleanupLegacyDownloadsLog(context)
             } catch (e: Exception) {
                 Log.e(TAG, "Ошибка очистки лога: ${e.message}", e)
             }
@@ -325,59 +326,17 @@ object SeriesUpdateLogger {
     }
 
     /**
-     * Сохраняет copy лог-файла в публичную папку Загрузки (Downloads)
+     * Безопасный экспорт логов через системный диалог передачи файлов,
+     * исключающий засорение папки Загрузки (Downloads).
      */
-    suspend fun exportToPublicDownloads(context: Context): String = withContext(Dispatchers.IO) {
-        fileMutex.withLock {
-            try {
-                val logFile = getLogFile(context)
-                if (!logFile.exists()) {
-                    return@withContext "Ошибка: Лог-файл еще не создан!"
-                }
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val resolver = context.contentResolver
-                    val contentValues = ContentValues().apply {
-                        put(MediaStore.MediaColumns.DISPLAY_NAME, PUBLIC_LOG_FILE_NAME)
-                        put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
-                        put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                    }
-
-                    // Удаляем старый файл если был
-                    resolver.delete(
-                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                        "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
-                        arrayOf(PUBLIC_LOG_FILE_NAME)
-                    )
-
-                    val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-                    if (uri != null) {
-                        resolver.openOutputStream(uri)?.use { os ->
-                            logFile.inputStream().use { isStream ->
-                                isStream.copyTo(os)
-                            }
-                        }
-                        return@withContext "Файл сохранен в Загрузки: Download/$PUBLIC_LOG_FILE_NAME"
-                    }
-                }
-
-                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                if (downloadsDir != null) {
-                    downloadsDir.mkdirs()
-                    val targetFile = File(downloadsDir, PUBLIC_LOG_FILE_NAME)
-                    logFile.copyTo(targetFile, overwrite = true)
-                    return@withContext "Файл сохранен в Загрузки: ${targetFile.absolutePath}"
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Ошибка экспорта в Downloads: ${e.message}", e)
-                return@withContext "Ошибка экспорта: ${e.message}"
-            }
-            return@withContext "Не удалось получить доступ к папке Загрузки"
-        }
+    suspend fun exportToPublicDownloads(context: Context): String = withContext(Dispatchers.Main) {
+        shareLogFile(context)
+        "Лог открыт в диалоге отправки (без сохранения в папку Загрузки)"
     }
 
     /**
-     * Поделиться файлом лога через систему Intent.ACTION_SEND
+     * Поделиться файлом лога через системный диалог Intent.ACTION_SEND
+     * с использованием безопасного FileProvider
      */
     fun shareLogFile(context: Context) {
         try {
@@ -408,23 +367,55 @@ object SeriesUpdateLogger {
         }
     }
 
-    private fun syncToPublicDownloads(context: Context, logFile: File) {
+    /**
+     * Удаляет устаревший лог-файл из публичной папки Загрузки (Downloads),
+     * если он был создан предыдущими версиями приложения.
+     * Запускается асинхронно с нулевым влиянием на UI и минимальной нагрузкой на CPU.
+     */
+    private fun cleanupLegacyDownloadsLog(context: Context) {
         try {
+            // 1. Удаление файла напрямую из файловой системы, если он существует
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             if (downloadsDir != null && downloadsDir.exists()) {
-                val targetFile = File(downloadsDir, PUBLIC_LOG_FILE_NAME)
-                logFile.copyTo(targetFile, overwrite = true)
+                val legacyFile = File(downloadsDir, PUBLIC_LOG_FILE_NAME)
+                if (legacyFile.exists()) {
+                    val deleted = legacyFile.delete()
+                    Log.i(TAG, "Очистка папки Загрузки: файл $PUBLIC_LOG_FILE_NAME удален = $deleted")
+                }
             }
-        } catch (_: Exception) {}
+
+            // 2. На Android Q+ удаляем запись через ContentResolver MediaStore
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    context.contentResolver.delete(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                        arrayOf(PUBLIC_LOG_FILE_NAME)
+                    )
+                } catch (_: Exception) {}
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Не удалось выполнить очистку устаревшего лога из Downloads: ${e.message}")
+        }
     }
 
+    /**
+     * Высокопроизводительная обрезка разросшегося файла логов
+     * с использованием потоковых буферов без избыточных аллокаций памяти.
+     */
     private fun trimLogFile(file: File) {
         try {
-            val lines = file.readLines(Charsets.UTF_8)
-            if (lines.size > 1000) {
-                val keptLines = lines.takeLast(800)
+            val lines = file.bufferedReader(Charsets.UTF_8).useLines { it.toList() }
+            if (lines.size > 800) {
+                val keptLines = lines.takeLast(600)
                 val newHeader = "=== Log Truncated at ${getTimestamp()} (kept last ${keptLines.size} lines) ===\n\n"
-                file.writeText(newHeader + keptLines.joinToString("\n"), Charsets.UTF_8)
+                file.bufferedWriter(Charsets.UTF_8).use { writer ->
+                    writer.write(newHeader)
+                    for (line in keptLines) {
+                        writer.write(line)
+                        writer.newLine()
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Не удалось обрезать разросшийся лог: ${e.message}")
