@@ -127,7 +127,7 @@ fun CatalogScreen(
     val gridState = rememberSavedLazyGridState("catalog", viewModel)
 
     val currentCatalogKey = remember(currentType, currentSection, currentGenre, currentYear, currentCountry, viewModel.searchQuery) {
-        "${currentType.name}_${currentSection.name}_${currentGenre}_${currentYear}_${currentCountry}_${viewModel.searchQuery.trim()}"
+        "${currentType?.name ?: "ALL"}_${currentSection.name}_${currentGenre}_${currentYear}_${currentCountry}_${viewModel.searchQuery.trim()}"
     }
     var lastRenderedCatalogKey by rememberSaveable { mutableStateOf(currentCatalogKey) }
 
@@ -505,6 +505,7 @@ fun CatalogScreen(
                 )
             } else {
                 listOf(
+                    null to "Все категории",
                     RezkaType.MOVIE to "Фильмы",
                     RezkaType.SERIES to "Сериалы",
                     RezkaType.ANIME to "Аниме",

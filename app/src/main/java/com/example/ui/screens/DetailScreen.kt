@@ -223,6 +223,7 @@ fun DetailScreen(
     var isPlayerOpen by remember { mutableStateOf(false) }
     var activePlayerStreams by remember { mutableStateOf<List<StreamUrl>?>(null) }
     var initialQualityIndex by remember { mutableIntStateOf(0) }
+    var currentPlayingQuality by remember { mutableStateOf<String?>(null) }
     var playerTitle by remember { mutableStateOf("") }
     var playerSubtitle by remember { mutableStateOf("") }
     var playerStartPosition by remember { mutableStateOf(0L) }
@@ -387,7 +388,7 @@ fun DetailScreen(
     }
 
     // Playback starting logic: Immediately opens player in landscape and fetches streams in background
-    val startPlayback = { translator: Translator, seasonId: Int, episodeId: String, customStartPos: Long? ->
+    val startPlayback: (Translator, Int, String, Long?, String?, Boolean) -> Unit = { translator, seasonId, episodeId, customStartPos, qualityOverride, isFromPlayer ->
         playbackJob?.cancel()
 
         selectedTranslator = translator
@@ -411,7 +412,9 @@ fun DetailScreen(
         playerStartPosition = customStartPos ?: 0L
 
         val isInternalPlayer = selectedPlayer == RezkaService.PLAYER_INTERNAL
-        val isAskQuality = defaultQuality == RezkaService.QUALITY_ASK
+        // Окно с выбором качества должно появляться ТОЛЬКО когда именно со страницы фильма или сериала включаешь видео.
+        // Если воспроизведение уже начато в плеере (смена озвучки или серии), окно не показываем, а используем текущее качество.
+        val isAskQuality = !isFromPlayer && !isPlayerOpen && (defaultQuality == RezkaService.QUALITY_ASK)
 
         if (isAskQuality) {
             isFetchingStreamsForPlay = true
@@ -529,37 +532,41 @@ fun DetailScreen(
 
                 if (streams.isNotEmpty()) {
                     if (isAskQuality) {
-                        // Open Quality Prompt Dialog directly on DetailScreen
+                        // Open Quality Prompt Dialog directly on DetailScreen (только при первом запуске со страницы фильма/сериала)
                         pendingStreamsForDialog = streams
                         pendingPlayTitle = titleText
                         pendingPlaySubtitle = subtitleText
                         pendingPlayStartPos = startPos
                         isDecryptingStreams = false
-                    } else if (!isInternalPlayer) {
-                        isDecryptingStreams = false
-                        val chosenIdx = RezkaService.findBestQualityIndex(streams, defaultQuality)
-                        val chosenStream = streams.getOrElse(chosenIdx) { streams.first() }
-                        com.example.data.ExternalPlayerManager.launchPlayback(
-                            context = context,
-                            streamUrl = chosenStream.url,
-                            title = titleText,
-                            subtitle = subtitleText,
-                            startPositionMs = startPos,
-                            subtitles = chosenStream.subtitles,
-                            playerKey = selectedPlayer
-                        )
                     } else {
-                        val chosenIdx = RezkaService.findBestQualityIndex(streams, defaultQuality)
-                        playerStartPosition = startPos
-                        initialQualityIndex = chosenIdx
-                        activePlayerStreams = streams
-                        isDecryptingStreams = false
+                        // При смене озвучки в плеере или фиксированном качестве используем текущее качество без показа диалога
+                        val qualityToUse = qualityOverride ?: currentPlayingQuality ?: defaultQuality
+                        val chosenIdx = RezkaService.findBestQualityIndex(streams, qualityToUse)
+                        val chosenStream = streams.getOrElse(chosenIdx) { streams.first() }
+                        currentPlayingQuality = chosenStream.quality
+
+                        if (!isInternalPlayer) {
+                            isDecryptingStreams = false
+                            com.example.data.ExternalPlayerManager.launchPlayback(
+                                context = context,
+                                streamUrl = chosenStream.url,
+                                title = titleText,
+                                subtitle = subtitleText,
+                                startPositionMs = startPos,
+                                subtitles = chosenStream.subtitles,
+                                playerKey = selectedPlayer
+                            )
+                        } else {
+                            playerStartPosition = startPos
+                            initialQualityIndex = chosenIdx
+                            activePlayerStreams = streams
+                            isDecryptingStreams = false
+                        }
                     }
                 } else {
                     isDecryptingStreams = false
                     Toast.makeText(context, "Не удалось получить ссылки на видео", Toast.LENGTH_SHORT).show()
-                    if (isInternalPlayer) {
-                        isPlayerOpen = false
+                    if (isInternalPlayer && !isPlayerOpen) {
                         activePlayerStreams = null
                         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                     }
@@ -569,8 +576,7 @@ fun DetailScreen(
                     isFetchingStreamsForPlay = false
                     isDecryptingStreams = false
                     Toast.makeText(context, "Ошибка сети при загрузке плеера", Toast.LENGTH_SHORT).show()
-                    if (isInternalPlayer) {
-                        isPlayerOpen = false
+                    if (isInternalPlayer && !isPlayerOpen) {
                         activePlayerStreams = null
                         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                     }
@@ -580,7 +586,11 @@ fun DetailScreen(
     }
 
     fun startPlayback(translator: Translator, seasonId: Int, episodeId: String) {
-        startPlayback(translator, seasonId, episodeId, null)
+        startPlayback(translator, seasonId, episodeId, null, null, false)
+    }
+
+    fun startPlayback(translator: Translator, seasonId: Int, episodeId: String, customStartPos: Long?) {
+        startPlayback(translator, seasonId, episodeId, customStartPos, null, false)
     }
 
     val displayState = remember(detailState, item.id, item.url) {
@@ -2938,6 +2948,7 @@ fun DetailScreen(
                                                     playerSubtitle = subtitle
                                                     playerStartPosition = startPos
                                                     initialQualityIndex = globalIndex
+                                                    currentPlayingQuality = stream.quality
                                                     activePlayerStreams = streamsToPlay
                                                     isPlayerOpen = true
                                                 }
@@ -3094,6 +3105,7 @@ fun DetailScreen(
                                                 playerSubtitle = subtitle
                                                 playerStartPosition = startPos
                                                 initialQualityIndex = idx
+                                                currentPlayingQuality = stream.quality
                                                 activePlayerStreams = streamsToPlay
                                                 isPlayerOpen = true
                                             }
@@ -3192,8 +3204,10 @@ fun DetailScreen(
                 isTvMode = isTvMode,
                 translators = currentDetail?.translators ?: emptyList(),
                 currentTranslator = selectedTranslator ?: currentDetail?.translators?.firstOrNull(),
-                onSelectTranslator = { newTrans, currentPosMs ->
+                onSelectTranslatorWithQuality = { newTrans, currentPosMs, currentQuality ->
                     selectedTranslator = newTrans
+                    val qualityToKeep = currentQuality ?: currentPlayingQuality
+                    currentPlayingQuality = qualityToKeep
                     if (isSeries && currentDetail != null && currentDetail.numericPostId.isNotEmpty()) {
                         scope.launch {
                             isDecryptingStreams = true
@@ -3226,14 +3240,17 @@ fun DetailScreen(
 
                                 selectedSeasonId = targetSeasonId
                                 selectedEpisodeId = targetEpisodeId
-                                startPlayback(newTrans, targetSeasonId, targetEpisodeId, currentPosMs)
+                                startPlayback(newTrans, targetSeasonId, targetEpisodeId, currentPosMs, qualityToKeep, true)
                             } catch (e: Exception) {
-                                startPlayback(newTrans, curSeason?.id ?: 1, curEpisodes.getOrNull(curEpisodeIndex)?.id ?: "1", currentPosMs)
+                                startPlayback(newTrans, curSeason?.id ?: 1, curEpisodes.getOrNull(curEpisodeIndex)?.id ?: "1", currentPosMs, qualityToKeep, true)
                             }
                         }
                     } else {
-                        startPlayback(newTrans, 0, "", currentPosMs)
+                        startPlayback(newTrans, 0, "", currentPosMs, qualityToKeep, true)
                     }
+                },
+                onQualityChange = { newQuality ->
+                    currentPlayingQuality = newQuality
                 },
                 initialQualityIndex = initialQualityIndex,
                 startPositionMs = playerStartPosition,
@@ -3247,7 +3264,7 @@ fun DetailScreen(
                         if (curEpisodeIndex > 0) {
                             val prevEp = curEpisodes[curEpisodeIndex - 1]
                             selectedEpisodeId = prevEp.id
-                            startPlayback(translator, curSeason.id, prevEp.id)
+                            startPlayback(translator, curSeason.id, prevEp.id, null, currentPlayingQuality, true)
                         } else {
                             val sIdx = seasonsList.indexOfFirst { it.id == curSeason.id }
                             if (sIdx > 0) {
@@ -3256,7 +3273,7 @@ fun DetailScreen(
                                 if (lastEp != null) {
                                     selectedSeasonId = prevSeason.id
                                     selectedEpisodeId = lastEp.id
-                                    startPlayback(translator, prevSeason.id, lastEp.id)
+                                    startPlayback(translator, prevSeason.id, lastEp.id, null, currentPlayingQuality, true)
                                 }
                             }
                         }
@@ -3268,7 +3285,7 @@ fun DetailScreen(
                         if (curEpisodeIndex >= 0 && curEpisodeIndex < curEpisodes.size - 1) {
                             val nextEp = curEpisodes[curEpisodeIndex + 1]
                             selectedEpisodeId = nextEp.id
-                            startPlayback(translator, curSeason.id, nextEp.id)
+                            startPlayback(translator, curSeason.id, nextEp.id, null, currentPlayingQuality, true)
                         } else {
                             val sIdx = seasonsList.indexOfFirst { it.id == curSeason.id }
                             if (sIdx >= 0 && sIdx < seasonsList.size - 1) {
@@ -3277,7 +3294,7 @@ fun DetailScreen(
                                 if (firstEp != null) {
                                     selectedSeasonId = nextSeason.id
                                     selectedEpisodeId = firstEp.id
-                                    startPlayback(translator, nextSeason.id, firstEp.id)
+                                    startPlayback(translator, nextSeason.id, firstEp.id, null, currentPlayingQuality, true)
                                 }
                             }
                         }

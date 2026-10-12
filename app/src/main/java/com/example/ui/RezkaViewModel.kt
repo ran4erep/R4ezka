@@ -328,12 +328,12 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private var commentsJob: Job? = null
 
     // Default catalog settings
-    val defaultCatalogType: StateFlow<RezkaType> = RezkaService.defaultCatalogType
+    val defaultCatalogType: StateFlow<RezkaType?> = RezkaService.defaultCatalogType
     val defaultCatalogSection: StateFlow<SectionType> = RezkaService.defaultCatalogSection
 
     // Current filter selections
-    private val _currentType = MutableStateFlow(RezkaService.defaultCatalogType.value)
-    val currentType: StateFlow<RezkaType> = _currentType.asStateFlow()
+    private val _currentType = MutableStateFlow<RezkaType?>(RezkaService.defaultCatalogType.value)
+    val currentType: StateFlow<RezkaType?> = _currentType.asStateFlow()
 
     private val _currentSection = MutableStateFlow(RezkaService.defaultCatalogSection.value)
     val currentSection: StateFlow<SectionType> = _currentSection.asStateFlow()
@@ -453,11 +453,9 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             requestCatalogScrollToTop()
             applySearchFilters()
         } else {
-            if (type != null) {
-                _currentType.value = type
-                requestCatalogScrollToTop()
-                loadCatalog(type = type, genre = "", year = "", forceRefresh = true)
-            }
+            _currentType.value = type
+            requestCatalogScrollToTop()
+            loadCatalog(type = type, genre = "", year = "", forceRefresh = true)
         }
     }
 
@@ -813,7 +811,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
      * Loads catalog items for the specified type, section, genre, year and resets pagination
      */
     fun loadCatalog(
-        type: RezkaType = _currentType.value,
+        type: RezkaType? = _currentType.value,
         section: SectionType = _currentSection.value,
         genre: String = _currentGenre.value,
         year: String = _currentYear.value,
@@ -947,7 +945,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                         RezkaType.SERIES -> entity.type.equals("SERIES", ignoreCase = true) || entity.type.contains("Сериал", ignoreCase = true)
                         RezkaType.ANIME -> entity.type.equals("ANIME", ignoreCase = true) || entity.type.contains("Аниме", ignoreCase = true)
                         RezkaType.CARTOON -> entity.type.equals("CARTOON", ignoreCase = true) || entity.type.contains("Мульт", ignoreCase = true)
-                        RezkaType.COLLECTIONS -> true
+                        RezkaType.COLLECTIONS, null -> true
                     }
                     if (!matchType) return@filter false
 
@@ -2640,14 +2638,14 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         FirebaseSyncManager.onSettingsUpdated(seriesBadgeMode = mode.id)
     }
 
-    fun setDefaultCatalogType(type: RezkaType) {
+    fun setDefaultCatalogType(type: RezkaType?) {
         if (type == RezkaType.COLLECTIONS) return
         val previous = RezkaService.defaultCatalogType.value
         RezkaService.setDefaultCatalogType(type)
         if (_currentType.value == previous && _currentGenre.value.isEmpty() && _currentYear.value.isEmpty() && _currentCountry.value.isEmpty() && searchQuery.isEmpty()) {
             loadCatalog(type = type, section = _currentSection.value, forceRefresh = true)
         }
-        FirebaseSyncManager.onSettingsUpdated(defaultCatalogType = type.name)
+        FirebaseSyncManager.onSettingsUpdated(defaultCatalogType = type?.name ?: "ALL")
     }
 
     fun setDefaultCatalogSection(section: SectionType) {

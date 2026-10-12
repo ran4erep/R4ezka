@@ -570,7 +570,7 @@ private fun TvCatalogContent(
     viewModel: RezkaViewModel,
     catalogState: CatalogState,
     collectionsState: CollectionsState,
-    currentType: RezkaType,
+    currentType: RezkaType?,
     currentSection: SectionType,
     currentGenre: String,
     genresList: List<GenreItem>,
@@ -594,7 +594,7 @@ private fun TvCatalogContent(
     var isSearchInputFocused by remember { mutableStateOf(false) }
 
     val currentCatalogKey = remember(currentType, currentSection, currentGenre, currentYear, currentCountry, viewModel.searchQuery) {
-        "${currentType.name}_${currentSection.name}_${currentGenre}_${currentYear}_${currentCountry}_${viewModel.searchQuery.trim()}"
+        "${currentType?.name ?: "ALL"}_${currentSection.name}_${currentGenre}_${currentYear}_${currentCountry}_${viewModel.searchQuery.trim()}"
     }
     var lastRenderedCatalogKey by rememberSaveable { mutableStateOf(currentCatalogKey) }
 
@@ -1280,7 +1280,7 @@ private fun TvHeroPreview(
  */
 @Composable
 private fun TvCatalogFiltersBar(
-    currentType: RezkaType,
+    currentType: RezkaType?,
     searchCategoryFilter: RezkaType? = null,
     currentSection: SectionType,
     currentGenre: String,
@@ -1708,6 +1708,7 @@ private fun TvCatalogFiltersBar(
                     )
                 } else {
                     listOf(
+                        null to "Все категории",
                         RezkaType.MOVIE to "Фильмы",
                         RezkaType.SERIES to "Сериалы",
                         RezkaType.ANIME to "Аниме",
