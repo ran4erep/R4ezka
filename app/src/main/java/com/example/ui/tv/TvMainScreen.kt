@@ -71,6 +71,7 @@ import com.example.ui.screens.SettingsScreen
 import com.example.ui.components.AuthDialog
 import com.example.ui.components.TvCountryDropdown
 import com.example.ui.components.UserAvatar
+import com.example.ui.components.UpdateBanner
 import com.example.ui.effects.subtleCardBounce
 import com.example.ui.theme.*
 
@@ -145,6 +146,7 @@ fun TvMainScreen(
     val isEndReached by viewModel.isEndReached.collectAsState()
     val cardGridMode by viewModel.cardGridMode.collectAsState()
     val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
+    val updateState by UpdateManager.updateState.collectAsState()
 
     // Анимированная ширина бокового меню: 64dp в свернутом виде, 190dp при фокусе
     val sidebarWidth by animateDpAsState(
@@ -162,6 +164,8 @@ fun TvMainScreen(
         val sidebarFocusRequesters = remember {
             TvNavDestination.values().associateWith { FocusRequester() }
         }
+        val updateSidebarFocusRequester = remember { FocusRequester() }
+        val updateBannerActionRequester = remember { FocusRequester() }
         val rightContentFocusRequester = remember { FocusRequester() }
         val favoritesFirstItemRequester = remember { FocusRequester() }
         val historyFirstItemRequester = remember { FocusRequester() }
@@ -278,30 +282,19 @@ fun TvMainScreen(
                 }
             }
 
-            val updateState by UpdateManager.updateState.collectAsState()
-            val context = LocalContext.current
-            val scope = rememberCoroutineScope()
-
             if (updateState !is UpdateState.Idle) {
+                Spacer(modifier = Modifier.height(6.dp))
                 TvUpdateSidebarItem(
                     updateState = updateState,
                     isExpanded = isSidebarFocused,
-                    onRight = navigateToCurrentMainContent,
+                    focusRequester = updateSidebarFocusRequester,
+                    onRight = {
+                        updateBannerActionRequester.requestFocusSafe()
+                    },
                     onClick = {
-                        scope.launch {
-                            when (val state = updateState) {
-                                is UpdateState.UpdateAvailable -> {
-                                    UpdateManager.startDownload(context, state.downloadUrl)
-                                }
-                                is UpdateState.ReadyToInstall -> {
-                                    UpdateManager.installApk(context, state.apkFile)
-                                }
-                                is UpdateState.Error -> {
-                                    UpdateManager.dismissUpdate()
-                                }
-                                else -> {}
-                            }
-                        }
+                        // При нажатии на кнопку в боковом меню не начинаем скачивание сразу,
+                        // а переводим курсор на плашку в основном окне
+                        updateBannerActionRequester.requestFocusSafe()
                     }
                 )
             }
@@ -387,6 +380,23 @@ fun TvMainScreen(
                         firstCategoryFocusRequester = settingsFirstCategoryRequester
                     )
                 }
+            }
+
+            // Плашка про наличие обновления: отображается ИСКЛЮЧИТЕЛЬНО в основном окне на ТВ!
+            if (isTopScreen) {
+                UpdateBanner(
+                    isBottomBarVisible = false,
+                    isTvMode = true,
+                    actionFocusRequester = updateBannerActionRequester,
+                    onNavigateLeftToSidebar = {
+                        if (updateState !is UpdateState.Idle) {
+                            updateSidebarFocusRequester.requestFocusSafe()
+                        } else {
+                            sidebarFocusRequesters[selectedDestination]?.requestFocusSafe()
+                        }
+                    },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
             }
         }
     }
@@ -2625,16 +2635,21 @@ private fun TvMovieCard(
     }
 }
 
+/**
+ * Кнопка обновления в боковом меню ТВ:
+ * При нажатии переводит курсор на плашку в основном окне, не запуская скачивание сразу.
+ */
 @Composable
 private fun TvUpdateSidebarItem(
     updateState: UpdateState,
     isExpanded: Boolean,
+    focusRequester: FocusRequester? = null,
     onClick: () -> Unit,
     onRight: (() -> Unit)? = null
 ) {
     val bgColor = when (updateState) {
         is UpdateState.ReadyToInstall -> CinemaPrimary.copy(alpha = 0.3f)
-        is UpdateState.Downloading -> Color.Transparent
+        is UpdateState.Downloading -> CinemaPrimary.copy(alpha = 0.15f)
         is UpdateState.Error -> MaterialTheme.colorScheme.error.copy(alpha = 0.2f)
         else -> CinemaPrimary.copy(alpha = 0.15f)
     }
@@ -2661,7 +2676,8 @@ private fun TvUpdateSidebarItem(
                 onClick = onClick,
                 scaleFactor = 1.0f,
                 focusedBorderWidth = 2.dp,
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(10.dp),
+                focusRequester = focusRequester
             )
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
