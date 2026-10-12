@@ -2640,18 +2640,18 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setDefaultCatalogType(type: RezkaType?) {
         if (type == RezkaType.COLLECTIONS) return
-        val previous = RezkaService.defaultCatalogType.value
         RezkaService.setDefaultCatalogType(type)
-        if (_currentType.value == previous && _currentGenre.value.isEmpty() && _currentYear.value.isEmpty() && _currentCountry.value.isEmpty() && searchQuery.isEmpty()) {
+        if (searchQuery.isEmpty()) {
+            _currentType.value = type
             loadCatalog(type = type, section = _currentSection.value, forceRefresh = true)
         }
         FirebaseSyncManager.onSettingsUpdated(defaultCatalogType = type?.name ?: "ALL")
     }
 
     fun setDefaultCatalogSection(section: SectionType) {
-        val previous = RezkaService.defaultCatalogSection.value
         RezkaService.setDefaultCatalogSection(section)
-        if (_currentSection.value == previous && _currentGenre.value.isEmpty() && _currentYear.value.isEmpty() && _currentCountry.value.isEmpty() && searchQuery.isEmpty()) {
+        if (searchQuery.isEmpty()) {
+            _currentSection.value = section
             loadCatalog(type = _currentType.value, section = section, forceRefresh = true)
         }
         FirebaseSyncManager.onSettingsUpdated(defaultCatalogSection = section.name)
