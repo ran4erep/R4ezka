@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,7 +28,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.animateScrollBy
 import com.example.data.CountryFlags
 import com.example.ui.util.rememberSavedLazyListState
 import com.example.ui.haptics.bounceOverscroll
@@ -259,7 +262,7 @@ fun DetailScreen(
     var dynamicSeasons by remember { mutableStateOf<List<Season>>(emptyList()) }
 
     // Deterministic calculation of comments section item index in the LazyColumn
-    val commentsSectionIndex by remember(detailState, dynamicSeasons) {
+    val commentsSectionIndex by remember(detailState, dynamicSeasons, selectedSeasonId) {
         derivedStateOf {
             val detail = (detailState as? DetailState.Success)?.detail ?: return@derivedStateOf -1
             var idx = 2 // Backdrop (0) + Poster/Meta (1)
@@ -268,7 +271,14 @@ fun DetailScreen(
             }
             val effectiveSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else detail.seasons
             if (detail.type == RezkaType.SERIES && effectiveSeasons.isNotEmpty()) {
-                idx += 2 // Seasons selector + Episodes selector
+                if (!detail.isReleased) {
+                    idx++
+                } else {
+                    idx += 2 // Seasons selector + Episodes header
+                    val curSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.firstOrNull()
+                    val chunkCount = ((curSeason?.episodes?.size ?: 0) + 1) / 2
+                    idx += chunkCount
+                }
             }
             if (detail.type == RezkaType.MOVIE) {
                 idx++ // Play button
@@ -980,40 +990,79 @@ fun DetailScreen(
                         )
                     }
 
-                    // Автоматическая плавная прокрутка к блоку кнопок просмотра при входе из истории
-                    var hasAutoScrolledFromHistory by remember(detail.id) { mutableStateOf(false) }
-                    val targetWatchIndex = remember(detail.type, detail.translators.isNotEmpty(), detail.isReleased, effectiveSeasons.isEmpty()) {
-                        if (detail.type == RezkaType.SERIES) {
-                            if (!detail.isReleased || effectiveSeasons.isEmpty()) {
-                                if (detail.translators.isNotEmpty()) 3 else 2
-                            } else {
-                                // Для сериала прокручиваем к блоку сезонов и серий
-                                if (detail.translators.isNotEmpty()) 3 else 2
-                            }
-                        } else {
-                            // Для фильма: блок с кнопкой "СМОТРЕТЬ" и озвучкой
-                            2
-                        }
-                    }
+                    // Автоматическая плавная прокрутка к последней серии (сериал) или кнопкам просмотра (фильм) при входе из истории на телефоне
+                    var hasAutoScrolledFromHistory by remember(detail.id, fromHistory) { mutableStateOf(false) }
 
                     LaunchedEffect(detail.id, selectedEpisodeId, fromHistory) {
                         if (fromHistory && !hasAutoScrolledFromHistory) {
                             val isSeries = detail.type == RezkaType.SERIES
-                            if (isSeries && selectedEpisodeId.isNullOrEmpty()) {
-                                for (i in 0..5) {
-                                    if (!selectedEpisodeId.isNullOrEmpty()) break
-                                    kotlinx.coroutines.delay(35L)
+                            if (isSeries) {
+                                // Дожидаемся асинхронного восстановления сезона и серии из истории (до 600 мс с быстрым шагом 25 мс)
+                                if (selectedEpisodeId.isNullOrEmpty() || effectiveSeasons.isEmpty()) {
+                                    for (i in 0..24) {
+                                        if (!selectedEpisodeId.isNullOrEmpty() && effectiveSeasons.isNotEmpty()) break
+                                        kotlinx.coroutines.delay(25L)
+                                    }
                                 }
                             }
-                            kotlinx.coroutines.delay(120L)
+
+                            // Пауза для стабилизации первого кадра компоновки списка
+                            kotlinx.coroutines.delay(80L)
+
                             try {
-                                lazyListState.animateScrollToItem(targetWatchIndex)
+                                if (isSeries) {
+                                    if (!detail.isReleased || effectiveSeasons.isEmpty()) {
+                                        val unreleasedIndex = 2 + (if (detail.translators.isNotEmpty()) 1 else 0)
+                                        lazyListState.animateScrollToItem(unreleasedIndex)
+                                    } else {
+                                        val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.firstOrNull()
+                                        val episodesList = currentSeason?.episodes.orEmpty()
+                                        val epIndex = episodesList.indexOfFirst { it.id == selectedEpisodeId }.takeIf { it >= 0 } ?: 0
+                                        val targetRowIndex = epIndex / 2
+
+                                        // Индекс перед первой строкой серий в LazyColumn:
+                                        // 0: Backdrop
+                                        // 1: Poster & Meta
+                                        // +1: Translators (если не пусто)
+                                        // +1: Seasons Dropdown
+                                        // +1: Episodes Header (заголовок, трейлер, расписание, скачать)
+                                        val baseSeriesRowIndex = 2 + (if (detail.translators.isNotEmpty()) 1 else 0) + 2
+                                        val targetItemIndex = baseSeriesRowIndex + targetRowIndex
+
+                                        val viewportHeight = lazyListState.layoutInfo.viewportSize.height
+                                        val density = context.resources.displayMetrics.density
+                                        // Высота строки с серией (padding 8dp + плашка 48-52dp) ~ 56dp
+                                        val estimatedRowHeightPx = (56 * density).toInt()
+                                        val centerOffsetPx = if (viewportHeight > 0) (viewportHeight - estimatedRowHeightPx) / 2 else 0
+
+                                        // 1. Плавная прокрутка непосредственно к строке с текущей серией со смещением к центру
+                                        try {
+                                            lazyListState.animateScrollToItem(targetItemIndex, scrollOffset = -centerOffsetPx)
+                                        } catch (_: Throwable) {
+                                            lazyListState.animateScrollToItem(targetItemIndex, scrollOffset = 0)
+                                        }
+
+                                        // 2. Идеальное центрирование по реальным координатам элемента в layoutInfo
+                                        val itemInfo = lazyListState.layoutInfo.visibleItemsInfo.find { it.index == targetItemIndex }
+                                        if (itemInfo != null) {
+                                            val exactCenterOffset = (lazyListState.layoutInfo.viewportSize.height - itemInfo.size) / 2
+                                            val delta = itemInfo.offset - exactCenterOffset
+                                            if (kotlin.math.abs(delta) > 4) {
+                                                lazyListState.animateScrollBy(
+                                                    delta.toFloat(),
+                                                    animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)
+                                                )
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Для фильма: скроллим к блоку с кнопками просмотра ("СМОТРЕТЬ", "Трейлер", "Загрузить")
+                                    val movieWatchIndex = 2 + (if (detail.translators.isNotEmpty()) 1 else 0)
+                                    lazyListState.animateScrollToItem(movieWatchIndex)
+                                }
                                 hasAutoScrolledFromHistory = true
                             } catch (_: Throwable) {
-                                try {
-                                    lazyListState.scrollToItem(targetWatchIndex)
-                                    hasAutoScrolledFromHistory = true
-                                } catch (_: Throwable) {}
+                                hasAutoScrolledFromHistory = true
                             }
                         }
                     }
@@ -1732,7 +1781,8 @@ fun DetailScreen(
                             }
                         } else {
                             // Seasons Dropdown Selector
-                        item {
+                        val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
+                        item(key = "series_seasons_dropdown") {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1746,7 +1796,6 @@ fun DetailScreen(
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
 
-                                val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
                                 var seasonDropdownExpanded by remember { mutableStateOf(false) }
 
                                 Box(modifier = Modifier.fillMaxWidth()) {
@@ -1815,9 +1864,8 @@ fun DetailScreen(
                             }
                         }
 
-                        // Episodes Grid Selector
-                        val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
-                        item {
+                        // Episodes Header (Заголовок, Трейлер, Расписание, Кнопка Загрузить сериал)
+                        item(key = "series_episodes_header_${currentSeason.id}") {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1909,10 +1957,10 @@ fun DetailScreen(
                                         }
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(10.dp))
 
                                 // Кнопка Загрузить сериал (отображается только если сериал уже вышел)
                                 if (detail.isReleased) {
+                                    Spacer(modifier = Modifier.height(10.dp))
                                     Surface(
                                         color = CinemaCard,
                                         shape = RoundedCornerShape(10.dp),
@@ -1950,66 +1998,83 @@ fun DetailScreen(
                                         }
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                        }
 
-                                // Fast grid of episodes in Rows (2-columns) to minimize heavy compositions
-                                val chunks = currentSeason.episodes.chunked(2)
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    chunks.forEach { rowEpisodes ->
+                        // Высокопроизводительные виртуализированные строки серий (по 2 серии в строке)
+                        val chunks = currentSeason.episodes.chunked(2)
+                        itemsIndexed(
+                            items = chunks,
+                            key = { rowIndex, rowEpisodes ->
+                                "ep_row_${currentSeason.id}_${rowIndex}_${rowEpisodes.firstOrNull()?.id.orEmpty()}"
+                            }
+                        ) { rowIndex, rowEpisodes ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(
+                                        top = if (rowIndex == 0) 12.dp else 4.dp,
+                                        bottom = 4.dp,
+                                        start = 16.dp,
+                                        end = 16.dp
+                                    ),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                rowEpisodes.forEach { ep ->
+                                    val isSelected = selectedEpisodeId == ep.id
+                                    val bgAnimate by animateColorAsState(
+                                        targetValue = if (isSelected) CinemaPrimary.copy(alpha = 0.18f) else CinemaDark,
+                                        animationSpec = tween(200)
+                                    )
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(bgAnimate)
+                                            .then(
+                                                if (isSelected) {
+                                                    Modifier.border(
+                                                        BorderStroke(1.5.dp, CinemaPrimary.copy(alpha = 0.75f)),
+                                                        RoundedCornerShape(8.dp)
+                                                    )
+                                                } else Modifier
+                                            )
+                                            .clickable {
+                                                selectedEpisodeId = ep.id
+                                                val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
+                                                startPlayback(translator, currentSeason.id, ep.id)
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 14.dp),
+                                        contentAlignment = Alignment.CenterStart
+                                    ) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            rowEpisodes.forEach { ep ->
-                                                val isSelected = selectedEpisodeId == ep.id
-                                                val bgAnimate by animateColorAsState(
-                                                    targetValue = if (isSelected) CinemaPrimary.copy(alpha = 0.1f) else CinemaDark,
-                                                    animationSpec = tween(200)
+                                            Text(
+                                                text = ep.name,
+                                                color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            if (isSelected) {
+                                                Icon(
+                                                    imageVector = Icons.Default.PlayArrow,
+                                                    contentDescription = null,
+                                                    tint = CinemaPrimary,
+                                                    modifier = Modifier.size(16.dp)
                                                 )
-
-                                                Box(
-                                                    modifier = Modifier
-                                                        .weight(1f)
-                                                        .clip(RoundedCornerShape(8.dp))
-                                                        .background(bgAnimate)
-                                                        .clickable {
-                                                            selectedEpisodeId = ep.id
-                                                            val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
-                                                            startPlayback(translator, currentSeason.id, ep.id)
-                                                        }
-                                                        .padding(horizontal = 12.dp, vertical = 14.dp),
-                                                    contentAlignment = Alignment.CenterStart
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Text(
-                                                            text = ep.name,
-                                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                                            fontSize = 12.sp,
-                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                            maxLines = 1,
-                                                            overflow = TextOverflow.Ellipsis,
-                                                            modifier = Modifier.weight(1f)
-                                                        )
-                                                        if (isSelected) {
-                                                            Icon(
-                                                                imageVector = Icons.Default.PlayArrow,
-                                                                contentDescription = null,
-                                                                tint = CinemaPrimary,
-                                                                modifier = Modifier.size(16.dp)
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            if (rowEpisodes.size < 2) {
-                                                Spacer(modifier = Modifier.weight(1f))
                                             }
                                         }
                                     }
+                                }
+                                if (rowEpisodes.size < 2) {
+                                    Spacer(modifier = Modifier.weight(1f))
                                 }
                             }
                         }
