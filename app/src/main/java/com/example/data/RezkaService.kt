@@ -1575,8 +1575,8 @@ object RezkaService {
     private val _customDnsAddress = MutableStateFlow("")
     val customDnsAddress: StateFlow<String> = _customDnsAddress.asStateFlow()
 
-    private val _defaultCatalogType = MutableStateFlow(RezkaType.MOVIE)
-    val defaultCatalogType: StateFlow<RezkaType> = _defaultCatalogType.asStateFlow()
+    private val _defaultCatalogType = MutableStateFlow<RezkaType?>(null)
+    val defaultCatalogType: StateFlow<RezkaType?> = _defaultCatalogType.asStateFlow()
 
     private val _defaultCatalogSection = MutableStateFlow(SectionType.LATEST)
     val defaultCatalogSection: StateFlow<SectionType> = _defaultCatalogSection.asStateFlow()
@@ -1632,12 +1632,16 @@ object RezkaService {
         val savedBadgeModeStr = prefs?.getString(KEY_SERIES_BADGE_MODE, com.example.ui.util.SeriesBadgeMode.ADAPTIVE.id)
         _seriesBadgeMode.value = com.example.ui.util.SeriesBadgeMode.fromId(savedBadgeModeStr)
 
-        val savedTypeStr = prefs?.getString(KEY_DEFAULT_CATALOG_TYPE, RezkaType.MOVIE.name) ?: RezkaType.MOVIE.name
-        val parsedType = try {
-            val t = RezkaType.valueOf(savedTypeStr)
-            if (t == RezkaType.COLLECTIONS) RezkaType.MOVIE else t
-        } catch (_: Exception) {
-            RezkaType.MOVIE
+        val savedTypeStr = prefs?.getString(KEY_DEFAULT_CATALOG_TYPE, "ALL") ?: "ALL"
+        val parsedType = if (savedTypeStr == "ALL" || savedTypeStr.isEmpty()) {
+            null
+        } else {
+            try {
+                val t = RezkaType.valueOf(savedTypeStr)
+                if (t == RezkaType.COLLECTIONS) null else t
+            } catch (_: Exception) {
+                null
+            }
         }
         _defaultCatalogType.value = parsedType
 
@@ -1762,10 +1766,10 @@ object RezkaService {
         prefs?.edit()?.putString(KEY_SERIES_BADGE_MODE, mode.id)?.apply()
     }
 
-    fun setDefaultCatalogType(type: RezkaType) {
-        val valid = if (type == RezkaType.COLLECTIONS) RezkaType.MOVIE else type
+    fun setDefaultCatalogType(type: RezkaType?) {
+        val valid = if (type == RezkaType.COLLECTIONS) null else type
         _defaultCatalogType.value = valid
-        prefs?.edit()?.putString(KEY_DEFAULT_CATALOG_TYPE, valid.name)?.apply()
+        prefs?.edit()?.putString(KEY_DEFAULT_CATALOG_TYPE, valid?.name ?: "ALL")?.apply()
     }
 
     fun setDefaultCatalogSection(section: SectionType) {
@@ -2622,11 +2626,24 @@ object RezkaService {
     private val categoryYears = ConcurrentHashMap<RezkaType, List<YearItem>>()
     private val collectionsCache = LruCache<String, List<CollectionItem>>(20)
 
-    fun getGenresForCategory(type: RezkaType): List<GenreItem> {
-        return categoryGenres[type] ?: listOf(GenreItem("Без жанра", ""))
+    fun getGenresForCategory(type: RezkaType?): List<GenreItem> {
+        if (type == null) {
+            val all = categoryGenres.values.flatten().distinctBy { it.slug }.filter { it.slug.isNotEmpty() }
+            return listOf(GenreItem("Все жанры", "")) + all
+        }
+        return categoryGenres[type] ?: listOf(GenreItem("Все жанры", ""))
     }
 
-    fun getYearsForCategory(type: RezkaType): List<YearItem> {
+    fun getYearsForCategory(type: RezkaType?): List<YearItem> {
+        if (type == null) {
+            val all = categoryYears.values.flatten().distinctBy { it.year }.filter { it.year.isNotEmpty() }.sortedByDescending { it.year.toIntOrNull() ?: 0 }
+            if (all.isNotEmpty()) {
+                return listOf(YearItem("Все года", "")) + all
+            }
+            val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+            val defaultYears = (currentYear downTo 1970).map { YearItem(it.toString(), it.toString()) }
+            return listOf(YearItem("Все года", "")) + defaultYears
+        }
         return categoryYears[type] ?: listOf(YearItem("Все года", ""))
     }
 
@@ -2752,7 +2769,7 @@ object RezkaService {
      * Высокооптимизированный генератор URL каталога с поддержкой фильтрации по разделу, жанру и году
      */
     fun buildCatalogUrl(
-        type: RezkaType,
+        type: RezkaType?,
         section: SectionType,
         genre: String,
         year: String = "",
@@ -2766,15 +2783,24 @@ object RezkaService {
             RezkaType.ANIME -> "animation"
             RezkaType.CARTOON -> "cartoons"
             RezkaType.COLLECTIONS -> "collections"
+            null -> ""
         }
         val cleanGenre = genre.trim().trim('/')
         val cleanYear = year.trim().trim('/')
 
+        val effectiveCategoryPath = if (categoryPath.isEmpty() && (cleanGenre.isNotEmpty() || cleanYear.isNotEmpty())) {
+            "films"
+        } else {
+            categoryPath
+        }
+
         val sb = StringBuilder(domain.length + 60)
             .append(domain)
             .append('/')
-            .append(categoryPath)
-            .append('/')
+
+        if (effectiveCategoryPath.isNotEmpty()) {
+            sb.append(effectiveCategoryPath).append('/')
+        }
 
         if (cleanYear.isNotEmpty()) {
             sb.append("best/")
@@ -2807,13 +2833,13 @@ object RezkaService {
      * Получение каталога фильмов/сериалов с актуального зеркала с динамической фильтрацией по разделу, жанру и году
      */
     suspend fun getCatalog(
-        type: RezkaType,
+        type: RezkaType?,
         section: SectionType = SectionType.LATEST,
         genre: String = "",
         year: String = "",
         page: Int = 1
     ): List<RezkaItem> = withContext(Dispatchers.IO) {
-        val cacheKey = "$type-$section-$genre-$year-$page"
+        val cacheKey = "${type?.name ?: "ALL"}-$section-$genre-$year-$page"
         catalogCache.get(cacheKey)?.let { return@withContext it }
 
         val url = buildCatalogUrl(type, section, genre, year, page)
@@ -2868,9 +2894,14 @@ object RezkaService {
                     }
                 }
 
-                parseGenresFromHtml(doc, type)
-                parseYearsFromHtml(doc, type)
-                val items = parseCatalogHtml(html, type)
+                if (type != null) {
+                    parseGenresFromHtml(doc, type)
+                    parseYearsFromHtml(doc, type)
+                } else {
+                    parseGenresFromHtml(doc, RezkaType.MOVIE)
+                    parseYearsFromHtml(doc, RezkaType.MOVIE)
+                }
+                val items = parseCatalogHtml(html, type ?: RezkaType.MOVIE)
                 catalogCache.put(cacheKey, items)
                 return@withContext items
             } catch (e: Exception) {

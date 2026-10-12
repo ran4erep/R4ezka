@@ -169,6 +169,8 @@ fun RezkaPlayer(
     translators: List<Translator> = emptyList(),
     currentTranslator: Translator? = null,
     onSelectTranslator: ((Translator, Long) -> Unit)? = null,
+    onSelectTranslatorWithQuality: ((Translator, Long, String?) -> Unit)? = null,
+    onQualityChange: ((String) -> Unit)? = null,
     initialQualityIndex: Int = 0,
     startPositionMs: Long = 0L,
     isSeries: Boolean = false,
@@ -720,6 +722,10 @@ fun RezkaPlayer(
             initialQualityIndex.coerceIn(0, cleanStreams.lastIndex)
         }
         selectedStreamIndex = targetIndex
+        cleanStreams.getOrNull(selectedStreamIndex)?.quality?.let { chosenQuality ->
+            preferredQualityName = chosenQuality
+            onQualityChange?.invoke(chosenQuality)
+        }
         triedDirectMp4 = false
         backupAttemptIndex = 0
         val targetUrl = cleanStreams.getOrNull(selectedStreamIndex)?.url ?: cleanStreams.firstOrNull()?.url
@@ -1595,6 +1601,7 @@ fun RezkaPlayer(
                                             val stream = cleanStreams[menuFocusedIndex]
                                             selectedStreamIndex = menuFocusedIndex
                                             preferredQualityName = stream.quality
+                                            onQualityChange?.invoke(stream.quality)
                                             playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
                                         }
                                     }
@@ -1609,7 +1616,12 @@ fun RezkaPlayer(
                                         if (menuFocusedIndex in translators.indices) {
                                             val trans = translators[menuFocusedIndex]
                                             val currentPos = exoPlayer.currentPosition
-                                            onSelectTranslator?.invoke(trans, currentPos)
+                                            val currentQuality = cleanStreams.getOrNull(selectedStreamIndex)?.quality ?: preferredQualityName
+                                            if (onSelectTranslatorWithQuality != null) {
+                                                onSelectTranslatorWithQuality.invoke(trans, currentPos, currentQuality)
+                                            } else {
+                                                onSelectTranslator?.invoke(trans, currentPos)
+                                            }
                                         }
                                     }
                                     PlayerMenuType.SUBTITLES -> {
@@ -2476,6 +2488,7 @@ fun RezkaPlayer(
                                                     onSelect = { idx, s ->
                                                         selectedStreamIndex = idx
                                                         preferredQualityName = s.quality
+                                                        onQualityChange?.invoke(s.quality)
                                                         playerErrorMessage = null
                                                         playStreamUrl(s.url, targetStartPos = exoPlayer.currentPosition)
                                                         activePlayerMenu = PlayerMenuType.NONE
@@ -3122,6 +3135,7 @@ fun RezkaPlayer(
                                             onSelect = { index, stream ->
                                                 selectedStreamIndex = index
                                                 preferredQualityName = stream.quality
+                                                onQualityChange?.invoke(stream.quality)
                                                 playStreamUrl(stream.url, targetStartPos = exoPlayer.currentPosition)
                                                 activePlayerMenu = PlayerMenuType.NONE
                                                 currentFocusArea = PlayerFocusArea.BOTTOM
@@ -3259,7 +3273,12 @@ fun RezkaPlayer(
                                                     activePlayerMenu = PlayerMenuType.NONE
                                                     currentFocusArea = PlayerFocusArea.BOTTOM
                                                     val currentPos = exoPlayer.currentPosition
-                                                    onSelectTranslator?.invoke(trans, currentPos)
+                                                    val currentQuality = cleanStreams.getOrNull(selectedStreamIndex)?.quality ?: preferredQualityName
+                                                    if (onSelectTranslatorWithQuality != null) {
+                                                        onSelectTranslatorWithQuality.invoke(trans, currentPos, currentQuality)
+                                                    } else {
+                                                        onSelectTranslator?.invoke(trans, currentPos)
+                                                    }
                                                 },
                                                 onDismiss = { activePlayerMenu = PlayerMenuType.NONE }
                                             )

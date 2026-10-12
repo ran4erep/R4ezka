@@ -592,7 +592,7 @@ object FirebaseSyncManager {
         tvMode: String = RezkaService.tvModePreference.value,
         cardGridMode: String = RezkaService.cardGridMode.value,
         seriesBadgeMode: String = RezkaService.seriesBadgeMode.value.id,
-        defaultCatalogType: String = RezkaService.defaultCatalogType.value.name,
+        defaultCatalogType: String = RezkaService.defaultCatalogType.value?.name ?: "ALL",
         defaultCatalogSection: String = RezkaService.defaultCatalogSection.value.name
     ) {
         val key = _userKey.value ?: return
@@ -991,7 +991,7 @@ object FirebaseSyncManager {
                         val remoteType = setJson.optString("defaultCatalogType", "")
                         if (remoteType.isNotBlank()) {
                             try {
-                                val t = RezkaType.valueOf(remoteType)
+                                val t = if (remoteType.equals("ALL", ignoreCase = true)) null else RezkaType.valueOf(remoteType)
                                 if (t != RezkaType.COLLECTIONS && t != RezkaService.defaultCatalogType.value) {
                                     withContext(Dispatchers.Main) {
                                         RezkaService.setDefaultCatalogType(t)

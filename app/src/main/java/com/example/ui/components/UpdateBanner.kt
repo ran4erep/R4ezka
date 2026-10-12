@@ -3,6 +3,7 @@ package com.example.ui.components
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -10,6 +11,8 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -42,6 +45,7 @@ import com.example.ui.haptics.HapticType
 import com.example.ui.theme.*
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusCursor
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -54,11 +58,12 @@ import kotlinx.coroutines.launch
  *    - Располагается ИСКЛЮЧИТЕЛЬНО в основном окне (не налезает на боковое меню).
  *    - При нажатии на кнопку обновления в сайдбаре курсор переходит на плашку
  *      (на кнопку действия actionFocusRequester) без немедленного запуска скачивания.
- *    - Пользователь с пульта D-Pad может:
- *      * стрелкой влево перейти к кнопке "Подробнее" и развернуть/свернуть описание,
- *      * нажать "Обновить", чтобы начать скачивание,
- *      * стрелкой вправо перейти к кнопке "Закрыть", чтобы закрыть плашку,
- *      * стрелкой влево с плашки вернуться обратно в боковое меню.
+ *    - При нажатии на кнопку разворачивания описания ("Подробнее"):
+ *      * Курсор автоматически переходит в блок описания (не улетает в каталог фильмов).
+ *      * Кнопками "Вверх" и "Вниз" на пульте пользователь плавно прокручивает текст описания.
+ *      * При нажатии кнопки "Назад" (Back) описание скрывается, а курсор возвращается
+ *        ровно на кнопку разворачивания описания на плашке.
+ *    - Кнопки "Обновить" и "Закрыть" поддерживают чёткую D-Pad навигацию и возврат в меню.
  * 3. Нулевой оверхед на CPU при отсутствии обновлений (мгновенный возврат при UpdateState.Idle).
  */
 @Composable
@@ -79,12 +84,21 @@ fun UpdateBanner(
     val detailsButtonRequester = remember { FocusRequester() }
     val effectiveActionRequester = actionFocusRequester ?: remember { FocusRequester() }
     val closeButtonRequester = remember { FocusRequester() }
+    val changelogScrollRequester = remember { FocusRequester() }
 
-    // По нажатию кнопки "Назад" на пульте, если описание развёрнуто — сворачиваем его
+    // Перевод фокуса на блок описания сразу после разворачивания
+    LaunchedEffect(isExpanded) {
+        if (isTvMode && isExpanded) {
+            delay(50L) // небольшая задержка для появления AnimatedVisibility в композиции
+            changelogScrollRequester.requestFocusSafe()
+        }
+    }
+
+    // По нажатию кнопки "Назад" на пульте: если описание развёрнуто — сворачиваем его и возвращаем фокус на кнопку подробнее
     if (isTvMode && isExpanded) {
         BackHandler {
             isExpanded = false
-            effectiveActionRequester.requestFocusSafe()
+            detailsButtonRequester.requestFocusSafe()
         }
     }
 
@@ -135,7 +149,7 @@ fun UpdateBanner(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    // Информационный блок слева (иконка, версия, описание, прогресс)
+                    // Информационный блок слева (иконка, версия, кнопка разворачивания, прогресс)
                     Row(
                         modifier = Modifier.weight(1f),
                         verticalAlignment = Alignment.CenterVertically
@@ -164,6 +178,9 @@ fun UpdateBanner(
                                                 focusRequester = detailsButtonRequester,
                                                 onNavigateLeft = onNavigateLeftToSidebar,
                                                 onNavigateRight = { effectiveActionRequester.requestFocusSafe() },
+                                                onNavigateDown = if (isExpanded) {
+                                                    { changelogScrollRequester.requestFocusSafe() }
+                                                } else null,
                                                 onClick = {
                                                     HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                                     isExpanded = !isExpanded
@@ -244,6 +261,9 @@ fun UpdateBanner(
                                     onNavigateRight = {
                                         closeButtonRequester.requestFocusSafe()
                                     },
+                                    onNavigateDown = if (isExpanded) {
+                                        { changelogScrollRequester.requestFocusSafe() }
+                                    } else null,
                                     onClick = {
                                         HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                         scope.launch {
@@ -259,6 +279,7 @@ fun UpdateBanner(
                                     focusRequester = effectiveActionRequester,
                                     onNavigateLeft = onNavigateLeftToSidebar,
                                     onNavigateRight = null,
+                                    onNavigateDown = null,
                                     onClick = {
                                         HapticEngine.get().perform(HapticType.CONFIRM)
                                         UpdateManager.installApk(context, state.apkFile)
@@ -273,6 +294,7 @@ fun UpdateBanner(
                                         focusRequester = effectiveActionRequester,
                                         onNavigateLeft = onNavigateLeftToSidebar,
                                         onNavigateRight = null,
+                                        onNavigateDown = null,
                                         onClick = {
                                             HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                             UpdateManager.dismissUpdate()
@@ -301,6 +323,9 @@ fun UpdateBanner(
                                 focusRequester = closeButtonRequester,
                                 onNavigateLeft = { effectiveActionRequester.requestFocusSafe() },
                                 onNavigateRight = null,
+                                onNavigateDown = if (isExpanded) {
+                                    { changelogScrollRequester.requestFocusSafe() }
+                                } else null,
                                 onClick = {
                                     HapticEngine.get().perform(HapticType.GENTLE_TICK)
                                     UpdateManager.dismissUpdate()
@@ -332,16 +357,63 @@ fun UpdateBanner(
                         val configuration = LocalConfiguration.current
                         val maxHeightDp = if (isTvMode) 220.dp else (configuration.screenHeightDp * 0.5f).dp
                         val scrollState = rememberScrollState()
+                        var isChangelogFocused by remember { mutableStateOf(false) }
 
                         Column {
                             Spacer(modifier = Modifier.height(10.dp))
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(min = if (isTvMode) 120.dp else 180.dp, max = maxHeightDp)
+                                    .heightIn(min = if (isTvMode) 130.dp else 180.dp, max = maxHeightDp)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(CinemaBlack.copy(alpha = 0.5f))
-                                    .border(1.dp, CinemaCard.copy(alpha = 0.8f), RoundedCornerShape(10.dp))
+                                    .background(CinemaBlack.copy(alpha = 0.65f))
+                                    .border(
+                                        1.dp,
+                                        if (isTvMode && isChangelogFocused) CinemaPrimary else CinemaCard.copy(alpha = 0.8f),
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .then(
+                                        if (isTvMode) {
+                                            Modifier
+                                                .focusRequester(changelogScrollRequester)
+                                                .onFocusChanged { isChangelogFocused = it.isFocused }
+                                                .focusable()
+                                                .tvFocusCursor(
+                                                    isFocused = isChangelogFocused,
+                                                    focusedBorderColor = CinemaPrimary,
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    focusedBorderWidth = 2.dp
+                                                )
+                                                .onKeyEvent { event ->
+                                                    if (event.type == KeyEventType.KeyDown) {
+                                                        when (event.nativeKeyEvent.keyCode) {
+                                                            AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                                                scope.launch {
+                                                                    scrollState.animateScrollBy(-160f, tween(90))
+                                                                }
+                                                                true // Поглощаем событие — курсор остаётся в описании и не улетает в каталог
+                                                            }
+                                                            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                                scope.launch {
+                                                                    scrollState.animateScrollBy(160f, tween(90))
+                                                                }
+                                                                true // Поглощаем событие — курсор остаётся в описании
+                                                            }
+                                                            AndroidKeyEvent.KEYCODE_BACK -> {
+                                                                isExpanded = false
+                                                                detailsButtonRequester.requestFocusSafe()
+                                                                true
+                                                            }
+                                                            AndroidKeyEvent.KEYCODE_DPAD_LEFT,
+                                                            AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                                                true // Не даём случайно уйти влево/вправо во время чтения
+                                                            }
+                                                            else -> false
+                                                        }
+                                                    } else false
+                                                }
+                                        } else Modifier
+                                    )
                                     .padding(4.dp)
                             ) {
                                 Column(
@@ -420,6 +492,7 @@ private fun TvActionButton(
     focusRequester: FocusRequester? = null,
     onNavigateLeft: (() -> Unit)?,
     onNavigateRight: (() -> Unit)?,
+    onNavigateDown: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     if (isTvMode) {
@@ -446,6 +519,12 @@ private fun TvActionButton(
                             AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
                                 if (onNavigateRight != null) {
                                     onNavigateRight()
+                                    true
+                                } else false
+                            }
+                            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                if (onNavigateDown != null) {
+                                    onNavigateDown()
                                     true
                                 } else false
                             }
@@ -488,6 +567,7 @@ private fun TvFocusableIconButton(
     focusRequester: FocusRequester? = null,
     onNavigateLeft: (() -> Unit)?,
     onNavigateRight: (() -> Unit)?,
+    onNavigateDown: (() -> Unit)? = null,
     onClick: () -> Unit,
     contentDescription: String,
     modifier: Modifier = Modifier,
@@ -512,6 +592,12 @@ private fun TvFocusableIconButton(
                             AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
                                 if (onNavigateRight != null) {
                                     onNavigateRight()
+                                    true
+                                } else false
+                            }
+                            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                if (onNavigateDown != null) {
+                                    onNavigateDown()
                                     true
                                 } else false
                             }

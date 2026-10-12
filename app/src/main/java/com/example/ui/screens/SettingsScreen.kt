@@ -2068,8 +2068,9 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        val contentTypes = remember {
+                        val contentTypes: List<List<Pair<RezkaType?, String>>> = remember {
                             listOf(
+                                listOf(null to "Все категории"),
                                 listOf(RezkaType.MOVIE to "Фильмы", RezkaType.SERIES to "Сериалы"),
                                 listOf(RezkaType.ANIME to "Аниме", RezkaType.CARTOON to "Мультики")
                             )
@@ -2104,7 +2105,7 @@ fun SettingsScreen(
                                                 shape = RoundedCornerShape(10.dp),
                                                 scaleFactor = 1.02f
                                             )
-                                            .testTag("default_type_${type.name.lowercase()}")
+                                            .testTag("default_type_${type?.name?.lowercase() ?: "all"}")
                                     ) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
