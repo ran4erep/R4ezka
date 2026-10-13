@@ -45,7 +45,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import com.example.ui.util.rememberSavedLazyListState
 import com.example.ui.util.rememberSavedLazyGridState
-import com.example.ui.util.SyncOrientationColumns
 import com.example.ui.util.AdaptivePosterBadge
 import com.example.ui.util.SeriesBadgeMode
 import com.example.ui.haptics.bounceOverscroll
@@ -166,15 +165,20 @@ fun HistoryScreen(
             if (historyList.isNotEmpty()) {
                 val savedItemId = viewModel.getTvHistoryFocusedItemId()
                 val savedIndex = viewModel.getTvHistoryFocusedIndex()
-                val savedScrollPos = viewModel.getScrollPosition("history")
                 val targetIndex = when {
                     savedItemId != null -> {
                         val idx = historyList.indexOfFirst { it.itemId == savedItemId }
-                        if (idx >= 0) idx else (savedIndex?.coerceIn(0, historyList.lastIndex) ?: savedScrollPos.index.coerceIn(0, historyList.lastIndex))
+                        if (idx >= 0) idx else (savedIndex?.coerceIn(0, historyList.lastIndex) ?: 0)
                     }
                     savedIndex != null -> savedIndex.coerceIn(0, historyList.lastIndex)
-                    savedScrollPos.index > 0 -> savedScrollPos.index.coerceIn(0, historyList.lastIndex)
-                    else -> 0
+                    else -> {
+                        val savedPos = viewModel.getScrollPosition("history")
+                        if (savedPos.index in historyList.indices) savedPos.index
+                        else {
+                            if (isTvMode) gridState.firstVisibleItemIndex.coerceIn(0, historyList.lastIndex)
+                            else listState.firstVisibleItemIndex.coerceIn(0, historyList.lastIndex)
+                        }
+                    }
                 }
                 try {
                     if (isTvMode) {
@@ -407,8 +411,6 @@ fun HistoryScreen(
                             }
                         }
                     }
-
-                    gridState.SyncOrientationColumns("history", viewModel, tvGridCols)
 
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(tvGridCols),

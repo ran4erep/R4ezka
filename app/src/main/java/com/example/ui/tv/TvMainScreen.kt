@@ -59,7 +59,6 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import com.example.ui.util.rememberSavedLazyGridState
-import com.example.ui.util.SyncOrientationColumns
 import com.example.ui.util.VoiceSearchButton
 import com.example.ui.util.rememberVoiceSearchLauncher
 import com.example.data.*
@@ -202,8 +201,11 @@ fun TvMainScreen(
             }
         }
 
+        val context = LocalContext.current
+        val isPhysicalTv = remember(context) { TvDetector.isRunningOnTv(context) }
+
         LaunchedEffect(isTopScreen, selectedDestination) {
-            if (isTopScreen && !isSidebarFocused) {
+            if (isTopScreen && !isSidebarFocused && isPhysicalTv) {
                 delay(100L)
                 when (selectedDestination) {
                     TvNavDestination.CATALOG -> {
@@ -589,7 +591,22 @@ private fun TvCatalogContent(
     onRegisterFocusRestorer: (((() -> Unit)) -> Unit)? = null,
     tvResolvedGrid: ResolvedCardGrid? = null
 ) {
-    val gridState = rememberSavedLazyGridState("catalog", viewModel)
+    val cardGridMode by viewModel.cardGridMode.collectAsState()
+    val seriesBadgeMode by viewModel.seriesBadgeMode.collectAsState()
+    val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
+    val tvCols = tvResolvedGrid?.columns ?: parsedCardGrid?.columns ?: 4
+    val gridState = rememberSavedLazyGridState("catalog", viewModel, columnsCount = tvCols)
+
+    // Фильтрация элементов по стране
+    val displayedItems = remember(catalogState, currentCountry) {
+        if (catalogState is CatalogState.Success) {
+            if (currentCountry.isEmpty()) {
+                catalogState.items
+            } else {
+                catalogState.items.filter { it.matchesCountry(currentCountry) }
+            }
+        } else emptyList()
+    }
     var lastFocusedIndex by rememberSaveable { mutableStateOf(viewModel.getTvCatalogFocusedIndex() ?: 0) }
     var isFiltersAreaFocused by remember { mutableStateOf(false) }
     var isSearchInputFocused by remember { mutableStateOf(false) }
@@ -608,9 +625,6 @@ private fun TvCatalogContent(
 
     val coroutineScope = rememberCoroutineScope()
     val loadingMovieId by viewModel.loadingMovieId.collectAsState()
-    val cardGridMode by viewModel.cardGridMode.collectAsState()
-    val seriesBadgeMode by viewModel.seriesBadgeMode.collectAsState()
-    val parsedCardGrid = remember(cardGridMode) { RezkaService.parseCardGrid(cardGridMode) }
     val itemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
     fun getFocusRequesterForIndex(index: Int): FocusRequester {
         return if (index == 0) entryFocusRequester else itemFocusRequesters.getOrPut(index) { FocusRequester() }
@@ -624,9 +638,11 @@ private fun TvCatalogContent(
                 categoryDropdownFocusRequester.requestFocusSafe()
             } else {
                 val visibleIndices = gridState.layoutInfo.visibleItemsInfo.map { it.index }
+                val savedPos = viewModel.getScrollPosition("catalog", tvCols)
                 val targetIndex = when {
                     lastFocusedIndex in visibleIndices -> lastFocusedIndex
                     visibleIndices.isNotEmpty() -> visibleIndices.first()
+                    savedPos.index in displayedItems.indices -> savedPos.index
                     else -> 0
                 }
                 try {
@@ -702,17 +718,6 @@ private fun TvCatalogContent(
         }
     }
 
-    // Фильтрация элементов по стране
-    val displayedItems = remember(catalogState, currentCountry) {
-        if (catalogState is CatalogState.Success) {
-            if (currentCountry.isEmpty()) {
-                catalogState.items
-            } else {
-                catalogState.items.filter { it.matchesCountry(currentCountry) }
-            }
-        } else emptyList()
-    }
-
     LaunchedEffect(displayedItems.size, currentCountry, isEndReached, isLoadingMore) {
         if (currentCountry.isNotEmpty() && displayedItems.size < 20 && !isEndReached && !isLoadingMore && viewModel.searchQuery.isEmpty()) {
             viewModel.loadNextPage()
@@ -734,15 +739,13 @@ private fun TvCatalogContent(
             if (items.isNotEmpty()) {
                 val savedItemId = viewModel.getTvCatalogFocusedItemId()
                 val savedIndex = viewModel.getTvCatalogFocusedIndex()
-                val savedScrollPos = viewModel.getScrollPosition("catalog")
 
                 val targetIndex = when {
                     savedItemId != null -> {
                         val idx = items.indexOfFirst { it.id == savedItemId }
-                        if (idx >= 0) idx else (savedIndex?.coerceIn(0, items.lastIndex) ?: savedScrollPos.index.coerceIn(0, items.lastIndex))
+                        if (idx >= 0) idx else (savedIndex?.coerceIn(0, items.lastIndex) ?: 0)
                     }
                     savedIndex != null -> savedIndex.coerceIn(0, items.lastIndex)
-                    savedScrollPos.index > 0 -> savedScrollPos.index.coerceIn(0, items.lastIndex)
                     else -> 0
                 }
 
@@ -1065,8 +1068,6 @@ private fun TvCatalogContent(
 
                                 val tvGridCols = resolvedGrid.columns
                                 val tvCardHeight = resolvedGrid.cardHeight
-
-                                gridState.SyncOrientationColumns("catalog", viewModel, tvGridCols)
 
                                 LazyVerticalGrid(
                                     columns = GridCells.Fixed(tvGridCols),

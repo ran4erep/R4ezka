@@ -8,10 +8,6 @@ import java.util.Locale
 
 data class LinkItem(val name: String, val url: String) : Serializable
 
-enum class NavTab {
-    FEED, FAVORITES, HISTORY
-}
-
 enum class RezkaType {
     MOVIE, SERIES, ANIME, CARTOON, COLLECTIONS
 }

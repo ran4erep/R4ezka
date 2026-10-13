@@ -34,7 +34,6 @@ import com.example.ui.haptics.HapticType
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusableItem
 import com.example.ui.util.rememberSavedLazyGridState
-import com.example.ui.util.SyncOrientationColumns
 import kotlinx.coroutines.launch
 
 sealed interface ThematicState {
@@ -410,8 +409,6 @@ fun ThematicListScreen(
 
                             val columnsCount = resolvedGrid.columns
                             val cardHeight = resolvedGrid.cardHeight
-
-                            gridState.SyncOrientationColumns("thematic_${effectiveUrl}", viewModel, columnsCount)
 
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(columnsCount),
