@@ -76,8 +76,8 @@ data class MovieCommentsState(
 data class ScrollPosition(
     val index: Int = 0,
     val offset: Int = 0,
-    val columns: Int = 1,
-    val timestamp: Long = System.currentTimeMillis()
+    val columnCount: Int = 1,
+    val totalItems: Int = 0
 )
 
 data class TvDetailSavedFocus(
@@ -92,145 +92,68 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     // Store for saving scroll positions across screen orientation changes and UI mode switches
     private val scrollPositions = java.util.concurrent.ConcurrentHashMap<String, ScrollPosition>()
 
+    /**
+     * Возвращает сохраненную позицию скролла с интеллектуальной геометрической конвертацией
+     * между портретным и ландшафтным режимами (сетками с разным количеством колонок).
+     */
     fun getScrollPosition(key: String, targetColumns: Int = 1): ScrollPosition {
-        var saved = scrollPositions[key]
-        if (saved == null) {
-            if (key == "history_grid") {
-                saved = scrollPositions["history"]
-            } else if (key == "history") {
-                saved = scrollPositions["history_grid"]
-            }
-        }
-        if (saved == null) return ScrollPosition(columns = targetColumns)
-
-        if (saved.columns <= 0 || targetColumns <= 0 || saved.columns == targetColumns || saved.index <= 0) {
+        val saved = scrollPositions[key] ?: return ScrollPosition(0, 0, targetColumns, 0)
+        if (targetColumns <= 0 || saved.columnCount <= 0 || saved.columnCount == targetColumns) {
             return saved
         }
-        // Высокопроизводительная O(1) математическая конвертация между разным числом колонок
-        val oldRow = saved.index / saved.columns
-        val anchorIndex = oldRow * saved.columns
-        val newRow = anchorIndex / targetColumns
-        val convertedIndex = (newRow * targetColumns).coerceAtLeast(0)
-        return saved.copy(index = convertedIndex, offset = 0, columns = targetColumns)
+        // Геометрическая конвертация индекса ряда при смене количества колонок:
+        // Элемент, который был виден в верхнем ряду, гарантированно попадает в начало нового ряда
+        val targetRow = saved.index / targetColumns
+        val convertedIndex = (targetRow * targetColumns).coerceAtLeast(0)
+        return ScrollPosition(
+            index = convertedIndex,
+            offset = 0, // Сбрасываем пиксельный оффсет для идеального выравнивания по верхнему краю сетки
+            columnCount = targetColumns,
+            totalItems = saved.totalItems
+        )
     }
 
-    fun saveScrollPosition(key: String, index: Int, offset: Int, columns: Int = 1) {
-        if (key.isNotEmpty() && index >= 0 && offset >= 0) {
-            val safeCols = columns.coerceAtLeast(1)
-            val pos = ScrollPosition(
-                index = index,
-                offset = offset,
-                columns = safeCols,
-                timestamp = System.currentTimeMillis()
-            )
-            scrollPositions[key] = pos
-            if (key == "history_grid") {
-                scrollPositions["history"] = pos.copy(columns = 1)
-            } else if (key == "history") {
-                scrollPositions["history_grid"] = pos.copy(columns = 1)
-            }
+    fun saveScrollPosition(key: String, index: Int, offset: Int, columnCount: Int = 1, totalItems: Int = 0) {
+        if (key.isEmpty() || index < 0 || offset < 0) return
+        val existing = scrollPositions[key]
+        if (index == 0 && offset == 0 && totalItems == 0 && existing != null && existing.index > 0) {
+            return
         }
+        scrollPositions[key] = ScrollPosition(
+            index = index,
+            offset = offset,
+            columnCount = columnCount.coerceAtLeast(1),
+            totalItems = totalItems
+        )
     }
 
     fun resetScrollPosition(key: String) {
         scrollPositions.remove(key)
     }
 
-    // Единый источник правды для навигации: сохраняется при поворотах устройства и смене ориентации/режимов
-    private val _currentNavTab = MutableStateFlow(NavTab.FEED)
-    val currentNavTab: StateFlow<NavTab> = _currentNavTab.asStateFlow()
-
-    fun setNavTab(tab: NavTab) {
-        _currentNavTab.value = tab
-        when (tab) {
-            NavTab.FEED -> _tvNavDestination.value = TvNavDestination.CATALOG
-            NavTab.FAVORITES -> _tvNavDestination.value = TvNavDestination.FAVORITES
-            NavTab.HISTORY -> _tvNavDestination.value = TvNavDestination.HISTORY
-        }
-    }
-
-    private val _isSettingsOpen = MutableStateFlow(false)
-    val isSettingsOpen: StateFlow<Boolean> = _isSettingsOpen.asStateFlow()
-
-    fun setSettingsOpen(isOpen: Boolean) {
-        _isSettingsOpen.value = isOpen
-        if (isOpen) {
-            _tvNavDestination.value = TvNavDestination.SETTINGS
-        } else {
-            when (_currentNavTab.value) {
-                NavTab.FEED -> _tvNavDestination.value = TvNavDestination.CATALOG
-                NavTab.FAVORITES -> _tvNavDestination.value = TvNavDestination.FAVORITES
-                NavTab.HISTORY -> _tvNavDestination.value = TvNavDestination.HISTORY
-            }
-        }
-    }
-
-    private val _navigationStack = MutableStateFlow<List<ScreenState>>(emptyList())
-    val navigationStack: StateFlow<List<ScreenState>> = _navigationStack.asStateFlow()
-
-    fun pushScreen(state: ScreenState) {
-        val current = _navigationStack.value
-        val currentTop = current.lastOrNull()
-        val isDuplicate = when {
-            state is ScreenState.Detail && currentTop is ScreenState.Detail -> state.item.id == currentTop.item.id
-            state is ScreenState.ThematicList && currentTop is ScreenState.ThematicList -> state.url == currentTop.url
-            state is ScreenState.PersonProfile && currentTop is ScreenState.PersonProfile -> state.url == currentTop.url
-            else -> false
-        }
-        if (!isDuplicate) {
-            _navigationStack.value = current + state
-        }
-    }
-
-    fun popScreen(): ScreenState? {
-        val current = _navigationStack.value
-        if (current.isNotEmpty()) {
-            val removed = current.last()
-            _navigationStack.value = current.dropLast(1)
-            if (removed is ScreenState.Detail) {
-                clearTvDetailFocusedItem(removed.item.id)
-            }
-            return removed
-        }
-        return null
-    }
-
-    fun replaceTopScreen(state: ScreenState) {
-        val current = _navigationStack.value
-        if (current.isNotEmpty()) {
-            _navigationStack.value = current.dropLast(1) + state
-        } else {
-            _navigationStack.value = listOf(state)
-        }
-    }
-
-    fun clearNavigationStack() {
-        _navigationStack.value = emptyList()
-    }
-
-    // Сохранение последнего выбранного раздела ТВ (Каталог, Избранное, История, Настройки)
+    // Сохранение и синхронизация выбранного раздела (Каталог, Избранное, История, Настройки)
+    // Единый источник правды для двусторонней связи мобильного и ТВ интерфейсов
     private val _tvNavDestination = MutableStateFlow(TvNavDestination.CATALOG)
     val tvNavDestination: StateFlow<TvNavDestination> = _tvNavDestination.asStateFlow()
 
+    private var lastNonSettingsDestination: TvNavDestination = TvNavDestination.CATALOG
+
     fun setTvNavDestination(destination: TvNavDestination) {
-        _tvNavDestination.value = destination
-        when (destination) {
-            TvNavDestination.CATALOG -> {
-                _currentNavTab.value = NavTab.FEED
-                _isSettingsOpen.value = false
-            }
-            TvNavDestination.FAVORITES -> {
-                _currentNavTab.value = NavTab.FAVORITES
-                _isSettingsOpen.value = false
-            }
-            TvNavDestination.HISTORY -> {
-                _currentNavTab.value = NavTab.HISTORY
-                _isSettingsOpen.value = false
-            }
-            TvNavDestination.SETTINGS -> {
-                _isSettingsOpen.value = true
-            }
+        if (destination != TvNavDestination.SETTINGS) {
+            lastNonSettingsDestination = destination
         }
+        _tvNavDestination.value = destination
+    }
+
+    fun openSettings() {
+        if (_tvNavDestination.value != TvNavDestination.SETTINGS) {
+            lastNonSettingsDestination = _tvNavDestination.value
+        }
+        _tvNavDestination.value = TvNavDestination.SETTINGS
+    }
+
+    fun closeSettings() {
+        _tvNavDestination.value = lastNonSettingsDestination
     }
 
     // Сохранение последнего выбранного / сфокусированного фильма в ТВ-каталоге для возврата фокуса

@@ -8,103 +8,114 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import com.example.ui.RezkaViewModel
+import kotlinx.coroutines.flow.distinctUntilChanged
 
-/**
- * Высокопроизводительный движок сохранения и адаптивной математической конвертации
- * скролла сетки (LazyVerticalGrid) между вертикальной (Portrait) и горизонтальной (Landscape)
- * ориентациями экрана с минимальной нагрузкой на процессор (O(1) операций).
- */
+private data class GridScrollSnapshot(
+    val index: Int,
+    val offset: Int,
+    val totalItems: Int,
+    val isScrolling: Boolean
+)
+
 @Composable
 fun rememberSavedLazyGridState(
     key: String,
     viewModel: RezkaViewModel,
-    initialColumns: Int = 1
+    columnsCount: Int = 1
 ): LazyGridState {
-    val initialPos = remember(key) { viewModel.getScrollPosition(key, targetColumns = initialColumns) }
+    val effectiveCols = if (columnsCount > 0) columnsCount else 1
+    val initialPos = remember(key, effectiveCols) {
+        viewModel.getScrollPosition(key, targetColumns = effectiveCols)
+    }
     val state = rememberLazyGridState(
         initialFirstVisibleItemIndex = initialPos.index,
         initialFirstVisibleItemScrollOffset = initialPos.offset
     )
 
-    LaunchedEffect(state, key) {
-        snapshotFlow { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
-            .collect { (index, offset) ->
-                val maxCol = state.layoutInfo.visibleItemsInfo.maxOfOrNull { it.column }
-                val currentCols = if (maxCol != null && maxCol >= 0) maxCol + 1 else 1
-                viewModel.saveScrollPosition(key, index, offset, currentCols)
+    // При динамической смене количества колонок в текущем Composable (например при повороте экрана):
+    LaunchedEffect(key, effectiveCols) {
+        val converted = viewModel.getScrollPosition(key, targetColumns = effectiveCols)
+        if (converted.index > 0 && kotlin.math.abs(state.firstVisibleItemIndex - converted.index) >= effectiveCols) {
+            try {
+                state.scrollToItem(converted.index, 0)
+            } catch (_: Exception) {}
+        }
+    }
+
+    LaunchedEffect(state, key, effectiveCols) {
+        snapshotFlow {
+            val total = state.layoutInfo.totalItemsCount
+            val index = state.firstVisibleItemIndex
+            val offset = state.firstVisibleItemScrollOffset
+            val isScrolling = state.isScrollInProgress
+            GridScrollSnapshot(index, offset, total, isScrolling)
+        }
+        .distinctUntilChanged()
+        .collect { snapshot ->
+            // Защита от затирания: сохраняем ТОЛЬКО если в сетке реально есть элементы (totalItems > 0)
+            if (snapshot.totalItems > 0) {
+                // Если индекс/оффсет больше 0, либо пользователь активно скроллит (даже в начало)
+                if (snapshot.index > 0 || snapshot.offset > 0 || snapshot.isScrolling) {
+                    viewModel.saveScrollPosition(
+                        key = key,
+                        index = snapshot.index,
+                        offset = snapshot.offset,
+                        columnCount = effectiveCols,
+                        totalItems = snapshot.totalItems
+                    )
+                }
             }
+        }
     }
 
     return state
 }
 
-/**
- * Расширение для мгновенной адаптивной конвертации скролла при динамическом изменении
- * количества колонок сетки (например, переворот телефона из 2 колонок в 4-6 колонок и обратно).
- * Выравнивает сетку по строке якорного элемента без обрезания постеров и без скачков.
- */
-@Composable
-fun LazyGridState.SyncOrientationColumns(
-    key: String,
-    viewModel: RezkaViewModel,
-    columns: Int
-) {
-    if (columns <= 0) return
-
-    var lastColumns by remember(key) {
-        val saved = viewModel.getScrollPosition(key)
-        mutableIntStateOf(if (saved.columns > 0) saved.columns else columns)
-    }
-
-    LaunchedEffect(columns, key) {
-        val oldCols = lastColumns
-        val newCols = columns
-        if (oldCols > 0 && newCols > 0 && oldCols != newCols) {
-            lastColumns = newCols
-            val currentIndex = firstVisibleItemIndex
-            if (currentIndex > 0) {
-                // Высокопроизводительная математическая конвертация положения:
-                // oldRow = номер строки в старой сетке
-                // anchorIndex = первый элемент этой строки
-                // newRow = номер строки в новой сетке
-                // targetIndex = начало строки в новой сетке
-                val oldRow = currentIndex / oldCols
-                val anchorIndex = oldRow * oldCols
-                val newRow = anchorIndex / newCols
-                val targetIndex = (newRow * newCols).coerceAtLeast(0)
-                try {
-                    scrollToItem(targetIndex, 0)
-                    viewModel.saveScrollPosition(key, targetIndex, 0, newCols)
-                } catch (_: Throwable) {}
-            } else {
-                viewModel.saveScrollPosition(key, 0, 0, newCols)
-            }
-        }
-    }
-}
+private data class ListScrollSnapshot(
+    val index: Int,
+    val offset: Int,
+    val totalItems: Int,
+    val isScrolling: Boolean
+)
 
 @Composable
 fun rememberSavedLazyListState(
     key: String,
     viewModel: RezkaViewModel
 ): LazyListState {
-    val initialPos = remember(key) { viewModel.getScrollPosition(key, targetColumns = 1) }
+    val initialPos = remember(key) {
+        viewModel.getScrollPosition(key, targetColumns = 1)
+    }
     val state = rememberLazyListState(
         initialFirstVisibleItemIndex = initialPos.index,
         initialFirstVisibleItemScrollOffset = initialPos.offset
     )
 
     LaunchedEffect(state, key) {
-        snapshotFlow { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
-            .collect { (index, offset) ->
-                viewModel.saveScrollPosition(key, index, offset, 1)
+        snapshotFlow {
+            val total = state.layoutInfo.totalItemsCount
+            val index = state.firstVisibleItemIndex
+            val offset = state.firstVisibleItemScrollOffset
+            val isScrolling = state.isScrollInProgress
+            ListScrollSnapshot(index, offset, total, isScrolling)
+        }
+        .distinctUntilChanged()
+        .collect { snapshot ->
+            if (snapshot.totalItems > 0) {
+                if (snapshot.index > 0 || snapshot.offset > 0 || snapshot.isScrolling) {
+                    viewModel.saveScrollPosition(
+                        key = key,
+                        index = snapshot.index,
+                        offset = snapshot.offset,
+                        columnCount = 1,
+                        totalItems = snapshot.totalItems
+                    )
+                }
             }
+        }
     }
 
     return state
@@ -120,8 +131,11 @@ fun rememberSavedScrollState(
 
     LaunchedEffect(state, key) {
         snapshotFlow { state.value }
+            .distinctUntilChanged()
             .collect { offset ->
-                viewModel.saveScrollPosition(key, 0, offset, 1)
+                if (offset > 0 || state.isScrollInProgress) {
+                    viewModel.saveScrollPosition(key, 0, offset)
+                }
             }
     }
 
