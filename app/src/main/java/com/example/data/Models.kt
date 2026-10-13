@@ -8,6 +8,10 @@ import java.util.Locale
 
 data class LinkItem(val name: String, val url: String) : Serializable
 
+enum class NavTab {
+    FEED, FAVORITES, HISTORY
+}
+
 enum class RezkaType {
     MOVIE, SERIES, ANIME, CARTOON, COLLECTIONS
 }
@@ -256,7 +260,20 @@ data class RezkaDetail(
     val seasons: List<Season> = emptyList(),
     val numericPostId: String = "",
     val isReleased: Boolean = true
-) : Serializable
+) : Serializable {
+    /**
+     * Показывает, имеет ли релиз серии/эпизоды (сериалы, мультсериалы, аниме,
+     * а также многосерийные фильмы).
+     */
+    val hasEpisodes: Boolean
+        get() = type == RezkaType.SERIES || (seasons.isNotEmpty() && seasons.any { it.episodes.isNotEmpty() })
+
+    /**
+     * Является ли контент многосерийным фильмом (категория MOVIE, но с наличием серий/частей).
+     */
+    val isMultiSeriesMovie: Boolean
+        get() = type == RezkaType.MOVIE && seasons.isNotEmpty() && seasons.any { it.episodes.isNotEmpty() }
+}
 
 data class FranchiseItem(
     val id: String,
@@ -392,6 +409,12 @@ fun SeriesSubscriptionEntity.isMovie(): Boolean {
     if (url.contains("/series/")) return false
     if (lastKnownSeason > 1 || lastKnownEpisode > 1) return false
     return typeUpper != "SERIES"
+}
+
+fun SeriesSubscriptionEntity.isMultiSeriesMovie(): Boolean {
+    val typeUpper = type.trim().uppercase()
+    val isMovieType = typeUpper == "MOVIE" || url.contains("/films/") || lastEpisodeName.contains("фильм", ignoreCase = true)
+    return isMovieType && (lastKnownEpisode > 1 || lastEpisodeName.contains("сери", ignoreCase = true) || lastEpisodeName.contains("част", ignoreCase = true))
 }
 
 data class AggregatedHistoryItem(

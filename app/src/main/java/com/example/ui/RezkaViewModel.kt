@@ -73,7 +73,12 @@ data class MovieCommentsState(
     val numericPostId: String = ""
 )
 
-data class ScrollPosition(val index: Int = 0, val offset: Int = 0)
+data class ScrollPosition(
+    val index: Int = 0,
+    val offset: Int = 0,
+    val columns: Int = 1,
+    val timestamp: Long = System.currentTimeMillis()
+)
 
 data class TvDetailSavedFocus(
     val focusKey: String,
@@ -87,18 +92,120 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     // Store for saving scroll positions across screen orientation changes and UI mode switches
     private val scrollPositions = java.util.concurrent.ConcurrentHashMap<String, ScrollPosition>()
 
-    fun getScrollPosition(key: String): ScrollPosition {
-        return scrollPositions[key] ?: ScrollPosition()
+    fun getScrollPosition(key: String, targetColumns: Int = 1): ScrollPosition {
+        var saved = scrollPositions[key]
+        if (saved == null) {
+            if (key == "history_grid") {
+                saved = scrollPositions["history"]
+            } else if (key == "history") {
+                saved = scrollPositions["history_grid"]
+            }
+        }
+        if (saved == null) return ScrollPosition(columns = targetColumns)
+
+        if (saved.columns <= 0 || targetColumns <= 0 || saved.columns == targetColumns || saved.index <= 0) {
+            return saved
+        }
+        // Высокопроизводительная O(1) математическая конвертация между разным числом колонок
+        val oldRow = saved.index / saved.columns
+        val anchorIndex = oldRow * saved.columns
+        val newRow = anchorIndex / targetColumns
+        val convertedIndex = (newRow * targetColumns).coerceAtLeast(0)
+        return saved.copy(index = convertedIndex, offset = 0, columns = targetColumns)
     }
 
-    fun saveScrollPosition(key: String, index: Int, offset: Int) {
+    fun saveScrollPosition(key: String, index: Int, offset: Int, columns: Int = 1) {
         if (key.isNotEmpty() && index >= 0 && offset >= 0) {
-            scrollPositions[key] = ScrollPosition(index, offset)
+            val safeCols = columns.coerceAtLeast(1)
+            val pos = ScrollPosition(
+                index = index,
+                offset = offset,
+                columns = safeCols,
+                timestamp = System.currentTimeMillis()
+            )
+            scrollPositions[key] = pos
+            if (key == "history_grid") {
+                scrollPositions["history"] = pos.copy(columns = 1)
+            } else if (key == "history") {
+                scrollPositions["history_grid"] = pos.copy(columns = 1)
+            }
         }
     }
 
     fun resetScrollPosition(key: String) {
         scrollPositions.remove(key)
+    }
+
+    // Единый источник правды для навигации: сохраняется при поворотах устройства и смене ориентации/режимов
+    private val _currentNavTab = MutableStateFlow(NavTab.FEED)
+    val currentNavTab: StateFlow<NavTab> = _currentNavTab.asStateFlow()
+
+    fun setNavTab(tab: NavTab) {
+        _currentNavTab.value = tab
+        when (tab) {
+            NavTab.FEED -> _tvNavDestination.value = TvNavDestination.CATALOG
+            NavTab.FAVORITES -> _tvNavDestination.value = TvNavDestination.FAVORITES
+            NavTab.HISTORY -> _tvNavDestination.value = TvNavDestination.HISTORY
+        }
+    }
+
+    private val _isSettingsOpen = MutableStateFlow(false)
+    val isSettingsOpen: StateFlow<Boolean> = _isSettingsOpen.asStateFlow()
+
+    fun setSettingsOpen(isOpen: Boolean) {
+        _isSettingsOpen.value = isOpen
+        if (isOpen) {
+            _tvNavDestination.value = TvNavDestination.SETTINGS
+        } else {
+            when (_currentNavTab.value) {
+                NavTab.FEED -> _tvNavDestination.value = TvNavDestination.CATALOG
+                NavTab.FAVORITES -> _tvNavDestination.value = TvNavDestination.FAVORITES
+                NavTab.HISTORY -> _tvNavDestination.value = TvNavDestination.HISTORY
+            }
+        }
+    }
+
+    private val _navigationStack = MutableStateFlow<List<ScreenState>>(emptyList())
+    val navigationStack: StateFlow<List<ScreenState>> = _navigationStack.asStateFlow()
+
+    fun pushScreen(state: ScreenState) {
+        val current = _navigationStack.value
+        val currentTop = current.lastOrNull()
+        val isDuplicate = when {
+            state is ScreenState.Detail && currentTop is ScreenState.Detail -> state.item.id == currentTop.item.id
+            state is ScreenState.ThematicList && currentTop is ScreenState.ThematicList -> state.url == currentTop.url
+            state is ScreenState.PersonProfile && currentTop is ScreenState.PersonProfile -> state.url == currentTop.url
+            else -> false
+        }
+        if (!isDuplicate) {
+            _navigationStack.value = current + state
+        }
+    }
+
+    fun popScreen(): ScreenState? {
+        val current = _navigationStack.value
+        if (current.isNotEmpty()) {
+            val removed = current.last()
+            _navigationStack.value = current.dropLast(1)
+            if (removed is ScreenState.Detail) {
+                clearTvDetailFocusedItem(removed.item.id)
+            }
+            return removed
+        }
+        return null
+    }
+
+    fun replaceTopScreen(state: ScreenState) {
+        val current = _navigationStack.value
+        if (current.isNotEmpty()) {
+            _navigationStack.value = current.dropLast(1) + state
+        } else {
+            _navigationStack.value = listOf(state)
+        }
+    }
+
+    fun clearNavigationStack() {
+        _navigationStack.value = emptyList()
     }
 
     // Сохранение последнего выбранного раздела ТВ (Каталог, Избранное, История, Настройки)
@@ -107,6 +214,23 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setTvNavDestination(destination: TvNavDestination) {
         _tvNavDestination.value = destination
+        when (destination) {
+            TvNavDestination.CATALOG -> {
+                _currentNavTab.value = NavTab.FEED
+                _isSettingsOpen.value = false
+            }
+            TvNavDestination.FAVORITES -> {
+                _currentNavTab.value = NavTab.FAVORITES
+                _isSettingsOpen.value = false
+            }
+            TvNavDestination.HISTORY -> {
+                _currentNavTab.value = NavTab.HISTORY
+                _isSettingsOpen.value = false
+            }
+            TvNavDestination.SETTINGS -> {
+                _isSettingsOpen.value = true
+            }
+        }
     }
 
     // Сохранение последнего выбранного / сфокусированного фильма в ТВ-каталоге для возврата фокуса
@@ -231,7 +355,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             }
             filtered.groupBy { it.itemId }.map { (itemId, items) ->
                 val latest = resolveLatestWatchHistory(items)
-                val isSeries = latest.season > 0 || items.any { it.season > 0 }
+                val isSeries = latest.season > 0 || latest.episode.isNotBlank() || items.any { it.season > 0 || it.episode.isNotBlank() }
                 val isManualWatched = latest.isFullyWatched
 
                 val totalProgressFraction: Float
@@ -1383,11 +1507,15 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             if (repository.isFavorite(detail.id)) {
                 val currentFav = favorites.value.find { it.id == detail.id }
                 if (currentFav != null) {
-                    val latestBadge = if (detail.type == RezkaType.SERIES || detail.type == RezkaType.ANIME || detail.type == RezkaType.CARTOON) {
+                    val latestBadge = if (detail.hasEpisodes) {
                         val maxSeason = detail.seasons.maxOfOrNull { it.id } ?: 0
                         val lastSeasonObj = detail.seasons.find { it.id == maxSeason }
                         val maxEp = lastSeasonObj?.episodes?.maxOfOrNull { it.id.toIntOrNull() ?: 0 } ?: 0
-                        if (maxSeason > 0 && maxEp > 0) "$maxSeason сезон $maxEp серия" else detail.rating
+                        if (detail.type == RezkaType.MOVIE && maxEp > 0) {
+                            "$maxEp серии"
+                        } else if (maxSeason > 0 && maxEp > 0) {
+                            "$maxSeason сезон $maxEp серия"
+                        } else detail.rating
                     } else {
                         detail.rating.ifEmpty { currentFav.rating }
                     }
@@ -2316,7 +2444,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         isSeries: Boolean,
         season: Int = 0,
         episode: String = "",
-        forceOnline: Boolean = false
+        forceOnline: Boolean = false,
+        itemUrl: String = ""
     ): List<StreamUrl> {
         val cleanNum = itemId.filter { it.isDigit() }
         val offlineList = repository.getOfflineMediaByItemId(itemId).ifEmpty {
@@ -2326,7 +2455,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         // Высокоточный поиск сохраненного оффлайн медиа (СТРОГО запрошенный сезон и серия, без подмены чужими сериями!)
-        val matchingOffline = if (isSeries) {
+        val isEpisodic = isSeries || season > 0 || (episode.isNotBlank() && episode != "0")
+        val matchingOffline = if (isEpisodic) {
             val cleanTargetEp = episode.filter { it.isDigit() }
             offlineList.firstOrNull { entity ->
                 if (entity.season != season) return@firstOrNull false
@@ -2363,7 +2493,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
         // 3. Запрос потоков через сеть (для скачивания или онлайн просмотра)
         return try {
-            val onlineStreams = RezkaService.getStreamUrls(itemId, translatorId, isSeries, season, episode)
+            val onlineStreams = RezkaService.getStreamUrls(itemId, translatorId, isSeries, season, episode, itemUrl)
             // Если запрос для воспроизведения (не скачивания) и серия уже скачана локально — добавляем локальный файл
             if (!forceOnline && matchingOffline != null) {
                 val resolvedFile = DownloadHelper.resolveOfflineVideoFile(matchingOffline, getApplication())

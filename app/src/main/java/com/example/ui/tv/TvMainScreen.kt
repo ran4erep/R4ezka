@@ -59,6 +59,7 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import com.example.ui.util.rememberSavedLazyGridState
+import com.example.ui.util.SyncOrientationColumns
 import com.example.ui.util.VoiceSearchButton
 import com.example.ui.util.rememberVoiceSearchLauncher
 import com.example.data.*
@@ -733,13 +734,15 @@ private fun TvCatalogContent(
             if (items.isNotEmpty()) {
                 val savedItemId = viewModel.getTvCatalogFocusedItemId()
                 val savedIndex = viewModel.getTvCatalogFocusedIndex()
+                val savedScrollPos = viewModel.getScrollPosition("catalog")
 
                 val targetIndex = when {
                     savedItemId != null -> {
                         val idx = items.indexOfFirst { it.id == savedItemId }
-                        if (idx >= 0) idx else (savedIndex?.coerceIn(0, items.lastIndex) ?: 0)
+                        if (idx >= 0) idx else (savedIndex?.coerceIn(0, items.lastIndex) ?: savedScrollPos.index.coerceIn(0, items.lastIndex))
                     }
                     savedIndex != null -> savedIndex.coerceIn(0, items.lastIndex)
+                    savedScrollPos.index > 0 -> savedScrollPos.index.coerceIn(0, items.lastIndex)
                     else -> 0
                 }
 
@@ -1062,6 +1065,8 @@ private fun TvCatalogContent(
 
                                 val tvGridCols = resolvedGrid.columns
                                 val tvCardHeight = resolvedGrid.cardHeight
+
+                                gridState.SyncOrientationColumns("catalog", viewModel, tvGridCols)
 
                                 LazyVerticalGrid(
                                     columns = GridCells.Fixed(tvGridCols),

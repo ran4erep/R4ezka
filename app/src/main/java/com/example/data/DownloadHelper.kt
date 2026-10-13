@@ -375,7 +375,7 @@ object DownloadHelper {
             return
         }
 
-        val isSeries = detail.type == RezkaType.SERIES
+        val isSeries = detail.hasEpisodes
         val offlineDir = getOfflineDirectory(context)
         val cleanTitle = sanitizeFilename(detail.title)
         val cleanQuality = sanitizeFilename(quality)

@@ -176,7 +176,7 @@ fun DetailScreen(
             val transId = selectedTranslator?.id ?: currentDetail?.translators?.firstOrNull()?.id
             viewModel.toggleSubscription(item, currentDetail, transId, false) { isSubNow, _, _ ->
                 if (isSubNow) {
-                    val isSeries = currentDetail?.type == RezkaType.SERIES || item.type == RezkaType.SERIES
+                    val isSeries = currentDetail?.hasEpisodes ?: (item.type == RezkaType.SERIES)
                     val toastMsg = if (isSeries) "Подписка оформлена (уведомления о новых сериях)" else "Подписка оформлена: сообщим, как только фильм выйдет!"
                     Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
                 }
@@ -201,7 +201,7 @@ fun DetailScreen(
             } else {
                 viewModel.toggleSubscription(item, currentDetail, transId, false) { isSubNow, _, _ ->
                     if (isSubNow) {
-                        val isSeries = currentDetail?.type == RezkaType.SERIES || item.type == RezkaType.SERIES
+                        val isSeries = currentDetail?.hasEpisodes ?: (item.type == RezkaType.SERIES)
                         val toastMsg = if (isSeries) "Подписка оформлена (уведомления о новых сериях)" else "Подписка оформлена: сообщим, как только фильм выйдет!"
                         Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
                     }
@@ -270,7 +270,8 @@ fun DetailScreen(
                 idx++
             }
             val effectiveSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else detail.seasons
-            if (detail.type == RezkaType.SERIES && effectiveSeasons.isNotEmpty()) {
+            val hasEpisodes = detail.hasEpisodes || effectiveSeasons.isNotEmpty()
+            if (hasEpisodes && effectiveSeasons.isNotEmpty()) {
                 if (!detail.isReleased) {
                     idx++
                 } else {
@@ -280,8 +281,8 @@ fun DetailScreen(
                     idx += chunkCount
                 }
             }
-            if (detail.type == RezkaType.MOVIE) {
-                idx++ // Play button
+            if (detail.type == RezkaType.MOVIE && effectiveSeasons.isEmpty()) {
+                idx++ // Play button (только для обычных односерийных фильмов)
             }
             idx
         }
@@ -314,15 +315,17 @@ fun DetailScreen(
             Toast.makeText(context, "Получение ссылки...", Toast.LENGTH_SHORT).show()
             scope.launch {
                 try {
-                    val isSeries = currentDetail.type == RezkaType.SERIES
+                    val isSeries = currentDetail.hasEpisodes
                     val targetId = currentDetail.numericPostId.ifEmpty { item.id }
+                    val effectiveItemUrl = item.url
                     val streams = viewModel.getStreamUrls(
                         itemId = targetId,
                         translatorId = trans.id,
                         isSeries = isSeries,
                         season = if (isSeries) seasonId else 0,
                         episode = if (isSeries) epId else "",
-                        forceOnline = true
+                        forceOnline = true,
+                        itemUrl = effectiveItemUrl
                     )
                     // Для скачивания через DownloadManager отбираем только сетевые потоки HTTP/HTTPS
                     val remoteStreams = streams.filter {
@@ -406,13 +409,20 @@ fun DetailScreen(
         selectedEpisodeId = episodeId
 
         val currentDetail = (detailState as? DetailState.Success)?.detail
-        val isSeries = currentDetail?.let { it.type == RezkaType.SERIES } ?: (item.type == RezkaType.SERIES)
+        val isSeries = currentDetail?.let { it.hasEpisodes } ?: (item.type == RezkaType.SERIES || episodeId.isNotBlank())
         val effectiveSeason = if (isSeries) seasonId.coerceAtLeast(1) else 0
         val effectiveEpisode = if (isSeries) (if (episodeId.isBlank() || episodeId == "0") "1" else episodeId) else ""
 
         val titleText = item.title
         val subtitleText = if (isSeries) {
-            "Сезон $effectiveSeason, Серия $effectiveEpisode (${translator.name})"
+            val allSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else (currentDetail?.seasons ?: emptyList())
+            val matchedEp = allSeasons.find { it.id == effectiveSeason }?.episodes?.find { it.id == effectiveEpisode }
+            val epLabel = matchedEp?.name?.takeIf { it.isNotBlank() } ?: "Серия $effectiveEpisode"
+            if (currentDetail?.type == RezkaType.MOVIE && effectiveSeason <= 1) {
+                "$epLabel (${translator.name})"
+            } else {
+                "Сезон $effectiveSeason, $epLabel (${translator.name})"
+            }
         } else {
             translator.name
         }
@@ -530,12 +540,14 @@ fun DetailScreen(
                     }
                 }
 
+                val effectiveItemUrl = item.url
                 val streams = viewModel.getStreamUrls(
                     itemId = targetId,
                     translatorId = translator.id,
                     isSeries = isSeries,
                     season = effectiveSeason,
-                    episode = effectiveEpisode
+                    episode = effectiveEpisode,
+                    itemUrl = effectiveItemUrl
                 )
 
                 isFetchingStreamsForPlay = false
@@ -784,7 +796,7 @@ fun DetailScreen(
                             } else null
                             selectedTranslator = restoredTrans ?: detail.translators.firstOrNull()
 
-                            if (detail.type == RezkaType.SERIES && detail.seasons.isNotEmpty()) {
+                            if (detail.hasEpisodes && detail.seasons.isNotEmpty()) {
                                 val matchedSeason = detail.seasons.find { it.id == offlineProg.lastSeason } ?: detail.seasons.first()
                                 selectedSeasonId = matchedSeason.id
                                 val matchedEp = matchedSeason.episodes.find { it.id == offlineProg.lastEpisode } ?: matchedSeason.episodes.firstOrNull()
@@ -792,7 +804,7 @@ fun DetailScreen(
                             }
                         } else {
                             selectedTranslator = detail.translators.firstOrNull()
-                            if (detail.type == RezkaType.SERIES && detail.seasons.isNotEmpty()) {
+                            if (detail.hasEpisodes && detail.seasons.isNotEmpty()) {
                                 selectedSeasonId = detail.seasons.first().id
                                 selectedEpisodeId = detail.seasons.first().episodes.firstOrNull()?.id
                             }
@@ -808,7 +820,7 @@ fun DetailScreen(
 
                         if (deepLinkedTranslator != null) {
                             selectedTranslator = deepLinkedTranslator
-                            if (!deepLinkedTranslator.isDefault && detail.type == RezkaType.SERIES && detail.numericPostId.isNotEmpty()) {
+                            if (!deepLinkedTranslator.isDefault && detail.hasEpisodes && detail.numericPostId.isNotEmpty()) {
                                 try {
                                     val fetchedSeasons = viewModel.getEpisodesForTranslator(detail.numericPostId, deepLinkedTranslator.id, deepLinkedTranslator.url)
                                     if (fetchedSeasons.isNotEmpty()) {
@@ -836,7 +848,7 @@ fun DetailScreen(
                             val translatorToUse = restoredTranslator ?: detail.translators.find { it.isDefault } ?: detail.translators.firstOrNull()
                             if (translatorToUse != null) {
                                 selectedTranslator = translatorToUse
-                                if (!translatorToUse.isDefault && detail.type == RezkaType.SERIES && detail.numericPostId.isNotEmpty()) {
+                                if (!translatorToUse.isDefault && detail.hasEpisodes && detail.numericPostId.isNotEmpty()) {
                                     try {
                                         val fetchedSeasons = viewModel.getEpisodesForTranslator(detail.numericPostId, translatorToUse.id, translatorToUse.url)
                                         if (fetchedSeasons.isNotEmpty()) {
@@ -849,7 +861,7 @@ fun DetailScreen(
                             }
 
                             // 2. Restore Season & Episode for series with multi-stage fallback matching
-                            if (detail.type == RezkaType.SERIES) {
+                            if (detail.hasEpisodes) {
                                 val effectiveSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else detail.seasons
                                 if (effectiveSeasons.isNotEmpty()) {
                                     val savedSeasonId = savedHistory.season
@@ -910,7 +922,7 @@ fun DetailScreen(
                                 (item.url.isBlank() && item.rating == "Оффлайн") ||
                                 detail.rating == "Оффлайн" ||
                                 viewModel.hasOfflineMedia(item.id)
-                            if (detail.type == RezkaType.SERIES && !isOffline) {
+                            if (detail.hasEpisodes && !isOffline) {
                                 scope.launch {
                                     val eps = viewModel.getEpisodesForTranslator(detail.numericPostId, trans.id, trans.url)
                                     if (eps.isNotEmpty()) {
@@ -995,7 +1007,7 @@ fun DetailScreen(
 
                     LaunchedEffect(detail.id, selectedEpisodeId, fromHistory) {
                         if (fromHistory && !hasAutoScrolledFromHistory) {
-                            val isSeries = detail.type == RezkaType.SERIES
+                            val isSeries = detail.hasEpisodes
                             if (isSeries) {
                                 // Дожидаемся асинхронного восстановления сезона и серии из истории (до 600 мс с быстрым шагом 25 мс)
                                 if (selectedEpisodeId.isNullOrEmpty() || effectiveSeasons.isEmpty()) {
@@ -1708,7 +1720,7 @@ fun DetailScreen(
                                                             (item.url.isBlank() && item.rating == "Оффлайн") ||
                                                             detail.rating == "Оффлайн" ||
                                                             viewModel.hasOfflineMedia(item.id)
-                                                        if (detail.type == RezkaType.SERIES && !isOffline) {
+                                                        if (detail.hasEpisodes && !isOffline) {
                                                             scope.launch {
                                                                 val eps = viewModel.getEpisodesForTranslator(detail.numericPostId, trans.id, trans.url)
                                                                 if (eps.isNotEmpty()) {
@@ -1748,7 +1760,7 @@ fun DetailScreen(
 
                     // 6. Series Navigation Panel (Seasons & Episodes Grid)
                     val effectiveSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else detail.seasons
-                    if (detail.type == RezkaType.SERIES) {
+                    if (detail.hasEpisodes) {
                         if (!detail.isReleased || effectiveSeasons.isEmpty()) {
                             item {
                                 Spacer(modifier = Modifier.height(20.dp))
@@ -1780,226 +1792,229 @@ fun DetailScreen(
                                 }
                             }
                         } else {
-                            // Seasons Dropdown Selector
-                        val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
-                        item(key = "series_seasons_dropdown") {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 20.dp, start = 16.dp, end = 16.dp)
-                            ) {
-                                Text(
-                                    text = "Сезон",
-                                    color = CinemaTextWhite,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                var seasonDropdownExpanded by remember { mutableStateOf(false) }
-
-                                Box(modifier = Modifier.fillMaxWidth()) {
-                                    Row(
+                            // Seasons Dropdown Selector (не показываем для многосерийных фильмов, так как у них нет сезонов, только серии)
+                            val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
+                            if (!detail.isMultiSeriesMovie) {
+                                item(key = "series_seasons_dropdown") {
+                                    Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(CinemaDark)
-                                            .clickable { seasonDropdownExpanded = true }
-                                            .padding(horizontal = 14.dp, vertical = 12.dp)
-                                            .testTag("season_dropdown_trigger"),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                            .padding(top = 20.dp, start = 16.dp, end = 16.dp)
                                     ) {
                                         Text(
-                                            text = currentSeason.name,
+                                            text = "Сезон",
                                             color = CinemaTextWhite,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f, fill = false)
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold
                                         )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Icon(
-                                            imageVector = if (seasonDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
-                                            contentDescription = "Выбор сезона",
-                                            tint = CinemaPrimary,
-                                            modifier = Modifier.size(22.dp)
-                                        )
-                                    }
+                                        Spacer(modifier = Modifier.height(8.dp))
 
-                                    DropdownMenu(
-                                        expanded = seasonDropdownExpanded,
-                                        onDismissRequest = { seasonDropdownExpanded = false },
-                                        modifier = Modifier
-                                            .background(CinemaDark)
-                                            .fillMaxWidth(0.9f)
-                                            .heightIn(max = 300.dp)
-                                    ) {
-                                        effectiveSeasons.forEach { s ->
-                                            val isSelected = s.id == currentSeason.id
-                                            DropdownMenuItem(
-                                                text = {
-                                                    Text(
-                                                        text = s.name,
-                                                        color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                                        fontSize = 13.sp,
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                                    )
-                                                },
-                                                onClick = {
-                                                    seasonDropdownExpanded = false
-                                                    if (!isSelected) {
-                                                        selectedSeasonId = s.id
-                                                        selectedEpisodeId = s.episodes.firstOrNull()?.id
-                                                    }
-                                                },
-                                                colors = MenuDefaults.itemColors(
-                                                    textColor = CinemaTextWhite
-                                                )
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                                        var seasonDropdownExpanded by remember { mutableStateOf(false) }
 
-                        // Episodes Header (Заголовок, Трейлер, Расписание, Кнопка Загрузить сериал)
-                        item(key = "series_episodes_header_${currentSeason.id}") {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 20.dp, start = 16.dp, end = 16.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "Серии (${currentSeason.episodes.size})",
-                                        color = CinemaTextWhite,
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        // Кнопка Трейлер
-                                        Surface(
-                                            onClick = {
-                                                launchTrailer(
-                                                    context = context,
-                                                    scope = scope,
-                                                    trailerUrl = detail.trailerUrl,
-                                                    numericPostId = detail.numericPostId,
-                                                    title = detail.title,
-                                                    year = detail.year,
-                                                    originalTitle = detail.originalTitle
-                                                )
-                                            },
-                                            color = CinemaCard,
-                                            shape = RoundedCornerShape(8.dp),
-                                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF0000).copy(alpha = 0.5f)),
-                                            modifier = Modifier.testTag("trailer_button")
-                                        ) {
+                                        Box(modifier = Modifier.fillMaxWidth()) {
                                             Row(
-                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(CinemaDark)
+                                                    .clickable { seasonDropdownExpanded = true }
+                                                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                                                    .testTag("season_dropdown_trigger"),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                YouTubeLogoIcon(width = 18.dp, height = 13.dp, playIconSize = 9.dp)
                                                 Text(
-                                                    text = "Трейлер",
+                                                    text = currentSeason.name,
                                                     color = CinemaTextWhite,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f, fill = false)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Icon(
+                                                    imageVector = if (seasonDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                                    contentDescription = "Выбор сезона",
+                                                    tint = CinemaPrimary,
+                                                    modifier = Modifier.size(22.dp)
                                                 )
                                             }
-                                        }
 
-                                        if (detail.schedule.isNotEmpty()) {
-                                            Surface(
-                                                onClick = { showScheduleCalendarDialog = true },
-                                                color = CinemaCard,
-                                                shape = RoundedCornerShape(8.dp),
-                                                border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f))
+                                            DropdownMenu(
+                                                expanded = seasonDropdownExpanded,
+                                                onDismissRequest = { seasonDropdownExpanded = false },
+                                                modifier = Modifier
+                                                    .background(CinemaDark)
+                                                    .fillMaxWidth(0.9f)
+                                                    .heightIn(max = 300.dp)
                                             ) {
-                                                Row(
-                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.CalendarMonth,
-                                                        contentDescription = null,
-                                                        tint = CinemaPrimary,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Text(
-                                                        text = "Расписание",
-                                                        color = CinemaTextWhite,
-                                                        fontSize = 12.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
-                                                    if (detail.schedule.any { !it.isReleased }) {
-                                                        Spacer(modifier = Modifier.width(5.dp))
-                                                        Box(
-                                                            modifier = Modifier
-                                                                .size(6.dp)
-                                                                .background(CinemaAmber, CircleShape)
+                                                effectiveSeasons.forEach { s ->
+                                                    val isSelected = s.id == currentSeason.id
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                text = s.name,
+                                                                color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                                fontSize = 13.sp,
+                                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                            )
+                                                        },
+                                                        onClick = {
+                                                            seasonDropdownExpanded = false
+                                                            if (!isSelected) {
+                                                                selectedSeasonId = s.id
+                                                                selectedEpisodeId = s.episodes.firstOrNull()?.id
+                                                            }
+                                                        },
+                                                        colors = MenuDefaults.itemColors(
+                                                            textColor = CinemaTextWhite
                                                         )
-                                                    }
+                                                    )
                                                 }
                                             }
                                         }
                                     }
                                 }
+                            }
 
-                                // Кнопка Загрузить сериал (отображается только если сериал уже вышел)
-                                if (detail.isReleased) {
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    Surface(
-                                        color = CinemaCard,
-                                        shape = RoundedCornerShape(10.dp),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(44.dp)
-                                            .tvFocusableItem(
-                                                onClick = {
-                                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
-                                                    onDownloadClick()
-                                                },
-                                                shape = RoundedCornerShape(10.dp)
-                                            )
-                                            .testTag("series_download_button")
+                            // Episodes Header (Заголовок, Трейлер, Расписание, Кнопка Загрузить сериал/фильм)
+                            item(key = "series_episodes_header_${currentSeason.id}") {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = if (detail.isMultiSeriesMovie) 14.dp else 20.dp, start = 16.dp, end = 16.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        Text(
+                                            text = "Серии (${currentSeason.episodes.size})",
+                                            color = CinemaTextWhite,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+
                                         Row(
-                                            modifier = Modifier.fillMaxSize(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.Center
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Download,
-                                                contentDescription = "Загрузить сериал",
-                                                tint = CinemaPrimary,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = "Загрузить сериал",
-                                                color = CinemaTextWhite,
-                                                fontSize = 14.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
+                                            // Кнопка Трейлер
+                                            Surface(
+                                                onClick = {
+                                                    launchTrailer(
+                                                        context = context,
+                                                        scope = scope,
+                                                        trailerUrl = detail.trailerUrl,
+                                                        numericPostId = detail.numericPostId,
+                                                        title = detail.title,
+                                                        year = detail.year,
+                                                        originalTitle = detail.originalTitle
+                                                    )
+                                                },
+                                                color = CinemaCard,
+                                                shape = RoundedCornerShape(8.dp),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF0000).copy(alpha = 0.5f)),
+                                                modifier = Modifier.testTag("trailer_button")
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    YouTubeLogoIcon(width = 18.dp, height = 13.dp, playIconSize = 9.dp)
+                                                    Text(
+                                                        text = "Трейлер",
+                                                        color = CinemaTextWhite,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+
+                                            if (detail.schedule.isNotEmpty()) {
+                                                Surface(
+                                                    onClick = { showScheduleCalendarDialog = true },
+                                                    color = CinemaCard,
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f))
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.CalendarMonth,
+                                                            contentDescription = null,
+                                                            tint = CinemaPrimary,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Text(
+                                                            text = "Расписание",
+                                                            color = CinemaTextWhite,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                        if (detail.schedule.any { !it.isReleased }) {
+                                                            Spacer(modifier = Modifier.width(5.dp))
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(6.dp)
+                                                                    .background(CinemaAmber, CircleShape)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Кнопка Загрузить сериал / Загрузить фильм (отображается только если сериал/фильм уже вышел)
+                                    if (detail.isReleased) {
+                                        val downloadButtonText = if (detail.isMultiSeriesMovie) "Загрузить фильм" else "Загрузить сериал"
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        Surface(
+                                            color = CinemaCard,
+                                            shape = RoundedCornerShape(10.dp),
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(44.dp)
+                                                .tvFocusableItem(
+                                                    onClick = {
+                                                        HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                                        onDownloadClick()
+                                                    },
+                                                    shape = RoundedCornerShape(10.dp)
+                                                )
+                                                .testTag("series_download_button")
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxSize(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Download,
+                                                    contentDescription = downloadButtonText,
+                                                    tint = CinemaPrimary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = downloadButtonText,
+                                                    color = CinemaTextWhite,
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
 
                         // Высокопроизводительные виртуализированные строки серий (по 2 серии в строке)
                         val chunks = currentSeason.episodes.chunked(2)
@@ -2082,7 +2097,7 @@ fun DetailScreen(
                 }
 
                     // 7. Cinema Play Movie button & Trailer button
-                    if (detail.type == RezkaType.MOVIE) {
+                    if (detail.type == RezkaType.MOVIE && effectiveSeasons.isEmpty()) {
                         item {
                             Spacer(modifier = Modifier.height(28.dp))
                             Column(
@@ -2659,7 +2674,7 @@ fun DetailScreen(
 
                     // Плавающая кнопка Подписки (для сериалов или ещё не вышедших фильмов/тайтлов)
                     val detailObj = (detailState as? DetailState.Success)?.detail
-                    val isSeries = detailObj?.type == RezkaType.SERIES || item.type == RezkaType.SERIES
+                    val isSeries = detailObj?.hasEpisodes ?: (item.type == RezkaType.SERIES)
                     val isUnreleased = detailObj?.isReleased == false
                     val showSubBtn = isSeries || isUnreleased || isSubscribed
 
@@ -3236,7 +3251,7 @@ fun DetailScreen(
         if (isPlayerOpen) {
             val streams = activePlayerStreams ?: emptyList()
             val currentDetail = (detailState as? DetailState.Success)?.detail
-            val isSeries = currentDetail?.let { it.type == RezkaType.SERIES } ?: (item.type == RezkaType.SERIES)
+            val isSeries = currentDetail?.let { it.hasEpisodes } ?: (item.type == RezkaType.SERIES)
             val seasonsList = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else (currentDetail?.seasons ?: emptyList())
             val curSeason = seasonsList.find { it.id == selectedSeasonId } ?: seasonsList.firstOrNull()
             val curEpisodes = curSeason?.episodes ?: emptyList()
@@ -3420,7 +3435,13 @@ fun DetailScreen(
                                 itemId = item.id,
                                 title = item.title,
                                 imageUrl = effectiveImageUrl,
-                                subtitle = if (isSeries) "Сезон ${curSeason?.id ?: selectedSeasonId ?: 1}, Серия $displayEpNumber" else "Фильм",
+                                subtitle = if (isSeries) {
+                                    if (currentDetailObj?.type == RezkaType.MOVIE && (curSeason?.id ?: selectedSeasonId ?: 1) <= 1) {
+                                        "Серия $displayEpNumber"
+                                    } else {
+                                        "Сезон ${curSeason?.id ?: selectedSeasonId ?: 1}, Серия $displayEpNumber"
+                                    }
+                                } else "Фильм",
                                 url = item.url,
                                 translatorId = selectedTranslator?.id ?: "",
                                 translatorName = selectedTranslator?.name ?: "Дубляж",

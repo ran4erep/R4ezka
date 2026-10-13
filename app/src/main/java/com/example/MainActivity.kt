@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.RezkaItem
 import com.example.data.ScreenState
+import com.example.data.NavTab
 import com.example.ui.RezkaViewModel
 import com.example.ui.MirrorAuditUiState
 import com.example.ui.components.AppHeader
@@ -86,10 +87,6 @@ import com.example.ui.haptics.HapticEngine
 import com.example.ui.haptics.HapticType
 import kotlinx.coroutines.launch
 
-enum class NavTab {
-    FEED, FAVORITES, HISTORY
-}
-
 class MainActivity : ComponentActivity() {
     private val viewModel: RezkaViewModel by viewModels()
 
@@ -127,32 +124,18 @@ private val DetailScaleEasing = MovieCardExpandEasing
 
 @Composable
 fun MainContent(viewModel: RezkaViewModel = viewModel()) {
-    var currentTab by remember { mutableStateOf(NavTab.FEED) }
-    val navigationStack = remember { mutableStateListOf<ScreenState>() }
-    var isSettingsOpen by remember { mutableStateOf(false) }
+    val currentTab by viewModel.currentNavTab.collectAsState()
+    val navigationStack by viewModel.navigationStack.collectAsState()
+    val isSettingsOpen by viewModel.isSettingsOpen.collectAsState()
 
-    // Безопасный метод извлечения экрана из стека (защита от дребезга кнопок, двойных кликов и гонок состояний)
+    // Безопасный метод извлечения экрана из стека (сохраняется в ViewModel при переворотах телефона)
     val popBackStack = {
-        if (navigationStack.isNotEmpty()) {
-            val removed = navigationStack.removeAt(navigationStack.lastIndex)
-            if (removed is ScreenState.Detail) {
-                viewModel.clearTvDetailFocusedItem(removed.item.id)
-            }
-        }
+        viewModel.popScreen()
     }
 
-    // Безопасный метод добавления экрана в стек с автоматической дедупликацией последовательных переходов
+    // Безопасный метод добавления экрана в стек с автоматической дедупликацией
     val pushToStack = { state: ScreenState ->
-        val currentTop = navigationStack.lastOrNull()
-        val isDuplicate = when {
-            state is ScreenState.Detail && currentTop is ScreenState.Detail -> state.item.id == currentTop.item.id
-            state is ScreenState.ThematicList && currentTop is ScreenState.ThematicList -> state.url == currentTop.url
-            state is ScreenState.PersonProfile && currentTop is ScreenState.PersonProfile -> state.url == currentTop.url
-            else -> false
-        }
-        if (!isDuplicate) {
-            navigationStack.add(state)
-        }
+        viewModel.pushScreen(state)
     }
 
     // Предзагрузка фильма с эффектом подпрыгивания карточки перед переходом
@@ -252,13 +235,15 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
     }
 
     // System Back Press Handler inside Compose
-    BackHandler(enabled = (mirrorAuditState !is MirrorAuditUiState.Idle) || isSettingsOpen || navigationStack.isNotEmpty()) {
+    BackHandler(enabled = (mirrorAuditState !is MirrorAuditUiState.Idle) || isSettingsOpen || navigationStack.isNotEmpty() || currentTab != NavTab.FEED) {
         if (mirrorAuditState !is MirrorAuditUiState.Idle) {
             viewModel.cancelMirrorAudit()
         } else if (navigationStack.isNotEmpty()) {
             popBackStack()
         } else if (isSettingsOpen) {
-            isSettingsOpen = false
+            viewModel.setSettingsOpen(false)
+        } else if (currentTab != NavTab.FEED) {
+            viewModel.setNavTab(NavTab.FEED)
         }
     }
 
@@ -280,11 +265,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
 
             if (isTvMode) {
                 // Режим Android TV: кинематографичная анимация перетекания карточки в фильм с аппаратным GPU-ускорением
-                val tvActiveTarget: Any = when {
-                    navigationStack.isNotEmpty() -> navigationStack.last()
-                    isSettingsOpen -> "settings"
-                    else -> "main"
-                }
+                val tvActiveTarget: Any = if (navigationStack.isNotEmpty()) navigationStack.last() else "main"
 
                 AnimatedContent(
                     targetState = tvActiveTarget,
@@ -352,9 +333,9 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                     "settings" -> {
                         SettingsScreen(
                             viewModel = viewModel,
-                            onBack = { isSettingsOpen = false },
+                            onBack = { viewModel.setSettingsOpen(false) },
                             onNavigateToDetail = { item ->
-                                isSettingsOpen = false
+                                viewModel.setSettingsOpen(false)
                                 onNavigateToDetailWithBounce(item)
                             },
                             modifier = Modifier.fillMaxSize()
@@ -457,7 +438,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                             currentUser = currentUser,
                             currentUserAvatar = currentUserAvatar,
                             onAuthClick = { showAuthDialog = true },
-                            onSettingsClick = { isSettingsOpen = true }
+                            onSettingsClick = { viewModel.setSettingsOpen(true) }
                         )
                     }
                 },
@@ -468,12 +449,14 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                         enter = slideInVertically { it },
                         exit = slideOutVertically { it }
                     ) {
+                        val barHeight = if (isLandscape) 58.dp else 80.dp
                         NavigationBar(
                             containerColor = CinemaDark,
                             tonalElevation = 0.dp,
                             windowInsets = WindowInsets.navigationBars,
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .height(barHeight)
                                 .testTag("bottom_nav_bar")
                         ) {
                             val feedLabel = if (isOnline) "Каталог" else "Оффлайн"
@@ -484,7 +467,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 selected = currentTab == NavTab.FEED,
                                 onClick = {
                                     HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                                    currentTab = NavTab.FEED
+                                    viewModel.setNavTab(NavTab.FEED)
                                 },
                                 icon = { Icon(feedIcon, contentDescription = feedLabel) },
                                 label = { Text(feedLabel, fontSize = 11.sp) },
@@ -503,7 +486,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 selected = currentTab == NavTab.FAVORITES,
                                 onClick = {
                                     HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                                    currentTab = NavTab.FAVORITES
+                                    viewModel.setNavTab(NavTab.FAVORITES)
                                 },
                                 icon = { Icon(Icons.Default.Bookmark, contentDescription = "Избранное") },
                                 label = { Text("Избранное", fontSize = 11.sp) },
@@ -522,7 +505,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 selected = currentTab == NavTab.HISTORY,
                                 onClick = {
                                     HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                                    currentTab = NavTab.HISTORY
+                                    viewModel.setNavTab(NavTab.HISTORY)
                                 },
                                 icon = { Icon(Icons.Default.History, contentDescription = "История") },
                                 label = { Text("История", fontSize = 11.sp) },
@@ -559,7 +542,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                                 onNavigateToThematic = { title, url ->
                                     pushToStack(ScreenState.ThematicList(title, url))
                                 },
-                                onNavigateToSettings = { isSettingsOpen = true },
+                                onNavigateToSettings = { viewModel.setSettingsOpen(true) },
                                 isTopScreen = navigationStack.isEmpty() && !isSettingsOpen
                             )
                         }
@@ -588,9 +571,9 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
             ) {
                 SettingsScreen(
                     viewModel = viewModel,
-                    onBack = { isSettingsOpen = false },
+                    onBack = { viewModel.setSettingsOpen(false) },
                     onNavigateToDetail = { item ->
-                        isSettingsOpen = false
+                        viewModel.setSettingsOpen(false)
                         onNavigateToDetailWithBounce(item)
                     }
                 )
@@ -739,7 +722,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
                     onCancel = { viewModel.cancelMirrorAudit() },
                     onOpenSettings = {
                         viewModel.dismissMirrorAudit()
-                        isSettingsOpen = true
+                        viewModel.setSettingsOpen(true)
                     }
                 )
             }

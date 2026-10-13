@@ -45,6 +45,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import com.example.ui.util.rememberSavedLazyListState
 import com.example.ui.util.rememberSavedLazyGridState
+import com.example.ui.util.SyncOrientationColumns
 import com.example.ui.util.AdaptivePosterBadge
 import com.example.ui.util.SeriesBadgeMode
 import com.example.ui.haptics.bounceOverscroll
@@ -158,19 +159,21 @@ fun HistoryScreen(
     }
 
     val cardGridMode by viewModel.cardGridMode.collectAsState()
-    val gridState = rememberSavedLazyGridState("history_grid", viewModel)
+    val gridState = rememberSavedLazyGridState("history", viewModel)
 
     val restoreFocus: () -> Unit = {
         coroutineScope.launch {
             if (historyList.isNotEmpty()) {
                 val savedItemId = viewModel.getTvHistoryFocusedItemId()
                 val savedIndex = viewModel.getTvHistoryFocusedIndex()
+                val savedScrollPos = viewModel.getScrollPosition("history")
                 val targetIndex = when {
                     savedItemId != null -> {
                         val idx = historyList.indexOfFirst { it.itemId == savedItemId }
-                        if (idx >= 0) idx else (savedIndex?.coerceIn(0, historyList.lastIndex) ?: 0)
+                        if (idx >= 0) idx else (savedIndex?.coerceIn(0, historyList.lastIndex) ?: savedScrollPos.index.coerceIn(0, historyList.lastIndex))
                     }
                     savedIndex != null -> savedIndex.coerceIn(0, historyList.lastIndex)
+                    savedScrollPos.index > 0 -> savedScrollPos.index.coerceIn(0, historyList.lastIndex)
                     else -> 0
                 }
                 try {
@@ -404,6 +407,8 @@ fun HistoryScreen(
                             }
                         }
                     }
+
+                    gridState.SyncOrientationColumns("history", viewModel, tvGridCols)
 
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(tvGridCols),
