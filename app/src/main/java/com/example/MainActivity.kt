@@ -142,6 +142,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
             val removed = navigationStack.removeAt(navigationStack.lastIndex)
             if (removed is ScreenState.Detail) {
                 viewModel.clearTvDetailFocusedItem(removed.item.id)
+                viewModel.resetScrollPosition("detail_${removed.item.id}")
             }
         }
     }
@@ -162,6 +163,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
 
     // Предзагрузка фильма с эффектом подпрыгивания карточки перед переходом
     val onNavigateToDetailWithBounce: (RezkaItem) -> Unit = { item ->
+        viewModel.resetScrollPosition("detail_${item.id}")
         viewModel.selectMovieWithPreload(item) {
             pushToStack(ScreenState.Detail(item))
         }
@@ -169,6 +171,7 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
 
     // Переход на экран фильма специально из истории просмотров
     val onNavigateToDetailFromHistory: (RezkaItem) -> Unit = { item ->
+        viewModel.resetScrollPosition("detail_${item.id}")
         viewModel.selectMovieWithPreload(item) {
             pushToStack(ScreenState.Detail(item = item, fromHistory = true))
         }
