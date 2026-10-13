@@ -221,26 +221,28 @@ fun TvDetailContent(
             }
         } else if (!fromHistory) {
             ImagePreloaderEngine.preloadDetailImages(context, detail)
-            val isPhysicalTv = TvDetector.isRunningOnTv(context)
             val savedPos = viewModel?.getScrollPosition("detail_${detail.id}")
             val hasExistingScroll = savedPos != null && (savedPos.index > 0 || savedPos.offset > 0)
-            if (!hasExistingScroll) {
+            if (hasExistingScroll && rightScrollState.firstVisibleItemIndex == 0) {
+                try {
+                    rightScrollState.scrollToItem(savedPos.index, savedPos.offset)
+                } catch (_: Throwable) {}
+            } else if (!hasExistingScroll) {
                 try {
                     rightScrollState.scrollToItem(0)
                 } catch (_: Throwable) {}
-                if (isPhysicalTv) {
-                    for (attempt in 0..14) {
-                        kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
-                        try {
-                            scrollToWatchButtonFocusRequester.requestFocus()
-                            break
-                        } catch (_: Throwable) {}
-                    }
-                }
-            } else {
-                if (savedPos != null && savedPos.index > 0 && rightScrollState.firstVisibleItemIndex == 0) {
+            }
+
+            // Фокус на кнопке "К просмотру":
+            // При входе на страницу фильма на телевизоре курсор ВСЕГДА гарантированно ставится на кнопку "К просмотру"!
+            if (!hasExistingScroll) {
+                var confirmations = 0
+                for (attempt in 0..25) {
+                    kotlinx.coroutines.delay(if (attempt == 0) 25L else 35L)
                     try {
-                        rightScrollState.scrollToItem(savedPos.index, savedPos.offset)
+                        scrollToWatchButtonFocusRequester.requestFocus()
+                        confirmations++
+                        if (confirmations >= 3) break
                     } catch (_: Throwable) {}
                 }
             }
@@ -416,12 +418,17 @@ fun TvDetailContent(
                             up = FocusRequester.Cancel
                             left = FocusRequester.Cancel
                             down = trailerButtonFocusRequester
+                            right = scrollToWatchButtonFocusRequester
                         }
                         .onKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown) {
                                 when (event.nativeKeyEvent.keyCode) {
                                     AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
                                         trailerButtonFocusRequester.requestFocusSafe()
+                                        true
+                                    }
+                                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        scrollToWatchButtonFocusRequester.requestFocusSafe()
                                         true
                                     }
                                     AndroidKeyEvent.KEYCODE_DPAD_UP,

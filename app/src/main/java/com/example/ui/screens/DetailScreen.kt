@@ -395,6 +395,7 @@ fun DetailScreen(
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         } else {
             viewModel.clearTvDetailFocusedItem(item.id)
+            viewModel.resetScrollPosition("detail_${item.id}")
             viewModel.clearDetail()
             onBack()
         }
@@ -981,7 +982,10 @@ fun DetailScreen(
                         onOpenSchedule = { showScheduleCalendarDialog = true },
                         onBack = handleBack,
                         onAppendNextCommentsPage = { viewModel.appendNextCommentsPage() },
-                        onNavigateToMovie = { targetItem -> onNavigateToDetail(targetItem) },
+                        onNavigateToMovie = { targetItem ->
+                            viewModel.resetScrollPosition("detail_${targetItem.id}")
+                            onNavigateToDetail(targetItem)
+                        },
                         onNavigateToThematic = { name, url -> onNavigateToThematic(name, url) },
                         isPlayerOpen = isPlayerOpen,
                         scrollState = lazyListState,
