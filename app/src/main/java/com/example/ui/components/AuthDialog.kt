@@ -66,8 +66,10 @@ import com.example.ui.haptics.bounceOverscroll
 import com.example.ui.theme.*
 import com.example.ui.tv.TvDetector
 import com.example.ui.tv.TvModePreference
+import com.example.ui.tv.rememberTvKeyboardVisibility
 import com.example.ui.tv.requestFocusSafe
 import com.example.ui.tv.tvFocusableItem
+import com.example.ui.tv.tvPulsingFocusBorder
 import com.example.ui.tv.tvRequestFocusWithRetry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -644,6 +646,9 @@ fun AuthDialog(
                                 }
                             ),
                             focusRequester = loginFocusRequester,
+                            onCommit = {
+                                passwordFocusRequester.requestFocusSafe()
+                            },
                             onUpKey = {
                                 if (isRegisterMode) {
                                     regAvatarRequester.requestFocusSafe()
@@ -688,22 +693,26 @@ fun AuthDialog(
                                 }
                             ),
                             trailingIcon = {
-                                IconButton(
-                                    onClick = {
-                                        HapticEngine.get().perform(HapticType.TOGGLE)
-                                        passwordVisible = !passwordVisible
-                                    },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                        contentDescription = if (passwordVisible) "Скрыть пароль" else "Показать пароль",
-                                        tint = if (passwordVisible) CinemaPrimary else CinemaTextGray,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
+                                Icon(
+                                    imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = if (passwordVisible) "Скрыть пароль" else "Показать пароль",
+                                    tint = if (passwordVisible) CinemaPrimary else CinemaTextGray,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            trailingIconFocusRequester = passwordEyeFocusRequester,
+                            onTrailingIconClick = {
+                                HapticEngine.get().perform(HapticType.TOGGLE)
+                                passwordVisible = !passwordVisible
                             },
                             focusRequester = passwordFocusRequester,
+                            onCommit = {
+                                if (isRegisterMode) {
+                                    confirmPasswordFocusRequester.requestFocusSafe()
+                                } else {
+                                    doSubmit()
+                                }
+                            },
                             onUpKey = {
                                 loginFocusRequester.requestFocusSafe()
                             },
@@ -737,22 +746,20 @@ fun AuthDialog(
                                     }
                                 ),
                                 trailingIcon = {
-                                    IconButton(
-                                        onClick = {
-                                            HapticEngine.get().perform(HapticType.TOGGLE)
-                                            confirmPasswordVisible = !confirmPasswordVisible
-                                        },
-                                        modifier = Modifier.size(36.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                            contentDescription = if (confirmPasswordVisible) "Скрыть пароль" else "Показать пароль",
-                                            tint = if (confirmPasswordVisible) CinemaPrimary else CinemaTextGray,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
+                                    Icon(
+                                        imageVector = if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                        contentDescription = if (confirmPasswordVisible) "Скрыть пароль" else "Показать пароль",
+                                        tint = if (confirmPasswordVisible) CinemaPrimary else CinemaTextGray,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                trailingIconFocusRequester = confirmPasswordEyeFocusRequester,
+                                onTrailingIconClick = {
+                                    HapticEngine.get().perform(HapticType.TOGGLE)
+                                    confirmPasswordVisible = !confirmPasswordVisible
                                 },
                                 focusRequester = confirmPasswordFocusRequester,
+                                onCommit = doSubmit,
                                 onUpKey = {
                                     passwordFocusRequester.requestFocusSafe()
                                 },
@@ -862,10 +869,15 @@ fun AuthDialog(
 
 /**
  * Высокопроизводительное поле текстового ввода для диалога авторизации:
- * - Единый постоянный TextField с сохранением InputConnection — предотвращает сброс
- *   и исчезновение стоковой клавиатуры (Gboard) на Android TV 14!
- * - Неоновая подсветка рамки CinemaPrimary при активном фокусе D-Pad.
- * - Плавная интеграция с ImeAction (Next / Done) и аппаратным пультом без задержек и нагрузки на CPU.
+ * - Построено в точности по проверенной архитектуре строки поиска фильмов (TvCompactSearchBar):
+ *   1. В обычном режиме навигации с пульта отображается только превью текста/плейсхолдер
+ *      через tvFocusableItem. Клавиатура гарантированно НЕ выскакивает при простом наведении курсора!
+ *   2. Режим ввода (isEditing) активируется СТРОГО по явному нажатию OK (D-Pad Center / Enter / Клик).
+ *   3. При открытой клавиатуре: первое нажатие кнопки "Назад" скрывает клавиатуру, моментально
+ *      выключает режим редактирования и СОХРАНЯЕТ фокус на этом же поле ввода (курсор НЕ пропадает!).
+ *   4. Двойное отслеживание закрытия экранной клавиатуры (rememberTvKeyboardVisibility + BackHandler)
+ *      корректно работает абсолютно со всеми видами ТВ-клавиатур (Gboard, Leanback, AOSP, сторонние).
+ *   5. При повторном нажатии "Назад" пользователь штатно выходит из диалога.
  */
 @Composable
 private fun AuthInputField(
@@ -877,32 +889,316 @@ private fun AuthInputField(
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     trailingIcon: @Composable (() -> Unit)? = null,
+    trailingIconFocusRequester: FocusRequester? = null,
+    onTrailingIconClick: (() -> Unit)? = null,
     focusRequester: FocusRequester? = null,
+    onCommit: (() -> Unit)? = null,
     onUpKey: (() -> Unit)? = null,
     onDownKey: (() -> Unit)? = null,
     testTag: String = ""
 ) {
-    var isFocused by remember { mutableStateOf(false) }
+    var isEditing by remember { mutableStateOf(false) }
+    val containerFocusRequester = focusRequester ?: remember { FocusRequester() }
+    val textFieldFocusRequester = remember { FocusRequester() }
+    val clearButtonFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
 
-    TextField(
-        value = value,
-        onValueChange = onValueChange,
-        placeholder = {
-            Text(
-                text = placeholderText,
-                color = CinemaMuted,
-                fontSize = 14.sp
+    val isKeyboardVisible by rememberTvKeyboardVisibility()
+    var wasKeyboardOpened by remember { mutableStateOf(false) }
+
+    val exitEditing: () -> Unit = {
+        isEditing = false
+        keyboardController?.hide()
+        containerFocusRequester.requestFocusSafe()
+    }
+
+    // Отслеживание закрытия системной экранной клавиатуры: мгновенно выходим из режима ввода
+    // и возвращаем фокус на контейнер поля (аналогично TvCompactSearchBar)
+    LaunchedEffect(isKeyboardVisible, isEditing) {
+        if (isEditing) {
+            if (isKeyboardVisible) {
+                wasKeyboardOpened = true
+            } else if (wasKeyboardOpened) {
+                wasKeyboardOpened = false
+                exitEditing()
+            }
+        } else {
+            wasKeyboardOpened = false
+        }
+    }
+
+    // При входе в режим редактирования фокусируем BasicTextField и вызываем клавиатуру;
+    // при выходе — надёжно восстанавливаем фокус на контейнере поля, предотвращая потерю курсора
+    LaunchedEffect(isEditing) {
+        if (isEditing) {
+            delay(50L)
+            textFieldFocusRequester.requestFocusSafe()
+            keyboardController?.show()
+        } else {
+            for (attempt in 0..4) {
+                delay(if (attempt == 0) 30L else 40L)
+                try {
+                    containerFocusRequester.requestFocus()
+                    break
+                } catch (_: Throwable) {}
+            }
+        }
+    }
+
+    // При открытой экранной клавиатуре по кнопке "Назад" на пульте скрываем клавиатуру
+    // и возвращаем фокус на контейнер поля в нередактируемом режиме
+    BackHandler(enabled = isEditing) {
+        exitEditing()
+    }
+
+    Surface(
+        color = CinemaCard,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(
+            1.dp,
+            if (value.isNotEmpty() || isEditing) CinemaPrimary else CinemaSecondary.copy(alpha = 0.35f)
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(50.dp)
+            .focusRequester(containerFocusRequester)
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown) {
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                            if (!isEditing && onUpKey != null) {
+                                onUpKey()
+                                true
+                            } else false
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                            if (!isEditing && onDownKey != null) {
+                                onDownKey()
+                                true
+                            } else false
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if (!isEditing) {
+                                if (trailingIconFocusRequester != null && onTrailingIconClick != null) {
+                                    trailingIconFocusRequester.requestFocusSafe()
+                                    true
+                                } else if (value.isNotEmpty() && trailingIcon == null) {
+                                    clearButtonFocusRequester.requestFocusSafe()
+                                    true
+                                } else false
+                            } else false
+                        }
+                        else -> false
+                    }
+                } else false
+            }
+            .then(
+                if (!isEditing) {
+                    Modifier.tvFocusableItem(
+                        onClick = {
+                            isEditing = true
+                        },
+                        scaleFactor = 1.02f,
+                        focusedBorderWidth = 2.dp,
+                        shape = RoundedCornerShape(12.dp),
+                        focusRequester = containerFocusRequester
+                    )
+                } else {
+                    Modifier.tvPulsingFocusBorder(
+                        isFocused = true,
+                        focusedBorderColor = CinemaPrimary,
+                        shape = RoundedCornerShape(12.dp),
+                        baseBorderWidth = 2.dp
+                    )
+                }
             )
-        },
-        singleLine = true,
-        visualTransformation = visualTransformation,
-        keyboardOptions = keyboardOptions,
-        keyboardActions = keyboardActions,
-        trailingIcon = trailingIcon ?: if (value.isNotEmpty()) {
-            {
-                IconButton(
-                    onClick = { onValueChange("") },
-                    modifier = Modifier.size(32.dp)
+            .then(if (testTag.isNotEmpty()) Modifier.testTag(testTag) else Modifier)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                if (!isEditing) {
+                    // В обычном режиме навигации с пульта отображается только текст превью.
+                    // Клавиатура НЕ выскакивает при простом перемещении курсора D-Pad!
+                    val displayText = when {
+                        value.isNotEmpty() && visualTransformation != VisualTransformation.None -> "•".repeat(value.length)
+                        value.isNotEmpty() -> value
+                        else -> placeholderText
+                    }
+                    Text(
+                        text = displayText,
+                        color = if (value.isNotEmpty()) CinemaTextWhite else CinemaMuted,
+                        fontSize = 14.sp,
+                        fontWeight = if (value.isNotEmpty()) FontWeight.Medium else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                } else {
+                    // Режим редактирования: активируется ТОЛЬКО по явному нажатию кнопки ОК на пульте
+                    BasicTextField(
+                        value = value,
+                        onValueChange = onValueChange,
+                        singleLine = true,
+                        visualTransformation = visualTransformation,
+                        textStyle = TextStyle(
+                            color = CinemaTextWhite,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        cursorBrush = SolidColor(CinemaPrimary),
+                        keyboardOptions = keyboardOptions,
+                        keyboardActions = KeyboardActions(
+                            onNext = {
+                                exitEditing()
+                                keyboardActions.onNext?.invoke(this)
+                            },
+                            onDone = {
+                                exitEditing()
+                                keyboardActions.onDone?.invoke(this)
+                            },
+                            onSearch = {
+                                exitEditing()
+                                keyboardActions.onSearch?.invoke(this)
+                            },
+                            onGo = {
+                                exitEditing()
+                                keyboardActions.onGo?.invoke(this)
+                            }
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(textFieldFocusRequester)
+                            .onKeyEvent { keyEvent ->
+                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                    when (keyEvent.nativeKeyEvent.keyCode) {
+                                        AndroidKeyEvent.KEYCODE_BACK -> {
+                                            exitEditing()
+                                            true
+                                        }
+                                        AndroidKeyEvent.KEYCODE_ENTER,
+                                        AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
+                                        AndroidKeyEvent.KEYCODE_DPAD_CENTER -> {
+                                            exitEditing()
+                                            if (onCommit != null) {
+                                                onCommit()
+                                            } else if (keyboardOptions.imeAction == ImeAction.Next) {
+                                                onDownKey?.invoke()
+                                            }
+                                            true
+                                        }
+                                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                            exitEditing()
+                                            onDownKey?.invoke()
+                                            true
+                                        }
+                                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                            exitEditing()
+                                            onUpKey?.invoke()
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                } else false
+                            },
+                        decorationBox = { innerTextField ->
+                            if (value.isEmpty()) {
+                                Text(
+                                    text = placeholderText,
+                                    color = CinemaMuted,
+                                    fontSize = 14.sp
+                                )
+                            }
+                            innerTextField()
+                        }
+                    )
+                }
+            }
+
+            // Правая часть поля: иконка (показ/скрытие пароля) или кнопка быстрой очистки
+            if (trailingIcon != null) {
+                Spacer(modifier = Modifier.width(6.dp))
+                if (trailingIconFocusRequester != null && onTrailingIconClick != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .tvFocusableItem(
+                                onClick = onTrailingIconClick,
+                                shape = CircleShape,
+                                focusRequester = trailingIconFocusRequester
+                            )
+                            .onKeyEvent { keyEvent ->
+                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                    when (keyEvent.nativeKeyEvent.keyCode) {
+                                        AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                            containerFocusRequester.requestFocusSafe()
+                                            true
+                                        }
+                                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                            if (onDownKey != null) {
+                                                onDownKey()
+                                                true
+                                            } else false
+                                        }
+                                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                            if (onUpKey != null) {
+                                                onUpKey()
+                                                true
+                                            } else false
+                                        }
+                                        else -> false
+                                    }
+                                } else false
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        trailingIcon()
+                    }
+                } else {
+                    trailingIcon()
+                }
+            } else if (value.isNotEmpty()) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .tvFocusableItem(
+                            onClick = { onValueChange("") },
+                            shape = CircleShape,
+                            focusRequester = clearButtonFocusRequester
+                        )
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        containerFocusRequester.requestFocusSafe()
+                                        true
+                                    }
+                                    AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                        if (onDownKey != null) {
+                                            onDownKey()
+                                            true
+                                        } else false
+                                    }
+                                    AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                                        if (onUpKey != null) {
+                                            onUpKey()
+                                            true
+                                        } else false
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
@@ -912,55 +1208,8 @@ private fun AuthInputField(
                     )
                 }
             }
-        } else null,
-        colors = TextFieldDefaults.colors(
-            focusedContainerColor = CinemaCard,
-            unfocusedContainerColor = CinemaCard,
-            focusedTextColor = CinemaTextWhite,
-            unfocusedTextColor = CinemaTextWhite,
-            cursorColor = CinemaPrimary,
-            focusedIndicatorColor = Color.Transparent,
-            unfocusedIndicatorColor = Color.Transparent,
-            disabledIndicatorColor = Color.Transparent
-        ),
-        shape = RoundedCornerShape(12.dp),
-        textStyle = TextStyle(
-            color = CinemaTextWhite,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium
-        ),
-        modifier = modifier
-            .fillMaxWidth()
-            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .border(
-                width = if (isFocused) 2.dp else 1.dp,
-                color = if (isFocused) CinemaPrimary else CinemaSecondary.copy(alpha = 0.35f),
-                shape = RoundedCornerShape(12.dp)
-            )
-            .onFocusChanged { state ->
-                isFocused = state.isFocused
-            }
-            .onKeyEvent { keyEvent ->
-                if (keyEvent.type == KeyEventType.KeyDown) {
-                    when (keyEvent.nativeKeyEvent.keyCode) {
-                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                            if (onUpKey != null && !isFocused) {
-                                onUpKey()
-                                true
-                            } else false
-                        }
-                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                            if (onDownKey != null && !isFocused) {
-                                onDownKey()
-                                true
-                            } else false
-                        }
-                        else -> false
-                    }
-                } else false
-            }
-            .then(if (testTag.isNotEmpty()) Modifier.testTag(testTag) else Modifier)
-    )
+        }
+    }
 }
 
 @Composable
