@@ -4,6 +4,9 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.RezkaApplication
@@ -155,6 +158,13 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     fun closeSettings() {
         _tvNavDestination.value = lastNonSettingsDestination
     }
+
+    // Сохранение состояния раскрытых категорий экрана настроек (аккордеонов) при смене ориентации экрана
+    var isSettingsMirrorsExpanded by mutableStateOf(false)
+    var isSettingsPlaybackExpanded by mutableStateOf(false)
+    var isSettingsTvExpanded by mutableStateOf(false)
+    var isSettingsSubscriptionsExpanded by mutableStateOf(false)
+    var isSettingsOfflineExpanded by mutableStateOf(false)
 
     // Сохранение последнего выбранного / сфокусированного фильма в ТВ-каталоге для возврата фокуса
     @Volatile

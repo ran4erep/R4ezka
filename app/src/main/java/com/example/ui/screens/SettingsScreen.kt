@@ -117,12 +117,12 @@ fun SettingsScreen(
     var pingResult by remember { mutableStateOf<String?>(null) }
     var isPinging by remember { mutableStateOf(false) }
 
-    // Категории в выпадающем виде (аккордеоны - все свёрнуты по умолчанию)
-    var isMirrorsExpanded by remember { mutableStateOf(false) }
-    var isPlaybackExpanded by remember { mutableStateOf(false) }
-    var isTvExpanded by remember { mutableStateOf(false) }
-    var isSubscriptionsExpanded by remember { mutableStateOf(false) }
-    var isOfflineExpanded by remember { mutableStateOf(false) }
+    // Категории в выпадающем виде (аккордеоны - сохраняются во ViewModel при переворотах телефона)
+    var isMirrorsExpanded by viewModel::isSettingsMirrorsExpanded
+    var isPlaybackExpanded by viewModel::isSettingsPlaybackExpanded
+    var isTvExpanded by viewModel::isSettingsTvExpanded
+    var isSubscriptionsExpanded by viewModel::isSettingsSubscriptionsExpanded
+    var isOfflineExpanded by viewModel::isSettingsOfflineExpanded
 
     val subscriptions by viewModel.subscriptions.collectAsState()
     val isCheckingSeriesUpdates by viewModel.isCheckingSeriesUpdates.collectAsState()
@@ -177,14 +177,20 @@ fun SettingsScreen(
     val offlineFirstCardRequester = remember { FocusRequester() }
     val supportCardRequester = remember { FocusRequester() }
 
-    // Автофокус по умолчанию на первой категории настроек
+    // Автофокус по умолчанию на первой категории настроек (только для физических ТВ при отсутствии скролла)
+    val isPhysicalTv = remember(context) { com.example.ui.tv.TvDetector.isRunningOnTv(context) }
     LaunchedEffect(Unit) {
-        for (attempt in 0..12) {
-            kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
-            try {
-                networkCategoryRequester.requestFocus()
-                break
-            } catch (_: Throwable) {}
+        if (isPhysicalTv) {
+            val savedPos = viewModel.getScrollPosition("settings")
+            if (savedPos.offset <= 10) {
+                for (attempt in 0..12) {
+                    kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
+                    try {
+                        networkCategoryRequester.requestFocus()
+                        break
+                    } catch (_: Throwable) {}
+                }
+            }
         }
     }
 

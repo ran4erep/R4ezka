@@ -221,15 +221,28 @@ fun TvDetailContent(
             }
         } else if (!fromHistory) {
             ImagePreloaderEngine.preloadDetailImages(context, detail)
-            try {
-                rightScrollState.scrollToItem(0)
-            } catch (_: Throwable) {}
-            for (attempt in 0..14) {
-                kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
+            val isPhysicalTv = TvDetector.isRunningOnTv(context)
+            val savedPos = viewModel?.getScrollPosition("detail_${detail.id}")
+            val hasExistingScroll = savedPos != null && (savedPos.index > 0 || savedPos.offset > 0)
+            if (!hasExistingScroll) {
                 try {
-                    scrollToWatchButtonFocusRequester.requestFocus()
-                    break
+                    rightScrollState.scrollToItem(0)
                 } catch (_: Throwable) {}
+                if (isPhysicalTv) {
+                    for (attempt in 0..14) {
+                        kotlinx.coroutines.delay(if (attempt == 0) 40L else 50L)
+                        try {
+                            scrollToWatchButtonFocusRequester.requestFocus()
+                            break
+                        } catch (_: Throwable) {}
+                    }
+                }
+            } else {
+                if (savedPos != null && savedPos.index > 0 && rightScrollState.firstVisibleItemIndex == 0) {
+                    try {
+                        rightScrollState.scrollToItem(savedPos.index, savedPos.offset)
+                    } catch (_: Throwable) {}
+                }
             }
         } else {
             if (hasHandledHistoryFocus) return@LaunchedEffect
