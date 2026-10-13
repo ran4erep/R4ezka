@@ -68,7 +68,7 @@ fun MediaDownloadDialog(
 ) {
     val context = LocalContext.current
     val isTvDevice = remember { TvDetector.isRunningOnTv(context) }
-    val isSeries = detail.type == RezkaType.SERIES
+    val isSeries = detail.hasEpisodes
 
     var selectedTranslator by remember {
         mutableStateOf(initialTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной"))
@@ -169,7 +169,7 @@ fun MediaDownloadDialog(
                             )
                             Column {
                                 Text(
-                                    text = if (isSeries) "Загрузка сериала" else "Загрузка фильма",
+                                    text = if (detail.isMultiSeriesMovie || !isSeries) "Загрузка фильма" else "Загрузка сериала",
                                     color = CinemaTextWhite,
                                     fontSize = 17.sp,
                                     fontWeight = FontWeight.Bold
@@ -223,107 +223,201 @@ fun MediaDownloadDialog(
                             ) {
                                 // Сезон и Серия в один ряд
                                 if (isSeries && availableSeasons.isNotEmpty()) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        // Сезон
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = "Сезон",
-                                                color = CinemaTextGray,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Box(modifier = Modifier.fillMaxWidth()) {
-                                                Surface(
-                                                    color = CinemaCard,
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    border = BorderStroke(1.dp, CinemaBorder),
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(38.dp)
-                                                        .tvFocusableItem(
-                                                            onClick = { seasonDropdownExpanded = true },
-                                                            shape = RoundedCornerShape(8.dp),
-                                                            focusRequester = initialDialogRequester
-                                                        )
-                                                ) {
-                                                    Row(
+                                    if (!detail.isMultiSeriesMovie) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            // Сезон
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "Сезон",
+                                                    color = CinemaTextGray,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Box(modifier = Modifier.fillMaxWidth()) {
+                                                    Surface(
+                                                        color = CinemaCard,
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        border = BorderStroke(1.dp, CinemaBorder),
                                                         modifier = Modifier
-                                                            .fillMaxSize()
-                                                            .padding(horizontal = 10.dp),
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically
+                                                            .fillMaxWidth()
+                                                            .height(38.dp)
+                                                            .tvFocusableItem(
+                                                                onClick = { seasonDropdownExpanded = true },
+                                                                shape = RoundedCornerShape(8.dp),
+                                                                focusRequester = initialDialogRequester
+                                                            )
                                                     ) {
-                                                        Text(
-                                                            text = currentSeason?.name ?: "Сезон $selectedSeasonId",
-                                                            color = CinemaTextWhite,
-                                                            fontSize = 12.sp,
-                                                            fontWeight = FontWeight.SemiBold,
-                                                            maxLines = 1,
-                                                            overflow = TextOverflow.Ellipsis
-                                                        )
-                                                        Icon(
-                                                            imageVector = if (seasonDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
-                                                            contentDescription = null,
-                                                            tint = CinemaPrimary,
-                                                            modifier = Modifier.size(18.dp)
-                                                        )
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxSize()
+                                                                .padding(horizontal = 10.dp),
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Text(
+                                                                text = currentSeason?.name ?: "Сезон $selectedSeasonId",
+                                                                color = CinemaTextWhite,
+                                                                fontSize = 12.sp,
+                                                                fontWeight = FontWeight.SemiBold,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                            Icon(
+                                                                imageVector = if (seasonDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                                                contentDescription = null,
+                                                                tint = CinemaPrimary,
+                                                                modifier = Modifier.size(18.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                    DropdownMenu(
+                                                        expanded = seasonDropdownExpanded,
+                                                        onDismissRequest = { seasonDropdownExpanded = false },
+                                                        modifier = Modifier
+                                                            .background(CinemaDark)
+                                                            .border(1.dp, CinemaPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                                            .widthIn(min = 180.dp, max = 260.dp)
+                                                            .heightIn(max = 240.dp)
+                                                            .padding(4.dp)
+                                                    ) {
+                                                        availableSeasons.forEach { s ->
+                                                            val isSelected = s.id == selectedSeasonId
+                                                            Surface(
+                                                                color = if (isSelected) CinemaPrimary.copy(alpha = 0.2f) else Color.Transparent,
+                                                                shape = RoundedCornerShape(6.dp),
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .height(34.dp)
+                                                                    .tvFocusableItem(
+                                                                        onClick = {
+                                                                            selectedSeasonId = s.id
+                                                                            selectedEpisodeId = s.episodes.firstOrNull()?.id ?: "1"
+                                                                            seasonDropdownExpanded = false
+                                                                        },
+                                                                        shape = RoundedCornerShape(6.dp)
+                                                                    )
+                                                            ) {
+                                                                Row(
+                                                                    modifier = Modifier
+                                                                        .fillMaxSize()
+                                                                        .padding(horizontal = 10.dp),
+                                                                    verticalAlignment = Alignment.CenterVertically
+                                                                ) {
+                                                                    Text(
+                                                                        text = s.name,
+                                                                        color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                                        fontSize = 12.sp,
+                                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
                                                     }
                                                 }
-                                                DropdownMenu(
-                                                    expanded = seasonDropdownExpanded,
-                                                    onDismissRequest = { seasonDropdownExpanded = false },
-                                                    modifier = Modifier
-                                                        .background(CinemaDark)
-                                                        .border(1.dp, CinemaPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-                                                        .widthIn(min = 180.dp, max = 260.dp)
-                                                        .heightIn(max = 240.dp)
-                                                        .padding(4.dp)
-                                                ) {
-                                                    availableSeasons.forEach { s ->
-                                                        val isSelected = s.id == selectedSeasonId
+                                            }
+
+                                            // Серия
+                                            if (availableEpisodes.isNotEmpty()) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = "Серия",
+                                                        color = CinemaTextGray,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                    Spacer(modifier = Modifier.height(4.dp))
+                                                    Box(modifier = Modifier.fillMaxWidth()) {
                                                         Surface(
-                                                            color = if (isSelected) CinemaPrimary.copy(alpha = 0.2f) else Color.Transparent,
-                                                            shape = RoundedCornerShape(6.dp),
+                                                            color = CinemaCard,
+                                                            shape = RoundedCornerShape(8.dp),
+                                                            border = BorderStroke(1.dp, CinemaBorder),
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
-                                                                .height(34.dp)
+                                                                .height(38.dp)
                                                                 .tvFocusableItem(
-                                                                    onClick = {
-                                                                        selectedSeasonId = s.id
-                                                                        selectedEpisodeId = s.episodes.firstOrNull()?.id ?: "1"
-                                                                        seasonDropdownExpanded = false
-                                                                    },
-                                                                    shape = RoundedCornerShape(6.dp)
+                                                                    onClick = { episodeDropdownExpanded = true },
+                                                                    shape = RoundedCornerShape(8.dp)
                                                                 )
                                                         ) {
                                                             Row(
                                                                 modifier = Modifier
                                                                     .fillMaxSize()
                                                                     .padding(horizontal = 10.dp),
+                                                                horizontalArrangement = Arrangement.SpaceBetween,
                                                                 verticalAlignment = Alignment.CenterVertically
                                                             ) {
                                                                 Text(
-                                                                    text = s.name,
-                                                                    color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                                    text = currentEpisode?.name ?: "Серия $selectedEpisodeId",
+                                                                    color = CinemaTextWhite,
                                                                     fontSize = 12.sp,
-                                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                                    fontWeight = FontWeight.SemiBold,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis
                                                                 )
+                                                                Icon(
+                                                                    imageVector = if (episodeDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                                                    contentDescription = null,
+                                                                    tint = CinemaPrimary,
+                                                                    modifier = Modifier.size(18.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                        DropdownMenu(
+                                                            expanded = episodeDropdownExpanded,
+                                                            onDismissRequest = { episodeDropdownExpanded = false },
+                                                            modifier = Modifier
+                                                                .background(CinemaDark)
+                                                                .border(1.dp, CinemaPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                                                .widthIn(min = 180.dp, max = 260.dp)
+                                                                .heightIn(max = 240.dp)
+                                                                .padding(4.dp)
+                                                        ) {
+                                                            availableEpisodes.forEach { ep ->
+                                                                val isSelected = ep.id == selectedEpisodeId
+                                                                Surface(
+                                                                    color = if (isSelected) CinemaPrimary.copy(alpha = 0.2f) else Color.Transparent,
+                                                                    shape = RoundedCornerShape(6.dp),
+                                                                    modifier = Modifier
+                                                                        .fillMaxWidth()
+                                                                        .height(34.dp)
+                                                                        .tvFocusableItem(
+                                                                            onClick = {
+                                                                                selectedEpisodeId = ep.id
+                                                                                episodeDropdownExpanded = false
+                                                                            },
+                                                                            shape = RoundedCornerShape(6.dp)
+                                                                        )
+                                                                ) {
+                                                                    Row(
+                                                                        modifier = Modifier
+                                                                            .fillMaxSize()
+                                                                            .padding(horizontal = 10.dp),
+                                                                        verticalAlignment = Alignment.CenterVertically
+                                                                    ) {
+                                                                        Text(
+                                                                            text = ep.name,
+                                                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                                            fontSize = 12.sp,
+                                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                                        )
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }
                                                 }
                                             }
                                         }
-
-                                        // Серия
+                                    } else {
+                                        // Многосерийный фильм: список сезонов скрываем, отображаем только серию/часть
                                         if (availableEpisodes.isNotEmpty()) {
-                                            Column(modifier = Modifier.weight(1f)) {
+                                            Column(modifier = Modifier.fillMaxWidth()) {
                                                 Text(
-                                                    text = "Серия",
+                                                    text = "Серия / Часть",
                                                     color = CinemaTextGray,
                                                     fontSize = 11.sp,
                                                     fontWeight = FontWeight.Medium
@@ -339,7 +433,8 @@ fun MediaDownloadDialog(
                                                             .height(38.dp)
                                                             .tvFocusableItem(
                                                                 onClick = { episodeDropdownExpanded = true },
-                                                                shape = RoundedCornerShape(8.dp)
+                                                                shape = RoundedCornerShape(8.dp),
+                                                                focusRequester = initialDialogRequester
                                                             )
                                                     ) {
                                                         Row(
@@ -434,7 +529,7 @@ fun MediaDownloadDialog(
                                                     .tvFocusableItem(
                                                         onClick = { translatorDropdownExpanded = true },
                                                         shape = RoundedCornerShape(8.dp),
-                                                        focusRequester = if (!isSeries || availableSeasons.isEmpty()) initialDialogRequester else null
+                                                        focusRequester = if (!isSeries || availableSeasons.isEmpty() || (detail.isMultiSeriesMovie && availableEpisodes.isEmpty())) initialDialogRequester else null
                                                     )
                                             ) {
                                                 Row(
@@ -618,7 +713,13 @@ fun MediaDownloadDialog(
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             Text(
-                                                text = if (isSeries) "${currentSeason?.name.orEmpty()} • ${currentEpisode?.name.orEmpty()}" else "Полный фильм",
+                                                text = if (isSeries) {
+                                                    if (detail.isMultiSeriesMovie) {
+                                                        currentEpisode?.name.orEmpty()
+                                                    } else {
+                                                        "${currentSeason?.name.orEmpty()} • ${currentEpisode?.name.orEmpty()}"
+                                                    }
+                                                } else "Полный фильм",
                                                 color = CinemaTextWhite,
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
@@ -718,80 +819,148 @@ fun MediaDownloadDialog(
                     } else {
                         // Вертикальная компоновка для телефонов
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            // Выбор сезона и серии для сериалов
+                            // Выбор сезона и серии для сериалов (для многосерийных фильмов скрываем сезон)
                             if (isSeries && availableSeasons.isNotEmpty()) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    // Сезон
-                                    Box(modifier = Modifier.weight(1f)) {
-                                        Surface(
-                                            color = CinemaCard,
-                                            shape = RoundedCornerShape(8.dp),
-                                            border = BorderStroke(1.dp, CinemaBorder),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(38.dp)
-                                                .clickable { mobileSeasonDropdownExpanded = true }
-                                        ) {
-                                            Row(
+                                if (!detail.isMultiSeriesMovie) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        // Сезон
+                                        Box(modifier = Modifier.weight(1f)) {
+                                            Surface(
+                                                color = CinemaCard,
+                                                shape = RoundedCornerShape(8.dp),
+                                                border = BorderStroke(1.dp, CinemaBorder),
                                                 modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .padding(horizontal = 10.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
+                                                    .fillMaxWidth()
+                                                    .height(38.dp)
+                                                    .clickable { mobileSeasonDropdownExpanded = true }
                                             ) {
-                                                Text(
-                                                    text = currentSeason?.name ?: "Сезон $selectedSeasonId",
-                                                    color = CinemaTextWhite,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Icon(
-                                                    imageVector = if (mobileSeasonDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
-                                                    contentDescription = null,
-                                                    tint = CinemaPrimary,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .padding(horizontal = 10.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = currentSeason?.name ?: "Сезон $selectedSeasonId",
+                                                        color = CinemaTextWhite,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Icon(
+                                                        imageVector = if (mobileSeasonDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                                        contentDescription = null,
+                                                        tint = CinemaPrimary,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                            DropdownMenu(
+                                                expanded = mobileSeasonDropdownExpanded,
+                                                onDismissRequest = { mobileSeasonDropdownExpanded = false },
+                                                modifier = Modifier
+                                                    .background(CinemaDark)
+                                                    .border(1.dp, CinemaPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                                    .widthIn(min = 160.dp, max = 240.dp)
+                                                    .heightIn(max = 240.dp)
+                                                    .padding(4.dp)
+                                            ) {
+                                                availableSeasons.forEach { s ->
+                                                    val isSelected = s.id == selectedSeasonId
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                text = s.name,
+                                                                color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                                fontSize = 12.sp,
+                                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                            )
+                                                        },
+                                                        onClick = {
+                                                            selectedSeasonId = s.id
+                                                            selectedEpisodeId = s.episodes.firstOrNull()?.id ?: "1"
+                                                            mobileSeasonDropdownExpanded = false
+                                                        }
+                                                    )
+                                                }
                                             }
                                         }
-                                        DropdownMenu(
-                                            expanded = mobileSeasonDropdownExpanded,
-                                            onDismissRequest = { mobileSeasonDropdownExpanded = false },
-                                            modifier = Modifier
-                                                .background(CinemaDark)
-                                                .border(1.dp, CinemaPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-                                                .widthIn(min = 160.dp, max = 240.dp)
-                                                .heightIn(max = 240.dp)
-                                                .padding(4.dp)
-                                        ) {
-                                            availableSeasons.forEach { s ->
-                                                val isSelected = s.id == selectedSeasonId
-                                                DropdownMenuItem(
-                                                    text = {
+
+                                        // Серия
+                                        if (availableEpisodes.isNotEmpty()) {
+                                            Box(modifier = Modifier.weight(1f)) {
+                                                Surface(
+                                                    color = CinemaCard,
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    border = BorderStroke(1.dp, CinemaBorder),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(38.dp)
+                                                        .clickable { mobileEpisodeDropdownExpanded = true }
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .padding(horizontal = 10.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
                                                         Text(
-                                                            text = s.name,
-                                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                            text = currentEpisode?.name ?: "Серия $selectedEpisodeId",
+                                                            color = CinemaTextWhite,
                                                             fontSize = 12.sp,
-                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
                                                         )
-                                                    },
-                                                    onClick = {
-                                                        selectedSeasonId = s.id
-                                                        selectedEpisodeId = s.episodes.firstOrNull()?.id ?: "1"
-                                                        mobileSeasonDropdownExpanded = false
+                                                        Icon(
+                                                            imageVector = if (mobileEpisodeDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                                            contentDescription = null,
+                                                            tint = CinemaPrimary,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
                                                     }
-                                                )
+                                                }
+                                                DropdownMenu(
+                                                    expanded = mobileEpisodeDropdownExpanded,
+                                                    onDismissRequest = { mobileEpisodeDropdownExpanded = false },
+                                                    modifier = Modifier
+                                                        .background(CinemaDark)
+                                                        .border(1.dp, CinemaPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                                        .widthIn(min = 160.dp, max = 240.dp)
+                                                        .heightIn(max = 240.dp)
+                                                        .padding(4.dp)
+                                                ) {
+                                                    availableEpisodes.forEach { ep ->
+                                                        val isSelected = ep.id == selectedEpisodeId
+                                                        DropdownMenuItem(
+                                                            text = {
+                                                                Text(
+                                                                    text = ep.name,
+                                                                    color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                                    fontSize = 12.sp,
+                                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                                )
+                                                            },
+                                                            onClick = {
+                                                                selectedEpisodeId = ep.id
+                                                                mobileEpisodeDropdownExpanded = false
+                                                            }
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                     }
-
-                                    // Серия
+                                } else {
+                                    // Многосерийный фильм на телефоне: только выбор серии/части на всю ширину
                                     if (availableEpisodes.isNotEmpty()) {
-                                        Box(modifier = Modifier.weight(1f)) {
+                                        Box(modifier = Modifier.fillMaxWidth()) {
                                             Surface(
                                                 color = CinemaCard,
                                                 shape = RoundedCornerShape(8.dp),
@@ -804,7 +973,7 @@ fun MediaDownloadDialog(
                                                 Row(
                                                     modifier = Modifier
                                                         .fillMaxSize()
-                                                    .padding(horizontal = 10.dp),
+                                                        .padding(horizontal = 10.dp),
                                                     horizontalArrangement = Arrangement.SpaceBetween,
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
@@ -830,7 +999,7 @@ fun MediaDownloadDialog(
                                                 modifier = Modifier
                                                     .background(CinemaDark)
                                                     .border(1.dp, CinemaPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-                                                    .widthIn(min = 160.dp, max = 240.dp)
+                                                    .widthIn(min = 160.dp, max = 280.dp)
                                                     .heightIn(max = 240.dp)
                                                     .padding(4.dp)
                                             ) {

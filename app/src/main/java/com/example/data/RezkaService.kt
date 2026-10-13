@@ -4303,14 +4303,38 @@ object RezkaService {
                             )
                         }
 
-                        val isSeriesPage = url.contains("/series/") ||
-                                (url.contains("/animation/") && doc.selectFirst("#simple-episodes-tabs, .b-simple_seasons__list") != null) ||
-                                doc.selectFirst(".b-simple_seasons__list, #simple-seasons-tabs") != null
+                        // Точное определение категории тайтла:
+                        // Фильмы на сайте размещаются в /films/, сериалы в /series/, аниме в /animation/, мультфильмы в /cartoons/.
+                        // Многосерийный фильм остаётся в категории MOVIE (это фильм, у которого есть серии, но это не сериал).
+                        val isExplicitSeries = url.contains("/series/")
+                        val isAnimation = url.contains("/animation/")
+                        val isCartoons = url.contains("/cartoons/")
+                        val isFilmsUrl = url.contains("/films/")
 
-                        val type = if (isSeriesPage) RezkaType.SERIES else RezkaType.MOVIE
+                        // Проверяем наличие разметки серий или сезонов на странице (для сериалов, аниме, мультсериалов и многосерийных фильмов)
+                        val hasEpisodesMarkup = isExplicitSeries ||
+                                doc.selectFirst(
+                                    ".b-simple_seasons__list, #simple-seasons-tabs, " +
+                                    ".b-simple_episodes__list, #simple-episodes-tabs, " +
+                                    ".b-simple_parts__list, .b-parts__list, #simple-parts-tabs, " +
+                                    ".b-simple_episode__item, li[data-episode_id], [data-episode_id], " +
+                                    "li[data-part_id], li[data-part], [data-part_id], [data-part]"
+                                ) != null ||
+                                html.contains("sof.tv.initCDNSeriesEvents") ||
+                                html.contains("initCDNSeriesEvents")
+
+                        val type = when {
+                            isExplicitSeries -> RezkaType.SERIES
+                            isAnimation -> RezkaType.ANIME
+                            isCartoons -> RezkaType.CARTOON
+                            isFilmsUrl -> RezkaType.MOVIE
+                            hasEpisodesMarkup -> RezkaType.SERIES
+                            else -> RezkaType.MOVIE
+                        }
 
                         var seasons = ArrayList<Season>()
-                        if (type == RezkaType.SERIES) {
+                        // Парсим серии и сезоны, если есть разметка серий или это сериальный тип
+                        if (hasEpisodesMarkup || type == RezkaType.SERIES) {
                             val defaultTranslator = translators.find { it.isDefault } ?: translators.firstOrNull()
                             val defaultTranslatorId = defaultTranslator?.id ?: "0"
                             val defaultTranslatorUrl = defaultTranslator?.url.orEmpty().ifEmpty { normalizedUrl }
@@ -4609,6 +4633,9 @@ object RezkaService {
         val epAttr = epEl.attr("data-episode").trim()
         if (epAttr.isNotEmpty()) return epAttr
 
+        val partIdAttr = epEl.attr("data-part_id").trim().ifEmpty { epEl.attr("data-part").trim() }
+        if (partIdAttr.isNotEmpty()) return partIdAttr
+
         val rawIdAttr = epEl.attr("data-id").trim()
         if (rawIdAttr.isNotEmpty() && rawIdAttr.length <= 4) return rawIdAttr
 
@@ -4616,7 +4643,7 @@ object RezkaService {
         val rangeOrDigits = Regex("""\d+(?:-\d+)?""").find(epText)?.value
         if (!rangeOrDigits.isNullOrEmpty()) return rangeOrDigits
 
-        return if (epIdAttr.isNotEmpty()) epIdAttr else rawIdAttr
+        return if (epIdAttr.isNotEmpty()) epIdAttr else (if (partIdAttr.isNotEmpty()) partIdAttr else rawIdAttr)
     }
 
     /**
@@ -4705,27 +4732,40 @@ object RezkaService {
             }
         }
 
-        // Если вкладки сезонов отсутствовали вообще или не дали ни одной серии, ищем сквозной список серий (одиночный сезон)
+        // Если вкладки сезонов отсутствовали вообще или не дали ни одной серии, ищем сквозной список серий (одиночный сезон или многосерийный фильм)
         if (seasons.isEmpty()) {
             val epElements = doc.select(
                 ".b-simple_episodes__list .b-simple_episode__item, " +
                 "#simple-episodes-tabs li, " +
+                ".b-simple_episodes__list li, " +
+                ".b-simple_parts__list .b-simple_episode__item, " +
+                ".b-simple_parts__list li, " +
+                ".b-parts__list li, " +
+                "#simple-parts-tabs li, " +
                 ".b-simple_episode__item, " +
+                "li[data-part_id], " +
+                "li[data-part], " +
+                "[data-part_id], " +
+                "[data-part], " +
                 "li[data-episode_id], " +
                 "[data-episode_id]"
             )
             val epList = ArrayList<Episode>()
             for (epEl in epElements) {
-                if (epEl.hasClass("b-simple_season__item")) continue
+                if (epEl.hasClass("b-simple_season__item") || epEl.selectFirst(".b-simple_season__item") != null) continue
                 val finalId = extractEpisodeNumberId(epEl)
                 val epText = epEl.text().trim()
                 if (finalId.isNotEmpty()) {
-                    val epName = if (epText.isNotEmpty()) epText else "Серия $finalId"
+                    val isPartText = epText.contains("част", ignoreCase = true)
+                    val epName = if (epText.isNotEmpty()) epText else (if (isPartText) "Часть $finalId" else "Серия $finalId")
                     epList.add(Episode(id = finalId, name = epName, seasonId = 1, translatorId = translatorId))
                 }
             }
             if (epList.isNotEmpty()) {
-                seasons.add(Season(1, "Сезон 1", epList.distinctBy { it.id }))
+                val hasParts = epList.any { it.name.contains("част", ignoreCase = true) } ||
+                    doc.selectFirst(".b-simple_parts__list, .b-parts__list, #simple-parts-tabs, [data-part_id], [data-part]") != null
+                val defaultSeasonName = if (hasParts) "Части" else "Серии"
+                seasons.add(Season(1, defaultSeasonName, epList.distinctBy { it.id }))
             }
         }
         return seasons
@@ -4894,10 +4934,15 @@ object RezkaService {
                                 }
                             }
                         } else {
-                            val epElements = episodesDoc.select(".b-simple_episode__item, li[data-episode_id], [data-episode_id]")
+                            val epElements = episodesDoc.select(
+                                ".b-simple_episode__item, " +
+                                "li[data-episode_id], " +
+                                "[data-episode_id], " +
+                                ".b-simple_episodes__list li"
+                            )
                             val epList = ArrayList<Episode>()
                             for (epEl in epElements) {
-                                if (epEl.hasClass("b-simple_season__item")) continue
+                                if (epEl.hasClass("b-simple_season__item") || epEl.selectFirst(".b-simple_season__item") != null) continue
                                 val finalId = extractEpisodeNumberId(epEl)
                                 val epText = epEl.text().trim()
                                 if (finalId.isNotEmpty()) {
@@ -4906,7 +4951,9 @@ object RezkaService {
                                 }
                             }
                             if (epList.isNotEmpty()) {
-                                seasonsList.add(Season(1, "Сезон 1", epList.distinctBy { it.id }))
+                                val hasParts = epList.any { it.name.contains("част", ignoreCase = true) }
+                                val seasonName = if (hasParts) "Части" else "Серии"
+                                seasonsList.add(Season(1, seasonName, epList.distinctBy { it.id }))
                             }
                         }
 
@@ -4928,6 +4975,7 @@ object RezkaService {
         synchronized(seasonEpisodesCache) {
             val defaultKey = "${cleanId}_0"
             val fallback = seasonEpisodesCache.get(defaultKey)
+                ?: seasonEpisodesCache.snapshot().entries.firstOrNull { it.key.startsWith("${cleanId}_") && it.value.isNotEmpty() }?.value
             if (fallback != null && fallback.isNotEmpty()) {
                 val adapted = fallback.map { s ->
                     s.copy(episodes = s.episodes.map { ep -> ep.copy(translatorId = cleanTranslatorId) })
@@ -4949,95 +4997,225 @@ object RezkaService {
         translatorId: String,
         isSeries: Boolean,
         season: Int = 0,
-        episode: String = ""
+        episode: String = "",
+        itemUrl: String = ""
     ): List<StreamUrl> = withContext(Dispatchers.IO) {
-        val numericId = extractNumericId(itemId)
+        val numericId = extractNumericId(itemId).ifEmpty { extractNumericId(itemUrl) }
         val cleanTranslatorId = translatorId.trim()
         val effectiveTranslatorId = if (cleanTranslatorId == "0") "" else cleanTranslatorId
-        val effectiveSeason = if (isSeries) season.coerceAtLeast(1) else 0
-        val effectiveEpisode = if (isSeries) {
+        
+        // Определяем эпизодичность (сериал или многосерийный фильм)
+        val isExplicitMovie = itemUrl.contains("/films/") || (!isSeries && itemUrl.isBlank())
+        val isEpisodic = isSeries || season > 0 || (episode.isNotBlank() && episode != "0")
+        val isMultiSeriesMovie = isExplicitMovie && isEpisodic
+        val effectiveSeason = if (isEpisodic) season.coerceAtLeast(1) else 0
+        val effectiveEpisode = if (isEpisodic) {
             if (episode.isBlank() || episode == "0") "1" else episode.trim()
         } else ""
 
-        val cacheKey = "$numericId-$effectiveTranslatorId-$isSeries-$effectiveSeason-$effectiveEpisode"
+        val cacheKey = "$numericId-$effectiveTranslatorId-$isEpisodic-$effectiveSeason-$effectiveEpisode-$isExplicitMovie"
         streamCache.get(cacheKey)?.let { return@withContext it }
 
         // Точка входа CDN HDRezka ВСЕГДА одна: /ajax/get_cdn_series/
-        // И для фильмов (action=get_movie), и для сериалов (action=get_stream).
-        // Эндпоинта get_cdn_movie на сервере не существует (он отдавал HTML с кодом 200).
         val endpoint = "$currentBaseUrl/ajax/get_cdn_series/"
 
-        // 1. Попытка 1: целевой запрос под ВЫБРАННУЮ пользователем озвучку
-        val primaryAction = if (isSeries) "get_stream" else "get_movie"
-        val res1 = fetchCdnStreamsSingle(
-            endpoint = endpoint,
-            numericId = numericId,
-            translatorId = effectiveTranslatorId,
-            isSeries = isSeries,
-            season = effectiveSeason,
-            episode = effectiveEpisode,
-            actionParam = primaryAction
-        )
-        if (res1.streams.isNotEmpty()) {
-            streamCache.put(cacheKey, res1.streams)
-            return@withContext res1.streams
+        // Определяем точный HTTP Referer, исключающий отказы WAF/CDN сервера
+        val effectiveReferer = when {
+            itemUrl.isNotBlank() -> adjustUrlToCurrentMirror(itemUrl)
+            isExplicitMovie -> "$currentBaseUrl/films/$numericId.html"
+            itemUrl.contains("/cartoons/") -> "$currentBaseUrl/cartoons/$numericId.html"
+            itemUrl.contains("/animation/") -> "$currentBaseUrl/animation/$numericId.html"
+            isSeries -> "$currentBaseUrl/series/$numericId.html"
+            else -> "$currentBaseUrl/films/$numericId.html"
         }
 
-        var lastDiagResult = res1
+        var lastDiagResult: CdnFetchResult? = null
 
-        // 2. Попытка 2: альтернативное действие для ТОЙ ЖЕ САМОЙ озвучки
-        // Защита от неоднозначности типов на сайте (мини-сериал, спецвыпуск или фильм с эпизодами)
-        val altAction = if (isSeries) "get_movie" else "get_stream"
-        val res2 = fetchCdnStreamsSingle(
-            endpoint = endpoint,
-            numericId = numericId,
-            translatorId = effectiveTranslatorId,
-            isSeries = (altAction == "get_stream"),
-            season = if (altAction == "get_stream") effectiveSeason.coerceAtLeast(1) else 0,
-            episode = if (altAction == "get_stream") (effectiveEpisode.ifBlank { "1" }) else "",
-            actionParam = altAction
-        )
-        if (res2.streams.isNotEmpty()) {
-            streamCache.put(cacheKey, res2.streams)
-            return@withContext res2.streams
-        }
-        if (res2.responseBody != null) {
-            lastDiagResult = res2
-        }
-
-        // 3. Попытка 3: если озвучка была передана, но на данном CDN-узле поток отдается без параметра translator_id
-        if (effectiveTranslatorId.isNotEmpty()) {
-            val res3 = fetchCdnStreamsSingle(
+        // 1. СТРАТЕГИЯ ДЛЯ МНОГОСЕРИЙНЫХ ФИЛЬМОВ
+        if (isMultiSeriesMovie) {
+            // Попытка A: get_stream с параметрами season, episode, part и Referer страницы фильма
+            val resA = fetchCdnStreamsSingle(
                 endpoint = endpoint,
                 numericId = numericId,
-                translatorId = "",
-                isSeries = isSeries,
+                translatorId = effectiveTranslatorId,
+                isSeries = false,
                 season = effectiveSeason,
                 episode = effectiveEpisode,
-                actionParam = primaryAction
+                actionParam = "get_stream",
+                customReferer = effectiveReferer,
+                sendPartParam = true,
+                sendEpisodicParams = true
             )
-            if (res3.streams.isNotEmpty()) {
-                streamCache.put(cacheKey, res3.streams)
-                return@withContext res3.streams
+            if (resA.streams.isNotEmpty()) {
+                streamCache.put(cacheKey, resA.streams)
+                return@withContext resA.streams
             }
-            if (res3.responseBody != null) {
-                lastDiagResult = res3
+            lastDiagResult = resA
+
+            // Попытка B: get_movie с параметрами season, episode, part и Referer страницы фильма
+            val resB = fetchCdnStreamsSingle(
+                endpoint = endpoint,
+                numericId = numericId,
+                translatorId = effectiveTranslatorId,
+                isSeries = false,
+                season = effectiveSeason,
+                episode = effectiveEpisode,
+                actionParam = "get_movie",
+                customReferer = effectiveReferer,
+                sendPartParam = true,
+                sendEpisodicParams = true
+            )
+            if (resB.streams.isNotEmpty()) {
+                streamCache.put(cacheKey, resB.streams)
+                return@withContext resB.streams
+            }
+            if (resB.responseBody != null) lastDiagResult = resB
+
+            // Попытка C: get_stream со сквозным season=1 и очищенным числовым номером
+            val cleanDigits = effectiveEpisode.filter { it.isDigit() }.ifEmpty { "1" }
+            if (cleanDigits != effectiveEpisode) {
+                val resC = fetchCdnStreamsSingle(
+                    endpoint = endpoint,
+                    numericId = numericId,
+                    translatorId = effectiveTranslatorId,
+                    isSeries = false,
+                    season = 1,
+                    episode = cleanDigits,
+                    actionParam = "get_stream",
+                    customReferer = effectiveReferer,
+                    sendPartParam = true,
+                    sendEpisodicParams = true
+                )
+                if (resC.streams.isNotEmpty()) {
+                    streamCache.put(cacheKey, resC.streams)
+                    return@withContext resC.streams
+                }
+                if (resC.responseBody != null) lastDiagResult = resC
+            }
+
+            // Попытка D: get_stream с season=0 (у многих фильмов отсутствует разделение на сезоны в БД)
+            val resD = fetchCdnStreamsSingle(
+                endpoint = endpoint,
+                numericId = numericId,
+                translatorId = effectiveTranslatorId,
+                isSeries = false,
+                season = 0,
+                episode = effectiveEpisode,
+                actionParam = "get_stream",
+                customReferer = effectiveReferer,
+                sendPartParam = true,
+                sendEpisodicParams = true
+            )
+            if (resD.streams.isNotEmpty()) {
+                streamCache.put(cacheKey, resD.streams)
+                return@withContext resD.streams
+            }
+            if (resD.responseBody != null) lastDiagResult = resD
+
+            // Попытка E: get_movie без параметров серии (если поток сквозной)
+            val resE = fetchCdnStreamsSingle(
+                endpoint = endpoint,
+                numericId = numericId,
+                translatorId = effectiveTranslatorId,
+                isSeries = false,
+                season = 0,
+                episode = "",
+                actionParam = "get_movie",
+                customReferer = effectiveReferer,
+                sendPartParam = false,
+                sendEpisodicParams = false
+            )
+            if (resE.streams.isNotEmpty()) {
+                streamCache.put(cacheKey, resE.streams)
+                return@withContext resE.streams
+            }
+            if (resE.responseBody != null) lastDiagResult = resE
+
+        } else {
+            // СТРАТЕГИЯ ДЛЯ СЕРИАЛОВ И ОБЫЧНЫХ ОДНОСЕРИЙНЫХ ФИЛЬМОВ
+            val primaryAction = if (isEpisodic) "get_stream" else "get_movie"
+            val res1 = fetchCdnStreamsSingle(
+                endpoint = endpoint,
+                numericId = numericId,
+                translatorId = effectiveTranslatorId,
+                isSeries = isEpisodic,
+                season = effectiveSeason,
+                episode = effectiveEpisode,
+                actionParam = primaryAction,
+                customReferer = effectiveReferer,
+                sendPartParam = isEpisodic,
+                sendEpisodicParams = isEpisodic
+            )
+            if (res1.streams.isNotEmpty()) {
+                streamCache.put(cacheKey, res1.streams)
+                return@withContext res1.streams
+            }
+            lastDiagResult = res1
+
+            val altAction = if (isEpisodic) "get_movie" else "get_stream"
+            val res2 = fetchCdnStreamsSingle(
+                endpoint = endpoint,
+                numericId = numericId,
+                translatorId = effectiveTranslatorId,
+                isSeries = (altAction == "get_stream"),
+                season = if (altAction == "get_stream") effectiveSeason.coerceAtLeast(1) else 0,
+                episode = if (altAction == "get_stream") (effectiveEpisode.ifBlank { "1" }) else "",
+                actionParam = altAction,
+                customReferer = effectiveReferer,
+                sendPartParam = (altAction == "get_stream"),
+                sendEpisodicParams = (altAction == "get_stream")
+            )
+            if (res2.streams.isNotEmpty()) {
+                streamCache.put(cacheKey, res2.streams)
+                return@withContext res2.streams
+            }
+            if (res2.responseBody != null) {
+                lastDiagResult = res2
             }
         }
 
-        // 4. Попытка 4: ТОЛЬКО если озвучка изначально НЕ была выбрана/передана (effectiveTranslatorId пуст).
-        // Если пользователь явно выбрал озвучку, мы СТРОГО соблюдаем его выбор и НЕ перебираем чужие ID.
+        // 2. ФОЛЛБЭК БЕЗ translator_id
+        if (effectiveTranslatorId.isNotEmpty()) {
+            val actionsToTryNoTrans = if (isMultiSeriesMovie) listOf("get_stream", "get_movie") else (if (isEpisodic) listOf("get_stream", "get_movie") else listOf("get_movie", "get_stream"))
+            for (act in actionsToTryNoTrans) {
+                val res3 = fetchCdnStreamsSingle(
+                    endpoint = endpoint,
+                    numericId = numericId,
+                    translatorId = "",
+                    isSeries = isEpisodic,
+                    season = effectiveSeason,
+                    episode = effectiveEpisode,
+                    actionParam = act,
+                    customReferer = effectiveReferer,
+                    sendPartParam = isEpisodic,
+                    sendEpisodicParams = isEpisodic || act == "get_stream"
+                )
+                if (res3.streams.isNotEmpty()) {
+                    streamCache.put(cacheKey, res3.streams)
+                    return@withContext res3.streams
+                }
+                if (res3.responseBody != null) {
+                    lastDiagResult = res3
+                }
+            }
+        }
+
+        // 3. ФОЛЛБЭК НА ДЕФОЛТНЫЕ ОЗВУЧКИ
         if (effectiveTranslatorId.isEmpty()) {
             val defaultTranslators = listOf("238", "1") // 238 - Дубляж, 1 - Оригинал
             for (altTrans in defaultTranslators) {
+                val act = if (isEpisodic) "get_stream" else "get_movie"
                 val res4 = fetchCdnStreamsSingle(
                     endpoint = endpoint,
                     numericId = numericId,
                     translatorId = altTrans,
-                    isSeries = isSeries,
+                    isSeries = isEpisodic,
                     season = effectiveSeason,
                     episode = effectiveEpisode,
-                    actionParam = primaryAction
+                    actionParam = act,
+                    customReferer = effectiveReferer,
+                    sendPartParam = isEpisodic,
+                    sendEpisodicParams = isEpisodic
                 )
                 if (res4.streams.isNotEmpty()) {
                     streamCache.put(cacheKey, res4.streams)
@@ -5049,9 +5227,9 @@ object RezkaService {
             }
         }
 
-        // Если ВСЕ попытки для видео исчерпаны и поток действительно не найден — логируем ОДНУ реальную ошибку с полным телом и кодом
+        // Если ВСЕ попытки для видео исчерпаны и поток действительно не найден — логируем ОДНУ реальную ошибку
         prefetchScope.launch {
-            val specificReason = lastDiagResult.errorMessage ?: "Не удалось извлечь видеопоток для озвучки (ID: ${effectiveTranslatorId.ifEmpty { "по умолчанию" }}). Возможно, видео заблокировано правообладателем или недоступно."
+            val specificReason = lastDiagResult?.errorMessage ?: "Не удалось извлечь видеопоток для озвучки (ID: ${effectiveTranslatorId.ifEmpty { "по умолчанию" }}). Возможно, видео заблокировано правообладателем или недоступно."
             SeriesUpdateLogger.logParserError(
                 title = "Тайтл ID $numericId",
                 itemId = numericId,
@@ -5059,9 +5237,9 @@ object RezkaService {
                 season = effectiveSeason,
                 episode = effectiveEpisode,
                 endpointUrl = endpoint,
-                requestParams = "id=$numericId, translator_id=$effectiveTranslatorId, isSeries=$isSeries, season=$effectiveSeason, episode=$effectiveEpisode",
-                httpCode = lastDiagResult.httpCode,
-                responseBody = lastDiagResult.responseBody,
+                requestParams = "id=$numericId, translator_id=$effectiveTranslatorId, isSeries=$isSeries, season=$effectiveSeason, episode=$effectiveEpisode, itemUrl=$itemUrl",
+                httpCode = lastDiagResult?.httpCode,
+                responseBody = lastDiagResult?.responseBody,
                 errorMessage = specificReason
             )
         }
@@ -5084,9 +5262,12 @@ object RezkaService {
         isSeries: Boolean,
         season: Int,
         episode: String,
-        actionParam: String
+        actionParam: String,
+        customReferer: String? = null,
+        sendPartParam: Boolean = true,
+        sendEpisodicParams: Boolean = true
     ): CdnFetchResult {
-        val paramSummary = "id=$numericId, translator_id=$translatorId, action=$actionParam, season=$season, episode=$episode"
+        val paramSummary = "id=$numericId, translator_id=$translatorId, action=$actionParam, season=$season, episode=$episode, part=$sendPartParam"
         var lastHttpCode: Int? = null
         var lastBody: String? = null
         try {
@@ -5103,13 +5284,17 @@ object RezkaService {
                 formBuilder.add("translator_id", translatorId)
             }
 
-            val isSeriesAction = actionParam == "get_stream" || isSeries
-            if (isSeriesAction) {
-                formBuilder.add("season", season.coerceAtLeast(1).toString())
-                formBuilder.add("episode", if (episode.isBlank() || episode == "0") "1" else episode)
+            if (sendEpisodicParams) {
+                formBuilder.add("season", season.coerceAtLeast(0).toString())
+                val cleanEp = if (episode.isBlank() || episode == "0") "1" else episode.trim()
+                formBuilder.add("episode", cleanEp)
+                if (sendPartParam) {
+                    formBuilder.add("part", cleanEp)
+                }
             }
 
-            val itemReferer = if (isSeries) "$currentBaseUrl/series/$numericId.html" else "$currentBaseUrl/films/$numericId.html"
+            val itemReferer = customReferer?.takeIf { it.isNotBlank() }
+                ?: if (isSeries) "$currentBaseUrl/series/$numericId.html" else "$currentBaseUrl/films/$numericId.html"
 
             val request = Request.Builder()
                 .url(urlWithTs)

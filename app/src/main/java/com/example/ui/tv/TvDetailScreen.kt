@@ -235,7 +235,7 @@ fun TvDetailContent(
             if (hasHandledHistoryFocus) return@LaunchedEffect
 
             ImagePreloaderEngine.preloadDetailImages(context, detail)
-            val isSeries = detail.type == RezkaType.SERIES
+            val isSeries = detail.hasEpisodes
             if (isSeries && selectedEpisodeId.isNullOrEmpty()) {
                 // Если сериал восстанавливает эпизод из истории, подождем его появления
                 for (i in 0..6) {
@@ -270,7 +270,7 @@ fun TvDetailContent(
     var wasPlayerOpen by remember { mutableStateOf(false) }
     LaunchedEffect(isPlayerOpen) {
         if (wasPlayerOpen && !isPlayerOpen) {
-            val targetScrollIndex = if (detail.type == RezkaType.SERIES) seriesEpisodesIndex else moviePlayButtonIndex
+            val targetScrollIndex = if (detail.hasEpisodes) seriesEpisodesIndex else moviePlayButtonIndex
             try {
                 rightScrollState.scrollToItem(targetScrollIndex)
             } catch (_: Throwable) {}
@@ -683,7 +683,7 @@ fun TvDetailContent(
                                     .tvFocusableItem(
                                         onClick = {
                                             coroutineScope.launch {
-                                                val isSeries = detail.type == RezkaType.SERIES
+                                                val isSeries = detail.hasEpisodes
                                                 val hasSelectedEpisode = isSeries && !selectedEpisodeId.isNullOrEmpty()
                                                 val targetRequester = if (isSeries && !hasSelectedEpisode && detail.translators.isNotEmpty()) {
                                                     translatorDropdownFocusRequester
@@ -795,8 +795,8 @@ fun TvDetailContent(
                                 }
                             }
 
-                            // Кнопка подписки (для сериалов или еще не вышедших фильмов/тайтлов)
-                            if ((detail.type == RezkaType.SERIES || !detail.isReleased || isSubscribed) && onToggleSubscription != null) {
+                            // Кнопка подписки (для сериалов/многосерийных фильмов или еще не вышедших фильмов/тайтлов)
+                            if ((detail.hasEpisodes || !detail.isReleased || isSubscribed) && onToggleSubscription != null) {
                                 Surface(
                                     color = if (isSubscribed) CinemaPrimary.copy(alpha = 0.25f) else CinemaCard,
                                     shape = RoundedCornerShape(6.dp),
@@ -826,7 +826,7 @@ fun TvDetailContent(
                                     ) {
                                         Icon(
                                             imageVector = if (isSubscribed) Icons.Default.NotificationsActive else Icons.Outlined.Notifications,
-                                            contentDescription = if (detail.type == RezkaType.SERIES) "Уведомления о новых сериях" else "Уведомление о выходе фильма",
+                                            contentDescription = if (detail.hasEpisodes) "Уведомления о новых сериях" else "Уведомление о выходе фильма",
                                             tint = if (isSubscribed) CinemaPrimary else CinemaTextWhite,
                                             modifier = Modifier.size(16.dp)
                                         )
@@ -1391,8 +1391,8 @@ fun TvDetailContent(
                     }
                 }
 
-                // ---- 7. КНОПКА "СМОТРЕТЬ" ДЛЯ ФИЛЬМОВ ----
-                if (detail.type != RezkaType.SERIES) {
+                // ---- 7. КНОПКА "СМОТРЕТЬ" ДЛЯ ОДНОСЕРИЙНЫХ ФИЛЬМОВ ----
+                if (!detail.hasEpisodes) {
                     item {
                         val isPlayEnabled = detail.isReleased
                         Column(
@@ -1546,8 +1546,8 @@ fun TvDetailContent(
                     }
                 }
 
-                // ---- 8. СЕЗОНЫ И СЕРИИ (для сериалов) ----
-                if (detail.type == RezkaType.SERIES) {
+                // ---- 8. СЕЗОНЫ И СЕРИИ (для сериалов и многосерийных фильмов) ----
+                if (detail.hasEpisodes) {
                     if (!detail.isReleased || effectiveSeasons.isEmpty()) {
                         item {
                             Box(
@@ -1577,31 +1577,33 @@ fun TvDetailContent(
                             }
                         }
                     } else {
-                        // Сезоны (выпадающий список для ТВ)
-                    val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
+                        // Сезоны (выпадающий список для ТВ - скрываем для многосерийных фильмов)
+                        val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
 
-                    item {
-                        TvRezkaDropdown(
-                            label = "Сезон",
-                            options = effectiveSeasons,
-                            selectedOption = currentSeason,
-                            onOptionSelected = { s -> onSelectSeason(s.id) },
-                            getLabel = { it.name },
-                            modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f),
-                            lazyListState = rightScrollState,
-                            surfaceModifier = Modifier
-                                .focusProperties { left = trailerButtonFocusRequester }
-                                .onKeyEvent { event ->
-                                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
-                                        trailerButtonFocusRequester.requestFocusSafe()
-                                        true
-                                    } else false
-                                }
-                        )
-                    }
+                        if (!detail.isMultiSeriesMovie) {
+                            item {
+                                TvRezkaDropdown(
+                                    label = "Сезон",
+                                    options = effectiveSeasons,
+                                    selectedOption = currentSeason,
+                                    onOptionSelected = { s -> onSelectSeason(s.id) },
+                                    getLabel = { it.name },
+                                    modifier = Modifier.fillMaxWidth(if (isCompactHeight) 0.85f else 0.55f),
+                                    lazyListState = rightScrollState,
+                                    surfaceModifier = Modifier
+                                        .focusProperties { left = trailerButtonFocusRequester }
+                                        .onKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT) {
+                                                trailerButtonFocusRequester.requestFocusSafe()
+                                                true
+                                            } else false
+                                        }
+                                )
+                            }
+                        }
 
-                    // Серии текущего сезона
-                    item {
+                        // Серии текущего сезона
+                        item {
                         Column(modifier = Modifier.fillMaxWidth()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1697,15 +1699,16 @@ fun TvDetailContent(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.Center
                                     ) {
+                                        val downloadButtonText = if (detail.isMultiSeriesMovie) "Загрузить фильм" else "Загрузить сериал"
                                         Icon(
                                             imageVector = Icons.Default.Download,
-                                            contentDescription = "Загрузить сериал",
+                                            contentDescription = downloadButtonText,
                                             tint = CinemaPrimary,
                                             modifier = Modifier.size(16.dp)
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = "Загрузить сериал",
+                                            text = downloadButtonText,
                                             color = CinemaTextWhite,
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold

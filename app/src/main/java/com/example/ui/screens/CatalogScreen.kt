@@ -35,6 +35,7 @@ import com.example.ui.effects.subtleCardBounce
 import coil.compose.AsyncImage
 import com.example.data.*
 import com.example.ui.util.rememberSavedLazyGridState
+import com.example.ui.util.SyncOrientationColumns
 import com.example.ui.util.AdaptivePosterBadge
 import com.example.ui.util.SeriesBadgeMode
 import com.example.ui.util.VoiceSearchButton
@@ -765,9 +766,12 @@ fun CatalogScreen(
                             val configuration = LocalConfiguration.current
                             val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
                             val columns = if (isLandscape) 3 else 2
+                            val collectionsGridState = rememberSavedLazyGridState("collections", viewModel)
+                            collectionsGridState.SyncOrientationColumns("collections", viewModel, columns)
 
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(columns),
+                                state = collectionsGridState,
                                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -995,7 +999,9 @@ fun CatalogScreen(
                                 val columnsCount = resolvedGrid.columns
                                 val cardHeight = resolvedGrid.cardHeight
 
-                                 LazyVerticalGrid(
+                                gridState.SyncOrientationColumns("catalog", viewModel, columnsCount)
+
+                                LazyVerticalGrid(
                                     columns = GridCells.Fixed(columnsCount),
                                     state = gridState,
                                     contentPadding = PaddingValues(top = 10.dp, start = 16.dp, end = 16.dp, bottom = if (isLandscape) 16.dp else 80.dp),

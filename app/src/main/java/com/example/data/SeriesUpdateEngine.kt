@@ -92,6 +92,16 @@ object SeriesUpdateEngine {
         RegexOption.IGNORE_CASE
     )
 
+    private val EPISODE_TAG_NO_SEASON_REGEX = Regex(
+        """<li[^>]*?class=["'][^"']*?b-simple_episode__item[^"']*?["'][^>]*?data-episode_id=["']([^"']+)["'][^>]*?>(.*?)</li>""",
+        RegexOption.DOT_MATCHES_ALL
+    )
+
+    private val STATUS_MULTI_EPISODE_REGEX = Regex(
+        """(\d+)\s*(?:сери[яий]|серии|серий|част[ьией]|части|частей)""",
+        RegexOption.IGNORE_CASE
+    )
+
     private val HTML_TAG_STRIP_REGEX = Regex("""<[^>]+>""")
 
     /**
@@ -202,7 +212,27 @@ object SeriesUpdateEngine {
             }
         }
 
-        // 3. Текстовый парсинг статуса "X сезон Y серия"
+        // 2b. Поиск серий многосерийных фильмов без data-season_id (<li class="b-simple_episode__item" data-episode_id="...">)
+        if (!matchesFound) {
+            for (match in EPISODE_TAG_NO_SEASON_REGEX.findAll(html)) {
+                val epId = match.groupValues[1].trim()
+                if (epId.isEmpty()) continue
+                val rawText = match.groupValues[2]
+                matchesFound = true
+                val season = 1
+                allEpisodesSet.add("$season#$epId")
+
+                val epNum = Regex("""\d+""").find(epId)?.value?.toIntOrNull() ?: 1
+                if (season > maxSeason || (season == maxSeason && epNum > maxEpisode)) {
+                    maxSeason = season
+                    maxEpisode = epNum
+                    val cleanText = HTML_TAG_STRIP_REGEX.replace(rawText, "").trim()
+                    episodeName = if (cleanText.isNotEmpty()) cleanText else "Серия $epId"
+                }
+            }
+        }
+
+        // 3. Текстовый парсинг статуса "X сезон Y серия" или "X серий" (для многосерийных фильмов)
         if (!matchesFound || (maxSeason == 0 && maxEpisode == 0)) {
             val statusMatch = STATUS_SEASON_EPISODE_REGEX.find(html)
             if (statusMatch != null) {
@@ -216,6 +246,18 @@ object SeriesUpdateEngine {
                     maxEpisode = episode
                     episodeName = "Серия $episode"
                     matchesFound = true
+                }
+            } else {
+                val multiEpMatch = STATUS_MULTI_EPISODE_REGEX.find(html)
+                if (multiEpMatch != null) {
+                    val epCount = multiEpMatch.groupValues[1].toIntOrNull() ?: 1
+                    if (epCount > 0) {
+                        allEpisodesSet.add("1#$epCount")
+                        maxSeason = 1
+                        maxEpisode = epCount
+                        episodeName = "$epCount серии"
+                        matchesFound = true
+                    }
                 }
             }
         }
@@ -396,8 +438,8 @@ object SeriesUpdateEngine {
         val semaphore = Semaphore(2) // Максимум 2 одновременных сетевых соединения
         val updatedList = mutableListOf<SeriesSubscriptionEntity>()
 
-        // Четкое разделение подписок: фильмы и сериалы имеют принципиально разную логику релизов
-        val (movieSubs, seriesSubs) = subscriptions.partition { it.isMovie() }
+        // Четкое разделение подписок: одиночные фильмы проверяются на релиз, а сериалы и многосерийные фильмы — по сериям
+        val (movieSubs, seriesSubs) = subscriptions.partition { it.isMovie() && !it.isMultiSeriesMovie() }
 
         // 1. Обработка подписок на фильмы через специализированный движок MovieReleaseEngine
         for (sub in movieSubs) {
@@ -691,7 +733,7 @@ object SeriesUpdateEngine {
             return@withContext null
         }
 
-        return@withContext if (subscription.isMovie()) {
+        return@withContext if (subscription.isMovie() && !subscription.isMultiSeriesMovie()) {
             val movieScan = MovieReleaseEngine.checkMovieRelease(subscription.url)
             val isTestTriggered = subscription.lastEpisodeName.contains("[TEST]")
             val wasUnreleased = (subscription.lastKnownSeason == 0 && subscription.lastKnownEpisode == 0) || isTestTriggered

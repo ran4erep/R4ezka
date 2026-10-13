@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.RezkaItem
 import com.example.ui.util.rememberSavedLazyGridState
+import com.example.ui.util.SyncOrientationColumns
 import com.example.data.RezkaService
 import com.example.data.RezkaType
 import com.example.ui.RezkaViewModel
@@ -200,12 +201,14 @@ fun FavoritesScreen(
                             if (favorites.isNotEmpty()) {
                                 val savedItemId = viewModel.getTvFavoritesFocusedItemId()
                                 val savedIndex = viewModel.getTvFavoritesFocusedIndex()
+                                val savedScrollPos = viewModel.getScrollPosition("favorites")
                                 val targetIndex = when {
                                     savedItemId != null -> {
                                         val idx = favorites.indexOfFirst { it.id == savedItemId }
-                                        if (idx >= 0) idx else (savedIndex?.coerceIn(0, favorites.lastIndex) ?: 0)
+                                        if (idx >= 0) idx else (savedIndex?.coerceIn(0, favorites.lastIndex) ?: savedScrollPos.index.coerceIn(0, favorites.lastIndex))
                                     }
                                     savedIndex != null -> savedIndex.coerceIn(0, favorites.lastIndex)
+                                    savedScrollPos.index > 0 -> savedScrollPos.index.coerceIn(0, favorites.lastIndex)
                                     else -> 0
                                 }
                                 try {
@@ -354,6 +357,8 @@ fun FavoritesScreen(
                             }
                         }
                     }
+
+                    gridState.SyncOrientationColumns("favorites", viewModel, gridColumns)
 
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(gridColumns),
