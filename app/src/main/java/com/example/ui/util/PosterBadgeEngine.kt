@@ -108,9 +108,9 @@ data class BadgeStyle(
 object PosterBadgeEngine {
 
     private val BRACKETS_REGEX = Regex("""\s*\([^)]*\)""")
-    private val SEASON_EPISODE_REGEX = Regex("""(?i)(\d+)\s*сез[а-я\.]*\s*,?\s*(\d+)\s*сер[а-я\.]*""")
+    private val SEASON_EPISODE_REGEX = Regex("""(?i)(\d+)\s*сез[а-я\.]*\s*,?\s*(\d+(?:\s*-\s*\d+)?)\s*сер[а-я\.]*""")
     private val SEASON_ONLY_REGEX = Regex("""(?i)(\d+)\s*сез[а-я\.]*""")
-    private val EPISODE_ONLY_REGEX = Regex("""(?i)(\d+)\s*сер[а-я\.]*""")
+    private val EPISODE_ONLY_REGEX = Regex("""(?i)(\d+(?:\s*-\s*\d+)?)\s*сер[а-я\.]*""")
     private val RATING_NUMBER_REGEX = Regex("""\b(\d+[\.,]\d+)\b""")
     // Потокобезопасный L1 Fast Cache разобранных строк (до 256 уникальных надписей)
     private val variantsCache = LruCache<String, BadgeTextVariants>(256)
@@ -159,12 +159,12 @@ object PosterBadgeEngine {
         val seMatch = SEASON_EPISODE_REGEX.find(textToCheck)
         if (seMatch != null) {
             val s = seMatch.groupValues[1]
-            val e = seMatch.groupValues[2]
+            val e = seMatch.groupValues[2].replace(" ", "")
             return BadgeTextVariants(
                 full = raw,
                 clean = if (clean.isNotEmpty()) clean else raw,
-                compact = "${s}с ${e}с",
-                micro = "${s}с·${e}"
+                compact = "С$s Э$e",
+                micro = "С$s·Э$e"
             )
         }
 
@@ -174,19 +174,19 @@ object PosterBadgeEngine {
             return BadgeTextVariants(
                 full = raw,
                 clean = if (clean.isNotEmpty()) clean else raw,
-                compact = "${s}с",
-                micro = "${s}с"
+                compact = "С$s",
+                micro = "С$s"
             )
         }
 
         val eMatch = EPISODE_ONLY_REGEX.find(textToCheck)
         if (eMatch != null) {
-            val e = eMatch.groupValues[1]
+            val e = eMatch.groupValues[1].replace(" ", "")
             return BadgeTextVariants(
                 full = raw,
                 clean = if (clean.isNotEmpty()) clean else raw,
-                compact = "${e}с",
-                micro = "${e}с"
+                compact = "Э$e",
+                micro = "Э$e"
             )
         }
 
@@ -220,7 +220,8 @@ object PosterBadgeEngine {
         seriesBadgeMode: SeriesBadgeMode = RezkaService.seriesBadgeMode.value,
         cardWidth: Dp = Dp.Unspecified,
         cardHeight: Dp = Dp.Unspecified,
-        columnsCount: Int = 2
+        columnsCount: Int = 2,
+        isTv: Boolean = false
     ): BadgeStyle {
         if (rawText.isBlank() || seriesBadgeMode == SeriesBadgeMode.DISABLED) {
             return BadgeStyle.HIDDEN
@@ -253,8 +254,32 @@ object PosterBadgeEngine {
             }
         }
 
-        // 1. Ультра-плотный режим (колонки 7+, либо ширина < 72dp, либо высота < 105dp)
-        if (effWidthDp < 72f || columnsCount >= 7 || effHeightDp < 105f) {
+        // Для телевизоров в адаптивном режиме ВСЕГДА используется полный формат серии/сезона:
+        // "1 сезон 5 серия" (полное семантическое отображение без мусорных скобок озвучки).
+        if (isTv) {
+            val text = when (seriesBadgeMode) {
+                SeriesBadgeMode.ORIGINAL -> variants.full.ifEmpty { variants.clean }
+                SeriesBadgeMode.COMPACT -> variants.compact
+                SeriesBadgeMode.DISABLED -> return BadgeStyle.HIDDEN
+                SeriesBadgeMode.ADAPTIVE -> variants.clean.ifEmpty { variants.full }
+            }
+
+            // Масштабирование шрифта и геометрии для ТВ под размер карточки
+            val isDenseTv = columnsCount >= 7 || effWidthDp < 100f || effHeightDp < 130f
+            return BadgeStyle(
+                visible = true,
+                text = text,
+                fontSize = if (isDenseTv) 9.sp else 10.5.sp,
+                horizontalPadding = if (isDenseTv) 4.5.dp else 6.dp,
+                verticalPadding = if (isDenseTv) 2.dp else 3.dp,
+                outerPadding = if (isDenseTv) 4.dp else 6.dp,
+                cornerRadius = if (isDenseTv) 4.dp else 6.dp,
+                maxBadgeWidth = (effWidthDp * 0.90f).dp
+            )
+        }
+
+        // 1. Ультра-плотный режим для смартфонов (колонки 7+, либо ширина < 72dp, либо высота < 105dp)
+        if (effWidthDp < 72f || (columnsCount >= 7 && cardWidth == Dp.Unspecified) || effHeightDp < 105f) {
             val text = when (seriesBadgeMode) {
                 SeriesBadgeMode.ORIGINAL -> variants.clean.ifEmpty { variants.full }
                 SeriesBadgeMode.DISABLED -> return BadgeStyle.HIDDEN
@@ -272,8 +297,8 @@ object PosterBadgeEngine {
             )
         }
 
-        // 2. Компактный режим (колонки 4-6, либо ширина 72..115dp, либо высота 105..155dp)
-        if (effWidthDp < 115f || columnsCount in 4..6 || effHeightDp < 155f) {
+        // 2. Компактный режим для смартфонов (ширина 72..115dp, либо высота 105..155dp)
+        if (effWidthDp < 115f || (columnsCount in 4..6 && cardWidth == Dp.Unspecified) || effHeightDp < 155f) {
             val text = when (seriesBadgeMode) {
                 SeriesBadgeMode.ORIGINAL -> variants.full
                 SeriesBadgeMode.COMPACT -> variants.compact
@@ -299,7 +324,7 @@ object PosterBadgeEngine {
             )
         }
 
-        // 3. Стандартный и просторный режим (1-3 колонки, ширина >= 115dp)
+        // 3. Стандартный и просторный режим для смартфонов (1-3 колонки, ширина >= 115dp)
         val text = when (seriesBadgeMode) {
             SeriesBadgeMode.ORIGINAL -> variants.full
             SeriesBadgeMode.COMPACT -> variants.compact
@@ -333,15 +358,19 @@ fun AdaptivePosterBadge(
     cardHeight: Dp = Dp.Unspecified,
     cardWidth: Dp = Dp.Unspecified,
     seriesBadgeMode: SeriesBadgeMode = RezkaService.seriesBadgeMode.value,
-    alignment: Alignment = Alignment.TopEnd
+    alignment: Alignment = Alignment.TopEnd,
+    isTv: Boolean = false
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val effectiveIsTv = isTv || androidx.compose.runtime.remember(context) { com.example.ui.tv.TvDetector.isRunningOnTv(context) }
     val style = PosterBadgeEngine.resolveStyle(
         rawText = rawText,
         isSeries = isSeries,
         seriesBadgeMode = seriesBadgeMode,
         cardWidth = cardWidth,
         cardHeight = cardHeight,
-        columnsCount = columnsCount
+        columnsCount = columnsCount,
+        isTv = effectiveIsTv
     )
 
     if (!style.visible || style.text.isEmpty()) return

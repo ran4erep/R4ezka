@@ -1389,7 +1389,7 @@ fun TvDetailContent(
                 // ---- 6. Озвучка / Перевод ----
                 if (detail.translators.isNotEmpty()) {
                     item {
-                        val currentTrans = selectedTranslator ?: detail.translators.first()
+                        val currentTrans = selectedTranslator ?: detail.translators.firstOrNull { !it.isPremium && it.premiumUrl.isEmpty() } ?: detail.translators.first()
                         TvRezkaDropdown(
                             label = "Озвучка",
                             options = detail.translators,
@@ -2010,75 +2010,22 @@ fun TvDetailContent(
                     }
                 }
 
-                // Пагинация отзывов (Загрузить ещё + Номера страниц с поддержкой ТВ-пульта)
+                // Пагинация отзывов (Номера страниц с поддержкой ТВ-пульта)
                 if (totalPages > 1) {
                     item(key = "comments_pagination") {
-                        Column(
+                        // Постраничная панель [←] [1] [2] [3]... [→]
+                        Card(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                            colors = CardDefaults.cardColors(containerColor = CinemaDark),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            // Кнопка "Загрузить ещё отзывы"
-                            if (commentsState.hasMore || commentsState.currentPage < totalPages) {
-                                Surface(
-                                    color = CinemaCard,
-                                    shape = RoundedCornerShape(10.dp),
-                                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.35f)),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(42.dp)
-                                        .tvFocusableItem(
-                                            onClick = onAppendNextCommentsPage,
-                                            scaleFactor = 1.03f,
-                                            shape = RoundedCornerShape(10.dp),
-                                            lazyListState = rightScrollState
-                                        )
-                                        .testTag("tv_comments_load_more_button")
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxSize(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.Center
-                                    ) {
-                                        if (commentsState.isLoadingMore) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(16.dp),
-                                                color = CinemaPrimary,
-                                                strokeWidth = 2.dp
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text("Загрузка...", fontSize = 12.sp, color = CinemaTextWhite)
-                                        } else {
-                                            Icon(
-                                                Icons.Default.ExpandMore,
-                                                contentDescription = null,
-                                                tint = CinemaPrimary,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = "Загрузить ещё отзывы (Стр. ${commentsState.currentPage + 1})",
-                                                fontSize = 12.sp,
-                                                color = CinemaTextWhite,
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Постраничная панель [←] [1] [2] [3]... [→]
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(containerColor = CinemaDark),
-                                shape = RoundedCornerShape(12.dp)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
                                     // Назад
                                     Surface(
                                         color = CinemaCard,
@@ -2162,7 +2109,6 @@ fun TvDetailContent(
             }
         }
     }
-}
 
 /**
  * Оптимизированный для пульта ТВ компонент отображения метаданных со ссылками.

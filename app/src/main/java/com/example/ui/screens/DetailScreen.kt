@@ -827,7 +827,7 @@ fun DetailScreen(
                             } else if (offlineProg.lastTranslatorName.isNotEmpty()) {
                                 detail.translators.find { it.name.equals(offlineProg.lastTranslatorName, ignoreCase = true) }
                             } else null
-                            selectedTranslator = restoredTrans ?: detail.translators.firstOrNull()
+                            selectedTranslator = restoredTrans ?: detail.translators.firstOrNull { !it.isPremium && it.premiumUrl.isEmpty() } ?: detail.translators.firstOrNull()
 
                             if (detail.hasEpisodes && detail.seasons.isNotEmpty()) {
                                 val matchedSeason = detail.seasons.find { it.id == offlineProg.lastSeason } ?: detail.seasons.first()
@@ -836,7 +836,7 @@ fun DetailScreen(
                                 selectedEpisodeId = matchedEp?.id
                             }
                         } else {
-                            selectedTranslator = detail.translators.firstOrNull()
+                            selectedTranslator = detail.translators.firstOrNull { !it.isPremium && it.premiumUrl.isEmpty() } ?: detail.translators.firstOrNull()
                             if (detail.hasEpisodes && detail.seasons.isNotEmpty()) {
                                 selectedSeasonId = detail.seasons.first().id
                                 selectedEpisodeId = detail.seasons.first().episodes.firstOrNull()?.id
@@ -924,8 +924,11 @@ fun DetailScreen(
                                 }
                             }
                         } else {
-                            // Default selection if no history exists
-                            selectedTranslator = detail.translators.find { it.isDefault } ?: detail.translators.firstOrNull()
+                            // Default selection if no history exists (приоритет бесплатной озвучке)
+                            selectedTranslator = detail.translators.find { it.isDefault && !it.isPremium && it.premiumUrl.isEmpty() }
+                                ?: detail.translators.firstOrNull { !it.isPremium && it.premiumUrl.isEmpty() }
+                                ?: detail.translators.find { it.isDefault }
+                                ?: detail.translators.firstOrNull()
                             if (selectedSeasonId == null && detail.seasons.isNotEmpty()) {
                                 selectedSeasonId = detail.seasons.first().id
                             }
@@ -1650,7 +1653,7 @@ fun DetailScreen(
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
 
-                                val currentTrans = selectedTranslator ?: detail.translators.first()
+                                val currentTrans = selectedTranslator ?: detail.translators.firstOrNull { !it.isPremium && it.premiumUrl.isEmpty() } ?: detail.translators.first()
                                 var translatorDropdownExpanded by remember { mutableStateOf(false) }
 
                                 Box(modifier = Modifier.fillMaxWidth()) {
@@ -2505,57 +2508,15 @@ fun DetailScreen(
                                     }
                                 }
 
-                                // Блок полноценной пагинации отзывов с выбором страниц и догрузкой
+                                // Блок полноценной постраничной пагинации отзывов с номерами страниц
                     if (hasPagination) {
                         item {
-                            Column(
+                            Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 18.dp, bottom = 32.dp, start = 16.dp, end = 16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    .padding(top = 18.dp, bottom = 32.dp, start = 16.dp, end = 16.dp)
                             ) {
-                                // 1. Кнопка "Загрузить ещё отзывы" в текущий список
-                                if (commentsState.hasMore || commentsState.currentPage < totalPages) {
-                                    Button(
-                                        onClick = {
-                                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
-                                            viewModel.appendNextCommentsPage()
-                                        },
-                                        enabled = !commentsState.isLoading && !commentsState.isLoadingMore,
-                                        modifier = Modifier.fillMaxWidth().height(44.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = CinemaCard,
-                                            contentColor = CinemaTextWhite
-                                        ),
-                                        shape = RoundedCornerShape(10.dp),
-                                        border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.35f))
-                                    ) {
-                                        if (commentsState.isLoadingMore) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(18.dp),
-                                                color = CinemaPrimary,
-                                                strokeWidth = 2.dp
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text("Загрузка следующих отзывов...", fontSize = 13.sp)
-                                        } else {
-                                            Icon(
-                                                Icons.Default.ExpandMore,
-                                                contentDescription = null,
-                                                tint = CinemaPrimary,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = "Загрузить ещё отзывы (Стр. ${commentsState.currentPage + 1})",
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // 2. Постраничная панель (Номера страниц [1] [2] [3]... и стрелки Назад/Вперёд)
+                                // Постраничная панель (Номера страниц [1] [2] [3]... и стрелки Назад/Вперёд)
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = CardDefaults.cardColors(containerColor = CinemaDark),

@@ -116,12 +116,22 @@ fun CatalogScreen(
 
     val defaultType by viewModel.defaultCatalogType.collectAsState()
     val defaultSection by viewModel.defaultCatalogSection.collectAsState()
+    val defaultGenre by viewModel.defaultCatalogGenre.collectAsState()
+    val defaultCountry by viewModel.defaultCatalogCountry.collectAsState()
 
-    val hasActiveFilters = currentType != defaultType ||
-            currentSection != defaultSection ||
-            currentGenre.isNotEmpty() ||
-            currentYear.isNotEmpty() ||
-            currentCountry.isNotEmpty()
+    val hasActiveFilters = if (viewModel.searchQuery.isNotBlank()) {
+        searchCategoryFilter != null ||
+                searchSectionFilter != SectionType.LATEST ||
+                searchGenreFilter.isNotEmpty() ||
+                searchYearFilter.isNotEmpty() ||
+                searchCountryFilter.isNotEmpty()
+    } else {
+        currentType != defaultType ||
+                currentSection != defaultSection ||
+                !currentGenre.equals(defaultGenre, ignoreCase = true) ||
+                !currentCountry.equals(defaultCountry, ignoreCase = true) ||
+                currentYear.isNotEmpty()
+    }
 
     // Persistent grid state for catalog with smart scroll reset on search or filter change
     val defaultCols = remember(cardGridMode, isLandscape) { if (isLandscape) 3 else (parsedCardGrid?.columns ?: 2) }
@@ -557,15 +567,30 @@ fun CatalogScreen(
 
                 // Dropdown 3: Жанры
                 val activeGenreSlug = if (isSearching) searchGenreFilter else currentGenre
-                val currentGenreItem = genresList.find { it.slug == activeGenreSlug } ?: genresList.firstOrNull() ?: GenreItem("Без жанра", "")
+                val currentGenreItem = genresList.find { it.slug == activeGenreSlug }
+                    ?: if (activeGenreSlug.isNotEmpty()) {
+                        GenreItem(RezkaService.getGenreNameBySlug(activeGenreSlug), activeGenreSlug)
+                    } else {
+                        genresList.firstOrNull() ?: GenreItem("Все жанры", "")
+                    }
 
                 // Dropdown 4: Года (динамически спарсенные с сайта, рядом с жанром)
                 val activeYearVal = if (isSearching) searchYearFilter else currentYear
-                val currentYearItem = yearsList.find { it.year == activeYearVal } ?: yearsList.firstOrNull() ?: YearItem("Все года", "")
+                val currentYearItem = yearsList.find { it.year == activeYearVal }
+                    ?: if (activeYearVal.isNotEmpty()) {
+                        YearItem(activeYearVal, activeYearVal)
+                    } else {
+                        yearsList.firstOrNull() ?: YearItem("Все года", "")
+                    }
 
                 // Dropdown 5: Страна
                 val activeCountryQuery = if (isSearching) searchCountryFilter else currentCountry
-                val currentCountryItem = countriesList.find { it.query == activeCountryQuery } ?: countriesList.firstOrNull() ?: CountryItem("Все страны", "")
+                val currentCountryItem = countriesList.find { it.query == activeCountryQuery }
+                    ?: if (activeCountryQuery.isNotEmpty()) {
+                        CountryItem(activeCountryQuery, activeCountryQuery)
+                    } else {
+                        countriesList.firstOrNull() ?: CountryItem("Все страны", "")
+                    }
 
                 if (isLandscape) {
                     // Широкий экран: 5 фильтров в один аккуратный ряд

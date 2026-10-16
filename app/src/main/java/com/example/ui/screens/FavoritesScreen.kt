@@ -707,6 +707,7 @@ private fun TvFavoriteCard(
                     cardHeight = cardHeight,
                     cardWidth = cardWidth,
                     seriesBadgeMode = seriesBadgeMode,
+                    isTv = true,
                     modifier = Modifier.align(Alignment.TopEnd)
                 )
             }
