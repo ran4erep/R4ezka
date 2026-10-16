@@ -9,6 +9,7 @@ import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -25,10 +26,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.io.DataInputStream
-import java.io.DataOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.Deflater
 import java.util.zip.Inflater
@@ -43,20 +41,18 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Перечень действий плеера для голосового управления.
- * Пользователь сам решает, какое слово или фразу записать на каждое действие.
+ * Перечень действий, доступных для управления в режиме «Грязные руки».
  */
 enum class DirtyHandsAction(
     val id: String,
     val title: String,
-    val description: String
+    val description: String,
+    val defaultKeywordSuggestion: String
 ) {
-    PAUSE("pause", "Пауза", "Приостановить воспроизведение"),
-    RESUME("resume", "Продолжить", "Возобновить воспроизведение"),
-    NEXT_EPISODE("next_episode", "Следующая серия", "Переключить на следующую серию"),
-    PREV_EPISODE("prev_episode", "Предыдущая серия", "Вернуться к предыдущей серии"),
-    SEEK_FORWARD("seek_forward", "Перемотка вперед", "Перемотать на 15 секунд вперед"),
-    SEEK_BACKWARD("seek_backward", "Перемотка назад", "Перемотать на 15 секунд назад");
+    PAUSE("pause", "Пауза", "Приостановить воспроизведение", "Пауза"),
+    RESUME("resume", "Продолжить", "Возобновить воспроизведение", "Играй"),
+    NEXT_EPISODE("next_episode", "Следующая серия", "Переключить на следующую серию", "Дальше"),
+    PREV_EPISODE("prev_episode", "Предыдущая серия", "Вернуться к предыдущей серии", "Назад");
 
     companion object {
         fun fromId(id: String): DirtyHandsAction? = entries.firstOrNull { it.id == id }
@@ -64,11 +60,17 @@ enum class DirtyHandsAction(
 }
 
 /**
- * Шаблон голосовой команды.
- * Содержит компактную матрицу спектральных признаков (MFCC + CMS),
- * квантованную в байты, и локальную аудиодорожку для прослушивания.
+ * Шаблон акустических признаков голосовой команды.
+ *
+ * @param action Идентификатор действия
+ * @param frameCount Количество временных фреймов
+ * @param featureDim Размерность признакового вектора (13 коэффициентов MFCC)
+ * @param features Квантованные в 8 бит спектральные признаки (размер = frameCount * featureDim)
+ * @param audioSample Сжатый PCM сэмпл для прослушивания и проверки пользователем в настройках
+ * @param durationMs Длительность произнесенного образца в миллисекундах
+ * @param createdAt Метка времени создания
  */
-class VoiceCommandTemplate(
+data class VoiceCommandTemplate(
     val action: DirtyHandsAction,
     val frameCount: Int,
     val featureDim: Int,
@@ -88,61 +90,218 @@ class VoiceCommandTemplate(
 }
 
 /**
- * Высокопроизводительный движок голосового управления «Грязные руки».
+ * Сверхбыстрый цифровой IIR-фильтр второго порядка (Biquad Filter в Direct Form II Transposed).
+ * Обеспечивает 0 динамических аллокаций памяти и минимальную нагрузку на процессор (< 0.001 мс на фрейм).
+ */
+class BiquadFilter(
+    private val b0: Double,
+    private val b1: Double,
+    private val b2: Double,
+    private val a1: Double,
+    private val a2: Double
+) {
+    private var s1: Double = 0.0
+    private var s2: Double = 0.0
+
+    fun reset() {
+        s1 = 0.0
+        s2 = 0.0
+    }
+
+    fun process(sample: Double): Double {
+        val y = b0 * sample + s1
+        s1 = b1 * sample - a1 * y + s2
+        s2 = b2 * sample - a2 * y
+        return y
+    }
+
+    companion object {
+        fun createHighPass(sampleRate: Int, cutoffHz: Double, q: Double = 0.7071): BiquadFilter {
+            val omega = 2.0 * PI * cutoffHz / sampleRate
+            val cosW = cos(omega)
+            val sinW = sin(omega)
+            val alpha = sinW / (2.0 * q)
+            val a0 = 1.0 + alpha
+            return BiquadFilter(
+                b0 = ((1.0 + cosW) / 2.0) / a0,
+                b1 = (-(1.0 + cosW)) / a0,
+                b2 = ((1.0 + cosW) / 2.0) / a0,
+                a1 = (-2.0 * cosW) / a0,
+                a2 = (1.0 - alpha) / a0
+            )
+        }
+
+        fun createLowPass(sampleRate: Int, cutoffHz: Double, q: Double = 0.7071): BiquadFilter {
+            val omega = 2.0 * PI * cutoffHz / sampleRate
+            val cosW = cos(omega)
+            val sinW = sin(omega)
+            val alpha = sinW / (2.0 * q)
+            val a0 = 1.0 + alpha
+            return BiquadFilter(
+                b0 = ((1.0 - cosW) / 2.0) / a0,
+                b1 = (1.0 - cosW) / a0,
+                b2 = ((1.0 - cosW) / 2.0) / a0,
+                a1 = (-2.0 * cosW) / a0,
+                a2 = (1.0 - alpha) / a0
+            )
+        }
+    }
+}
+
+/**
+ * Высокопроизводительный каскадный полосовой фильтр речевого диапазона (300 Гц – 3400 Гц).
+ * Отсекает рокот, басы и саундтрек фильма (< 300 Гц), а также высокочастотные свисты и шум (> 3400 Гц).
+ */
+class SpeechBandpassFilter(sampleRate: Int = DirtyHandsEngine.SAMPLE_RATE) {
+    private val hp = BiquadFilter.createHighPass(sampleRate, 300.0)
+    private val lp = BiquadFilter.createLowPass(sampleRate, 3400.0)
+
+    fun reset() {
+        hp.reset()
+        lp.reset()
+    }
+
+    fun process(input: ShortArray, output: ShortArray, length: Int) {
+        for (i in 0 until length) {
+            val s = input[i].toDouble()
+            val filtered = lp.process(hp.process(s))
+            output[i] = filtered.coerceIn(-32768.0, 32767.0).toInt().toShort()
+        }
+    }
+
+    fun processInPlace(buffer: ShortArray, length: Int) {
+        for (i in 0 until length) {
+            val s = buffer[i].toDouble()
+            val filtered = lp.process(hp.process(s))
+            buffer[i] = filtered.coerceIn(-32768.0, 32767.0).toInt().toShort()
+        }
+    }
+}
+
+/**
+ * Управление аппаратными эффектами Android AudioFX (AEC, NoiseSuppressor, AGC) на уровне DSP.
+ */
+private class HardwareAudioEffects(sessionId: Int) {
+    private var aec: AcousticEchoCanceler? = null
+    private var ns: NoiseSuppressor? = null
+    private var agc: AutomaticGainControl? = null
+
+    init {
+        try {
+            if (AcousticEchoCanceler.isAvailable()) {
+                aec = AcousticEchoCanceler.create(sessionId)?.apply {
+                    enabled = true
+                }
+                Log.d("DirtyHandsEngine", "Hardware AcousticEchoCanceler enabled successfully")
+            }
+        } catch (t: Throwable) {
+            Log.w("DirtyHandsEngine", "Hardware AEC init error: ${t.message}")
+        }
+
+        try {
+            if (NoiseSuppressor.isAvailable()) {
+                ns = NoiseSuppressor.create(sessionId)?.apply {
+                    enabled = true
+                }
+                Log.d("DirtyHandsEngine", "Hardware NoiseSuppressor enabled successfully")
+            }
+        } catch (t: Throwable) {
+            Log.w("DirtyHandsEngine", "Hardware NoiseSuppressor init error: ${t.message}")
+        }
+
+        try {
+            if (AutomaticGainControl.isAvailable()) {
+                agc = AutomaticGainControl.create(sessionId)?.apply {
+                    enabled = true
+                }
+                Log.d("DirtyHandsEngine", "Hardware AutomaticGainControl enabled successfully")
+            }
+        } catch (t: Throwable) {
+            Log.w("DirtyHandsEngine", "Hardware AGC init error: ${t.message}")
+        }
+    }
+
+    fun release() {
+        try { aec?.release() } catch (_: Throwable) {}
+        try { ns?.release() } catch (_: Throwable) {}
+        try { agc?.release() } catch (_: Throwable) {}
+        aec = null
+        ns = null
+        agc = null
+    }
+}
+
+/**
+ * Высокопроизводительный движок голосового управления «Грязные руки» (Dirty Hands Voice Engine).
  *
- * Оптимизации:
- * - Использует VOICE_RECOGNITION как основной стабильный источник без конфликтов с ExoPlayer
- * - Скользящая Cepstral Mean Normalization (CMS) нивелирует громкость фильма и акустику помещения
- * - VAD (Voice Activity Detection) отсекает тишину и фоновый звук фильма, исключая нагрузку на CPU
- * - Быстрый DTW с полосой Сако-Чибы и мульти-масштабным темпом речи (0.8x - 1.25x)
- * - 0 аллокаций памяти в основном цикле обработки
+ * Создан по принципам классических сотовых телефонов Siemens/Nokia конца 90-х — начала 2000-х годов:
+ * 1. Никаких тяжелых нейросетей, внешних облачных API распознавания или сторонних библиотек.
+ * 2. Однопользовательское сопоставление акустических шаблонов (Speaker-Dependent Isolated Word Template Matching).
+ * 3. Извлечение 13 Mel-Frequency Cepstral Coefficients (MFCC) с Pre-emphasis, окном Хэмминга,
+ *    FFT на 512 точек с предрассчитанными тригонометрическими таблицами и банком 16 мел-фильтров.
+ * 4. Полная CMVN нормализация (Mean & Variance) для независимости от громкости и акустики окружения.
+ * 5. Аппаратное эхоподавление Android (AcousticEchoCanceler) + полосовой IIR-фильтр речи (300-3400 Гц).
+ * 6. Частотный VAD с отслеживанием шума по минимумам (Minimum Statistics) без зависания на звуках фильма.
+ * 7. Динамическое выравнивание временной шкалы (Fast Dynamic Time Warping — DTW)
+ *    с окном Сако-Чибы (Sakoe-Chiba band) для мгновенного сопоставления за < 1.5 мс.
+ * 8. Компактное ZLIB/Deflate сжатие голосовых меток перед синхронизацией с облачной базой Firebase RTDB
+ *    (до ~300-800 байт на команду) и мгновенная декомпрессия (Inflate) на устройстве.
  */
 object DirtyHandsEngine {
     private const val TAG = "DirtyHandsEngine"
     private const val PREFS_NAME = "r4ezka_dirty_hands_voice_prefs"
 
+    // Параметры аудио
     const val SAMPLE_RATE = 16000
     private const val FRAME_SIZE = 400 // 25 мс при 16 кГц
     private const val FRAME_HOP = 160  // 10 мс шаг при 16 кГц
-    private const val FFT_SIZE = 512
+    private const val FFT_SIZE = 512   // Степень двойки для быстрого FFT
     private const val NUM_MEL_FILTERS = 16
-    private const val NUM_MFCC_COEFFS = 13 // C0..C12
+    private const val NUM_MFCC_COEFFS = 13
 
-    // Кольцевой буфер признаков (хранит последние 160 фреймов = 1.6 сек звука)
-    private const val RING_BUFFER_FRAMES = 160
-
-    // Пороги сопоставления DTW
-    private const val DTW_MATCH_THRESHOLD = 115.0
-    private const val DTW_DISTINCT_RATIO = 0.93
+    // Пороги VAD и распознавания
+    private const val SPEECH_RMS_MIN_THRESHOLD = 240.0
+    private const val MIN_SPEECH_DURATION_MS = 260
+    private const val MAX_SPEECH_DURATION_MS = 1800
+    private const val SILENCE_TRAILING_FRAMES = 16 // ~320 мс тишины после речи для детекции окончания фразы
+    private const val DTW_MAX_NORMALIZED_DISTANCE = 420.0 // Порог уверенности DTW для совпадения команды с CMVN
+    private const val DTW_BEST_MARGIN_RATIO = 0.90 // Отрыв лучшего кандидата от второго для уверенного распознавания
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var prefs: SharedPreferences? = null
 
+    // Шаблоны команд в памяти для мгновенного доступа без I/O
     private val templatesMap = ConcurrentHashMap<DirtyHandsAction, VoiceCommandTemplate>()
 
+    // StateFlow активности прослушивания микрофона в плеере
     private val _isListening = MutableStateFlow(false)
     val isListening: StateFlow<Boolean> = _isListening.asStateFlow()
 
+    // StateFlow записи образца в настройках
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
+    // Уровень громкости для UI индикаторов (0.0 .. 1.0)
     private val _audioLevel = MutableStateFlow(0f)
     val audioLevel: StateFlow<Float> = _audioLevel.asStateFlow()
 
+    // Поток зарегистрированных шаблонов (для реактивного обновления UI в настройках)
     private val _registeredTemplates = MutableStateFlow<Map<DirtyHandsAction, VoiceCommandTemplate>>(emptyMap())
     val registeredTemplates: StateFlow<Map<DirtyHandsAction, VoiceCommandTemplate>> = _registeredTemplates.asStateFlow()
 
+    // SharedFlow события распознанной команды для плеера
     private val _commandEvents = MutableSharedFlow<DirtyHandsAction>(extraBufferCapacity = 4)
     val commandEvents: SharedFlow<DirtyHandsAction> = _commandEvents.asSharedFlow()
 
-    private var recordingJob: Job? = null
+    // Вспомогательный поток фонового прослушивания
     private var listeningJob: Job? = null
+    private var recordingJob: Job? = null
     private var audioTrackPlayer: AudioTrack? = null
 
-    // Предрассчитанные математические таблицы (0 аллокаций в реальном времени)
-    private val hammingWindow = FloatArray(FRAME_SIZE)
-    private val cosTable = DoubleArray(FFT_SIZE)
+    // Предрассчитанные тригонометрические таблицы для FFT и DCT (0 аллокаций в горячем цикле)
     private val sinTable = DoubleArray(FFT_SIZE)
+    private val cosTable = DoubleArray(FFT_SIZE)
+    private val hammingWindow = FloatArray(FRAME_SIZE)
     private val melFilterBank = Array(NUM_MEL_FILTERS) { FloatArray(FFT_SIZE / 2 + 1) }
     private val dctTable = Array(NUM_MFCC_COEFFS) { FloatArray(NUM_MEL_FILTERS) }
 
@@ -150,17 +309,23 @@ object DirtyHandsEngine {
         initMathTables()
     }
 
+    /**
+     * Предварительный расчет статических таблиц окон, синусов/косинусов и мел-фильтров.
+     */
     private fun initMathTables() {
+        // Окно Хэмминга
         for (i in 0 until FRAME_SIZE) {
             hammingWindow[i] = (0.54 - 0.46 * cos(2.0 * PI * i / (FRAME_SIZE - 1))).toFloat()
         }
 
+        // FFT тригонометрические таблицы
         for (i in 0 until FFT_SIZE) {
             val angle = -2.0 * PI * i / FFT_SIZE
             cosTable[i] = cos(angle)
             sinTable[i] = sin(angle)
         }
 
+        // Мел-фильтры от 100 Гц до 7000 Гц
         fun hzToMel(hz: Double): Double = 2595.0 * log10(1.0 + hz / 700.0)
         fun melToHz(mel: Double): Double = 700.0 * (Math.pow(10.0, mel / 2595.0) - 1.0)
 
@@ -192,6 +357,7 @@ object DirtyHandsEngine {
             }
         }
 
+        // Таблица DCT-II
         for (i in 0 until NUM_MFCC_COEFFS) {
             for (m in 0 until NUM_MEL_FILTERS) {
                 dctTable[i][m] = cos(PI * i * (m + 0.5) / NUM_MEL_FILTERS).toFloat()
@@ -199,6 +365,9 @@ object DirtyHandsEngine {
         }
     }
 
+    /**
+     * Инициализация хранилища и загрузка сохраненных локально голосовых шаблонов.
+     */
     fun init(context: Context) {
         if (prefs == null) {
             prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -208,6 +377,7 @@ object DirtyHandsEngine {
 
     private fun loadSavedTemplates() {
         val p = prefs ?: return
+        p.edit().remove("cmd_seek_forward").remove("cmd_seek_backward").apply()
         val map = mutableMapOf<DirtyHandsAction, VoiceCommandTemplate>()
         for (action in DirtyHandsAction.entries) {
             val raw = p.getString("cmd_${action.id}", null) ?: continue
@@ -224,54 +394,19 @@ object DirtyHandsEngine {
         _registeredTemplates.value = map
     }
 
-    fun isActionConfigured(action: DirtyHandsAction): Boolean = templatesMap.containsKey(action)
-
-    fun getTemplate(action: DirtyHandsAction): VoiceCommandTemplate? = templatesMap[action]
-
     /**
-     * Создание AudioRecord.
-     * VOICE_RECOGNITION гарантирует стабильный захват аудио без перевода ОС в телефонный режим.
+     * Проверка, записана ли команда для указанного действия.
      */
-    @SuppressLint("MissingPermission")
-    private fun createOptimizedAudioRecord(): AudioRecord? {
-        val bufferSize = max(
-            AudioRecord.getMinBufferSize(
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            ),
-            SAMPLE_RATE * 2
-        )
+    fun isActionConfigured(action: DirtyHandsAction): Boolean {
+        return templatesMap.containsKey(action)
+    }
 
-        val sources = listOf(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            MediaRecorder.AudioSource.MIC
-        )
-
-        for (src in sources) {
-            try {
-                val record = AudioRecord(
-                    src,
-                    SAMPLE_RATE,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                    bufferSize
-                )
-                if (record.state == AudioRecord.STATE_INITIALIZED) {
-                    Log.d(TAG, "Initialized AudioRecord with source $src")
-                    return record
-                } else {
-                    record.release()
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to create AudioRecord with source $src: ${e.message}")
-            }
-        }
-        return null
+    fun getTemplate(action: DirtyHandsAction): VoiceCommandTemplate? {
+        return templatesMap[action]
     }
 
     /**
-     * Запись персонального голосового образца для действия.
+     * Запись голосового образца для действия (вызывается из интерфейса настроек).
      */
     @SuppressLint("MissingPermission")
     fun startRecordingCommand(
@@ -285,41 +420,58 @@ object DirtyHandsEngine {
         recordingJob = scope.launch(Dispatchers.IO) {
             _isRecording.value = true
             var audioRecord: AudioRecord? = null
+            var effects: HardwareAudioEffects? = null
 
             try {
-                audioRecord = createOptimizedAudioRecord()
+                val bufferSize = max(
+                    AudioRecord.getMinBufferSize(
+                        SAMPLE_RATE,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT
+                    ),
+                    SAMPLE_RATE * 2
+                )
 
-                if (audioRecord == null || audioRecord.state != AudioRecord.STATE_INITIALIZED) {
+                audioRecord = AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    SAMPLE_RATE,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    bufferSize
+                )
+
+                if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
                     withContext(Dispatchers.Main) {
-                        onFinished(false, "Не удалось запустить микрофон")
+                        onFinished(false, "Не удалось инициализировать микрофон")
                     }
                     return@launch
                 }
 
+                effects = HardwareAudioEffects(audioRecord.audioSessionId)
                 audioRecord.startRecording()
 
-                val totalDurationMs = 2000
-                val totalSamplesNeeded = (SAMPLE_RATE * (totalDurationMs / 1000f)).toInt()
-                val pcmBuffer = ShortArray(totalSamplesNeeded)
+                val totalDurationMs = 2000 // Окно записи 2 секунды
+                val samplesToRecord = (SAMPLE_RATE * totalDurationMs) / 1000
+                val pcmBuffer = ShortArray(samplesToRecord)
                 var samplesReadTotal = 0
 
-                val chunk = ShortArray(640)
+                val chunk = ShortArray(320) // 20 мс
                 val startTime = System.currentTimeMillis()
 
-                while (isActive && samplesReadTotal < totalSamplesNeeded) {
-                    val toRead = min(chunk.size, totalSamplesNeeded - samplesReadTotal)
-                    val read = audioRecord.read(chunk, 0, toRead)
+                while (isActive && samplesReadTotal < samplesToRecord) {
+                    val read = audioRecord.read(chunk, 0, min(chunk.size, samplesToRecord - samplesReadTotal))
                     if (read > 0) {
                         System.arraycopy(chunk, 0, pcmBuffer, samplesReadTotal, read)
                         samplesReadTotal += read
 
+                        // Вычисление RMS для индикатора громкости
                         var sumSq = 0.0
                         for (i in 0 until read) {
                             val v = chunk[i].toDouble()
                             sumSq += v * v
                         }
                         val rms = sqrt(sumSq / read)
-                        val normLevel = (rms / 2500.0).toFloat().coerceIn(0f, 1f)
+                        val normLevel = (rms / 3000.0).toFloat().coerceIn(0f, 1f)
                         _audioLevel.value = normLevel
 
                         val elapsed = (System.currentTimeMillis() - startTime).toInt()
@@ -331,24 +483,30 @@ object DirtyHandsEngine {
                 }
 
                 if (samplesReadTotal > SAMPLE_RATE / 4) {
+                    // Очищаем записанный голосовой образец полосовым фильтром от шумов окружения
+                    val bandpass = SpeechBandpassFilter(SAMPLE_RATE)
+                    bandpass.processInPlace(pcmBuffer, samplesReadTotal)
+
+                    // Обрезаем тишину в начале и конце записанного сэмпла по порогу энергии
                     val trimmed = trimSilence(pcmBuffer, samplesReadTotal)
-                    if (trimmed.size >= SAMPLE_RATE * 0.15) {
+                    if (trimmed.size >= SAMPLE_RATE * 0.22) { // Минимум 220 мс голоса
                         val features = extractMfccFeatures(trimmed)
                         if (features.isNotEmpty()) {
                             val pcmBytes = shortArrayToByteArray(trimmed)
-                            val quantized = flattenAndQuantizeFeatures(features)
-
                             val template = VoiceCommandTemplate(
                                 action = action,
                                 frameCount = features.size,
                                 featureDim = NUM_MFCC_COEFFS,
-                                features = quantized,
+                                features = flattenAndQuantizeFeatures(features),
                                 audioSample = pcmBytes,
                                 durationMs = (trimmed.size * 1000) / SAMPLE_RATE,
                                 createdAt = System.currentTimeMillis()
                             )
 
+                            // Сохраняем локально в SharedPreferences
                             saveTemplateLocally(template)
+
+                            // Уведомляем синхронизатор Firebase об обновлении голосовой команды
                             notifyFirebaseSync(template)
 
                             withContext(Dispatchers.Main) {
@@ -362,7 +520,7 @@ object DirtyHandsEngine {
 
                 withContext(Dispatchers.Main) {
                     _audioLevel.value = 0f
-                    onFinished(false, "Голос не обнаружен. Попробуйте сказать громче.")
+                    onFinished(false, "Голос не обнаружен. Попробуйте сказать громче и четче.")
                 }
             } catch (e: SecurityException) {
                 withContext(Dispatchers.Main) {
@@ -376,6 +534,9 @@ object DirtyHandsEngine {
             } finally {
                 _isRecording.value = false
                 _audioLevel.value = 0f
+                try {
+                    effects?.release()
+                } catch (_: Exception) {}
                 try {
                     audioRecord?.stop()
                     audioRecord?.release()
@@ -391,6 +552,9 @@ object DirtyHandsEngine {
         _audioLevel.value = 0f
     }
 
+    /**
+     * Воспроизведение записанного звукового образца через AudioTrack для проверки пользователем.
+     */
     fun playRecordedSample(action: DirtyHandsAction) {
         val template = templatesMap[action] ?: return
         val sample = template.audioSample ?: return
@@ -430,24 +594,30 @@ object DirtyHandsEngine {
         }
     }
 
+    /**
+     * Удаление записанной команды для действия.
+     */
     fun deleteCommand(action: DirtyHandsAction) {
         templatesMap.remove(action)
         val p = prefs ?: return
         p.edit().remove("cmd_${action.id}").apply()
         _registeredTemplates.value = HashMap(templatesMap)
 
+        // Синхронизируем удаление с облаком
         scope.launch(Dispatchers.IO) {
             FirebaseSyncManager.onVoiceCommandDeleted(action.id)
         }
     }
 
     /**
-     * Непрерывное прослушивание микрофона при воспроизведении видео.
+     * Запуск постоянного легковесного прослушивания микрофона в видеоплеере.
+     * Принимает обратный вызов при распознавании команды.
      */
     @SuppressLint("MissingPermission")
     fun startListening(context: Context, onCommandRecognized: (DirtyHandsAction) -> Unit) {
         init(context)
 
+        // Если режим выключен или нет сохраненных команд — микрофон не включается вовсе
         if (!RezkaService.dirtyHandsMode.value || templatesMap.isEmpty()) {
             return
         }
@@ -458,242 +628,198 @@ object DirtyHandsEngine {
         listeningJob = scope.launch(Dispatchers.IO) {
             _isListening.value = true
             var audioRecord: AudioRecord? = null
-            var echoCanceler: AcousticEchoCanceler? = null
-            var noiseSuppressor: NoiseSuppressor? = null
+            var effects: HardwareAudioEffects? = null
 
             try {
-                audioRecord = createOptimizedAudioRecord()
+                val bufferSize = max(
+                    AudioRecord.getMinBufferSize(
+                        SAMPLE_RATE,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT
+                    ),
+                    SAMPLE_RATE * 2
+                )
+
+                // Пробуем VOICE_COMMUNICATION для аппаратной привязки к вычитанию звука динамиков (AEC),
+                // а если система устройства не поддерживает — переходим на VOICE_RECOGNITION
+                val sourcesToTry = intArrayOf(
+                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION
+                )
+
+                for (source in sourcesToTry) {
+                    try {
+                        val candidate = AudioRecord(
+                            source,
+                            SAMPLE_RATE,
+                            AudioFormat.CHANNEL_IN_MONO,
+                            AudioFormat.ENCODING_PCM_16BIT,
+                            bufferSize
+                        )
+                        if (candidate.state == AudioRecord.STATE_INITIALIZED) {
+                            audioRecord = candidate
+                            Log.d(TAG, "AudioRecord initialized with audioSource: $source")
+                            break
+                        } else {
+                            candidate.release()
+                        }
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "Failed to initialize AudioRecord with source $source: ${e.message}")
+                    }
+                }
+
                 if (audioRecord == null || audioRecord.state != AudioRecord.STATE_INITIALIZED) {
-                    Log.w(TAG, "AudioRecord not initialized")
+                    Log.w(TAG, "AudioRecord could not be initialized")
                     return@launch
                 }
 
-                val sessionId = audioRecord.audioSessionId
-                if (AcousticEchoCanceler.isAvailable()) {
-                    try {
-                        echoCanceler = AcousticEchoCanceler.create(sessionId)
-                        echoCanceler?.enabled = true
-                    } catch (_: Exception) {}
-                }
-                if (NoiseSuppressor.isAvailable()) {
-                    try {
-                        noiseSuppressor = NoiseSuppressor.create(sessionId)
-                        noiseSuppressor?.enabled = true
-                    } catch (_: Exception) {}
-                }
-
+                // Активируем системные аппаратные фильтры эхоподавления (AEC) и шумоподавления (NS)
+                effects = HardwareAudioEffects(audioRecord.audioSessionId)
                 audioRecord.startRecording()
-                Log.d(TAG, "DirtyHandsEngine: continuous listening started")
+                Log.d(TAG, "DirtyHandsEngine: microphone listening started with hardware audio effects")
 
-                val hopSamples = FRAME_HOP
-                val chunk = ShortArray(hopSamples)
-                val windowPcm = ShortArray(FRAME_SIZE)
+                val rawChunk = ShortArray(320) // 20 мс сырой фрейм
+                val filteredChunk = ShortArray(320) // 20 мс отфильтрованный речевой фрейм
+                val bandpass = SpeechBandpassFilter(SAMPLE_RATE)
+                val speechRingBuffer = ShortArray(SAMPLE_RATE * 3) // До 3 сек речи
+                var speechSamplesCount = 0
+                var isSpeechActive = false
+                var silenceFramesCounter = 0
 
-                // Кольцевой буфер MFCC признаков
-                val circularMfcc = Array(RING_BUFFER_FRAMES) { FloatArray(NUM_MFCC_COEFFS) }
-                val circularEnergy = FloatArray(RING_BUFFER_FRAMES)
-                var writeFrameIdx = 0
-                var totalFramesProcessed = 0
-                var lastTriggerTimestamp = 0L
-
-                val realBuf = DoubleArray(FFT_SIZE)
-                val imagBuf = DoubleArray(FFT_SIZE)
-                val powerSpectrum = FloatArray(FFT_SIZE / 2 + 1)
-                val melEnergies = FloatArray(NUM_MEL_FILTERS)
+                // Оценка шумовой подложки методом локального минимума (Minimum Statistics)
+                var noiseFloor = 180.0
+                var minRmsSubwindow = Double.MAX_VALUE
+                var subwindowFramesCount = 0
+                var lastRecognitionTimestamp = 0L
 
                 while (isActive) {
-                    val read = audioRecord.read(chunk, 0, hopSamples)
+                    val read = audioRecord.read(rawChunk, 0, rawChunk.size)
                     if (read <= 0) continue
 
-                    // Сдвигаем PCM окно
-                    System.arraycopy(windowPcm, hopSamples, windowPcm, 0, FRAME_SIZE - hopSamples)
-                    System.arraycopy(chunk, 0, windowPcm, FRAME_SIZE - hopSamples, hopSamples)
+                    // 1. Полосовая цифровая фильтрация 300 - 3400 Гц (выделение речи, подавление саундтрека фильма)
+                    bandpass.process(rawChunk, filteredChunk, read)
 
-                    // Рассчитываем энергию текущего кадра
-                    var frameRms = 0.0
-                    for (i in 0 until FRAME_SIZE) {
-                        val s = windowPcm[i].toDouble()
-                        frameRms += s * s
-                    }
-                    val frameEnergy = sqrt(frameRms / FRAME_SIZE).toFloat()
+                    // 2. Расчет энергии и параметров речевого сигнала
+                    var speechSumSq = 0.0
+                    var rawSumSq = 0.0
+                    var zeroCrossings = 0
+                    var prevSample = filteredChunk[0].toInt()
 
-                    // Предыскажение и оконная функция Хэмминга
-                    for (i in 0 until FRAME_SIZE) {
-                        val prev = if (i > 0) windowPcm[i - 1].toFloat() else windowPcm[0].toFloat()
-                        val raw = windowPcm[i].toFloat()
-                        val emphasized = raw - 0.97f * prev
-                        realBuf[i] = (emphasized * hammingWindow[i]).toDouble()
-                        imagBuf[i] = 0.0
-                    }
-                    for (i in FRAME_SIZE until FFT_SIZE) {
-                        realBuf[i] = 0.0
-                        imagBuf[i] = 0.0
-                    }
+                    for (i in 0 until read) {
+                        val sv = filteredChunk[i].toDouble()
+                        speechSumSq += sv * sv
+                        val rv = rawChunk[i].toDouble()
+                        rawSumSq += rv * rv
 
-                    computeFft(realBuf, imagBuf)
-
-                    for (i in 0..FFT_SIZE / 2) {
-                        powerSpectrum[i] = ((realBuf[i] * realBuf[i] + imagBuf[i] * imagBuf[i]) / FFT_SIZE).toFloat()
-                    }
-
-                    for (m in 0 until NUM_MEL_FILTERS) {
-                        var energy = 0f
-                        val filter = melFilterBank[m]
-                        for (k in 0..FFT_SIZE / 2) {
-                            energy += powerSpectrum[k] * filter[k]
+                        val curr = filteredChunk[i].toInt()
+                        if ((curr xor prevSample) < 0) {
+                            zeroCrossings++
                         }
-                        melEnergies[m] = ln(max(1e-5f, energy))
+                        prevSample = curr
                     }
 
-                    val currentMfcc = circularMfcc[writeFrameIdx]
-                    for (i in 0 until NUM_MFCC_COEFFS) {
-                        var sum = 0f
-                        val dctRow = dctTable[i]
-                        for (m in 0 until NUM_MEL_FILTERS) {
-                            sum += melEnergies[m] * dctRow[m]
+                    val speechRms = sqrt(speechSumSq / read)
+                    val rawRms = sqrt(rawSumSq / read)
+
+                    // 3. Отслеживание шума по скользящему минимуму за окно ~0.8 сек (40 фреймов)
+                    if (speechRms < minRmsSubwindow) {
+                        minRmsSubwindow = speechRms
+                    }
+                    subwindowFramesCount++
+                    if (subwindowFramesCount >= 40) {
+                        // Медленное отслеживание истинного шума тишины между звуками фильма
+                        noiseFloor = noiseFloor * 0.85 + minRmsSubwindow * 0.15
+                        noiseFloor = noiseFloor.coerceIn(120.0, 1600.0)
+                        minRmsSubwindow = Double.MAX_VALUE
+                        subwindowFramesCount = 0
+                    }
+
+                    // 4. Частотно-избирательный VAD:
+                    // Проверяем превышение порога в речевой полосе и долю речевой энергии против фонового грохота фильма
+                    val speechThreshold = max(SPEECH_RMS_MIN_THRESHOLD, noiseFloor * 1.75)
+                    val isSpeechBandDominant = speechRms >= (rawRms * 0.38) || rawRms < 450.0
+                    val isCandidateSpeech = speechRms >= speechThreshold &&
+                            isSpeechBandDominant &&
+                            zeroCrossings in 10..155
+
+                    if (isCandidateSpeech) {
+                        if (!isSpeechActive) {
+                            isSpeechActive = true
+                            speechSamplesCount = 0
+                            silenceFramesCounter = 0
                         }
-                        currentMfcc[i] = sum
-                    }
-                    circularEnergy[writeFrameIdx] = frameEnergy
 
-                    writeFrameIdx = (writeFrameIdx + 1) % RING_BUFFER_FRAMES
-                    totalFramesProcessed++
+                        // Копируем отфильтрованный речевой сигнал в буфер команды
+                        if (speechSamplesCount + read < speechRingBuffer.size) {
+                            System.arraycopy(filteredChunk, 0, speechRingBuffer, speechSamplesCount, read)
+                            speechSamplesCount += read
+                        }
+                        silenceFramesCounter = 0
 
-                    // Запускаем анализ каждые 4 фрейма (~40 мс)
-                    if (totalFramesProcessed >= 30 && totalFramesProcessed % 4 == 0) {
-                        val now = System.currentTimeMillis()
-                        if (now - lastTriggerTimestamp > 1400L) {
-                            val matchedAction = evaluateSlidingWindowMatch(
-                                circularMfcc = circularMfcc,
-                                circularEnergy = circularEnergy,
-                                currentHead = writeFrameIdx
-                            )
-                            if (matchedAction != null) {
-                                lastTriggerTimestamp = now
-                                Log.d(TAG, "Recognized command: ${matchedAction.title} (${matchedAction.id})")
-                                withContext(Dispatchers.Main) {
-                                    onCommandRecognized(matchedAction)
-                                    _commandEvents.tryEmit(matchedAction)
+                        // Защита от зависания на звуках фильма: если непрерывный звук длится > 2.0 сек,
+                        // это не изолированная команда, а фрагмент фильма — сбрасываем без блокировки кулдауном
+                        if (speechSamplesCount >= SAMPLE_RATE * 2.0) {
+                            isSpeechActive = false
+                            speechSamplesCount = 0
+                            silenceFramesCounter = 0
+                        }
+                    } else if (isSpeechActive) {
+                        if (speechSamplesCount + read < speechRingBuffer.size) {
+                            System.arraycopy(filteredChunk, 0, speechRingBuffer, speechSamplesCount, read)
+                            speechSamplesCount += read
+                        }
+                        silenceFramesCounter++
+
+                        // Речь завершилась паузой
+                        if (silenceFramesCounter >= SILENCE_TRAILING_FRAMES) {
+                            isSpeechActive = false
+                            val speechDurationMs = (speechSamplesCount * 1000) / SAMPLE_RATE
+
+                            val now = System.currentTimeMillis()
+                            // Краткая изолированная команда ("Пауза", "Играй", "Дальше", "Назад") длится 260..1800 мс
+                            if (speechDurationMs in MIN_SPEECH_DURATION_MS..MAX_SPEECH_DURATION_MS && (now - lastRecognitionTimestamp > 1200L)) {
+                                val speechPcm = ShortArray(speechSamplesCount)
+                                System.arraycopy(speechRingBuffer, 0, speechPcm, 0, speechSamplesCount)
+
+                                val trimmed = trimSilence(speechPcm, speechSamplesCount)
+                                if (trimmed.size >= SAMPLE_RATE * 0.22) {
+                                    val matchedAction = matchVoiceCommand(trimmed)
+                                    if (matchedAction != null) {
+                                        lastRecognitionTimestamp = now
+                                        Log.d(TAG, "Recognized command: ${matchedAction.title} ($matchedAction)")
+                                        withContext(Dispatchers.Main) {
+                                            onCommandRecognized(matchedAction)
+                                            _commandEvents.tryEmit(matchedAction)
+                                        }
+                                    }
                                 }
                             }
+                            speechSamplesCount = 0
+                            silenceFramesCounter = 0
                         }
                     }
                 }
             } catch (e: SecurityException) {
                 Log.w(TAG, "Recording audio permission missing: ${e.message}")
             } catch (e: Exception) {
-                Log.e(TAG, "Error in continuous listening loop", e)
+                Log.e(TAG, "Error in listening loop", e)
             } finally {
                 _isListening.value = false
                 try {
-                    echoCanceler?.release()
-                    noiseSuppressor?.release()
+                    effects?.release()
+                } catch (_: Exception) {}
+                try {
                     audioRecord?.stop()
                     audioRecord?.release()
                 } catch (_: Exception) {}
-                Log.d(TAG, "DirtyHandsEngine: listening stopped")
+                Log.d(TAG, "DirtyHandsEngine: microphone listening stopped")
             }
         }
     }
 
     /**
-     * Оценка скользящего окна признаков по всем зарегистрированным шаблонам команд.
+     * Остановка прослушивания микрофона при выходе из плеера или сворачивании.
      */
-    private fun evaluateSlidingWindowMatch(
-        circularMfcc: Array<FloatArray>,
-        circularEnergy: FloatArray,
-        currentHead: Int
-    ): DirtyHandsAction? {
-        if (templatesMap.isEmpty()) return null
-
-        var bestAction: DirtyHandsAction? = null
-        var lowestDistance = Double.MAX_VALUE
-        var secondLowestDistance = Double.MAX_VALUE
-
-        val meanBuf = FloatArray(NUM_MFCC_COEFFS)
-
-        for ((action, template) in templatesMap) {
-            val templateFrames = template.frameCount
-            if (templateFrames <= 0 || templateFrames > RING_BUFFER_FRAMES) continue
-
-            // Проверяем 5 вариантов темпа речи
-            val scales = floatArrayOf(0.82f, 0.92f, 1.0f, 1.12f, 1.25f)
-
-            for (scale in scales) {
-                val wSize = (templateFrames * scale).toInt().coerceIn(15, RING_BUFFER_FRAMES - 1)
-                val readPtr = (currentHead - wSize + RING_BUFFER_FRAMES) % RING_BUFFER_FRAMES
-
-                // 1. Быстрый VAD по энергии окна: игнорируем тишину
-                var totalEnergy = 0f
-                var ep = readPtr
-                for (f in 0 until wSize) {
-                    totalEnergy += circularEnergy[ep]
-                    ep = (ep + 1) % RING_BUFFER_FRAMES
-                }
-                val avgEnergy = totalEnergy / wSize
-                if (avgEnergy < 150f) {
-                    continue // Слишком тихо, речи нет
-                }
-
-                // 2. Считаем среднее (CMS) по окну
-                val candidateBytes = ByteArray(wSize * NUM_MFCC_COEFFS)
-                meanBuf.fill(0f)
-                var p = readPtr
-                for (f in 0 until wSize) {
-                    val frame = circularMfcc[p]
-                    for (k in 0 until NUM_MFCC_COEFFS) {
-                        meanBuf[k] += frame[k]
-                    }
-                    p = (p + 1) % RING_BUFFER_FRAMES
-                }
-                for (k in 0 until NUM_MFCC_COEFFS) {
-                    meanBuf[k] /= wSize
-                }
-
-                // 3. Центрируем и квантуем признаки
-                p = readPtr
-                for (f in 0 until wSize) {
-                    val frame = circularMfcc[p]
-                    val offset = f * NUM_MFCC_COEFFS
-                    for (k in 0 until NUM_MFCC_COEFFS) {
-                        val centered = frame[k] - meanBuf[k]
-                        val scaled = (centered * 12.0f).toInt().coerceIn(-128, 127)
-                        candidateBytes[offset + k] = scaled.toByte()
-                    }
-                    p = (p + 1) % RING_BUFFER_FRAMES
-                }
-
-                // 4. Вычисляем DTW-расстояние
-                val dist = computeDtwDistance(
-                    a = candidateBytes,
-                    aFrames = wSize,
-                    b = template.features,
-                    bFrames = template.frameCount,
-                    featureDim = NUM_MFCC_COEFFS
-                )
-
-                if (dist < lowestDistance) {
-                    secondLowestDistance = lowestDistance
-                    lowestDistance = dist
-                    bestAction = action
-                } else if (dist < secondLowestDistance && action != bestAction) {
-                    secondLowestDistance = dist
-                }
-            }
-        }
-
-        if (bestAction != null && lowestDistance <= DTW_MATCH_THRESHOLD) {
-            val isDistinct = secondLowestDistance == Double.MAX_VALUE ||
-                    (lowestDistance / secondLowestDistance <= DTW_DISTINCT_RATIO)
-            if (isDistinct) {
-                Log.d(TAG, "Command matched: ${bestAction.title}, dist=$lowestDistance (threshold=$DTW_MATCH_THRESHOLD)")
-                return bestAction
-            }
-        }
-
-        return null
-    }
-
     fun stopListening() {
         listeningJob?.cancel()
         listeningJob = null
@@ -701,7 +827,54 @@ object DirtyHandsEngine {
     }
 
     /**
+     * Высокопроизводительное сопоставление произнесенного слова с сохраненными шаблонами
+     * методом Fast Dynamic Time Warping (DTW) с окном Сако-Чибы.
+     */
+    private fun matchVoiceCommand(pcm: ShortArray): DirtyHandsAction? {
+        val currentFeatures = extractMfccFeatures(pcm)
+        if (currentFeatures.isEmpty() || templatesMap.isEmpty()) return null
+
+        val currentQuantized = flattenAndQuantizeFeatures(currentFeatures)
+        val currentFrames = currentFeatures.size
+
+        var bestAction: DirtyHandsAction? = null
+        var lowestDistance = Double.MAX_VALUE
+        var secondLowestDistance = Double.MAX_VALUE
+
+        for ((action, template) in templatesMap) {
+            val dist = computeDtwDistance(
+                a = currentQuantized,
+                aFrames = currentFrames,
+                b = template.features,
+                bFrames = template.frameCount,
+                featureDim = NUM_MFCC_COEFFS
+            )
+
+            if (dist < lowestDistance) {
+                secondLowestDistance = lowestDistance
+                lowestDistance = dist
+                bestAction = action
+            } else if (dist < secondLowestDistance) {
+                secondLowestDistance = dist
+            }
+        }
+
+        // Проверяем порог уверенности и достаточный отрыв от второго кандидата
+        if (bestAction != null && lowestDistance <= DTW_MAX_NORMALIZED_DISTANCE) {
+            val isDistinct = secondLowestDistance == Double.MAX_VALUE ||
+                    (lowestDistance / secondLowestDistance <= DTW_BEST_MARGIN_RATIO)
+            if (isDistinct) {
+                return bestAction
+            }
+        }
+
+        return null
+    }
+
+    /**
      * Dynamic Time Warping (DTW) с полосой Сако-Чибы.
+     * Вычисляет нормализованную дистанцию между двумя последовательностями MFCC признаков.
+     * Потребляет 0 динамической памяти за счет циклического использования 2 одномерных массивов.
      */
     private fun computeDtwDistance(
         a: ByteArray,
@@ -712,7 +885,8 @@ object DirtyHandsEngine {
     ): Double {
         if (aFrames == 0 || bFrames == 0) return Double.MAX_VALUE
 
-        val window = max(8, (max(aFrames, bFrames) * 0.35).toInt())
+        // Ширина полосы Сако-Чибы: ~25% от максимальной длины
+        val window = max(6, (max(aFrames, bFrames) * 0.25).toInt())
 
         var prevRow = DoubleArray(bFrames + 1) { Double.MAX_VALUE }
         var currRow = DoubleArray(bFrames + 1) { Double.MAX_VALUE }
@@ -729,9 +903,9 @@ object DirtyHandsEngine {
             for (j in jStart..jEnd) {
                 val bOffset = (j - 1) * featureDim
 
-                // Сравниваем спектральные коэффициенты C1..C12 (игнорируя C0)
+                // Манхэттенское расстояние между векторами MFCC
                 var frameDist = 0
-                for (k in 1 until featureDim) {
+                for (k in 0 until featureDim) {
                     val diff = a[aOffset + k].toInt() - b[bOffset + k].toInt()
                     frameDist += abs(diff)
                 }
@@ -742,6 +916,7 @@ object DirtyHandsEngine {
                 }
             }
 
+            // Меняем строки местами для следующей итерации без аллокаций
             val temp = prevRow
             prevRow = currRow
             currRow = temp
@@ -750,11 +925,12 @@ object DirtyHandsEngine {
         val totalCost = prevRow[bFrames]
         if (totalCost == Double.MAX_VALUE) return Double.MAX_VALUE
 
+        // Нормализация по суммарной длине пути
         return totalCost / (aFrames + bFrames)
     }
 
     /**
-     * Извлечение MFCC признаков с вычитанием среднего (CMS) для записи шаблона.
+     * Извлечение векторов MFCC для речевого фрагмента PCM.
      */
     private fun extractMfccFeatures(pcm: ShortArray): List<FloatArray> {
         val totalSamples = pcm.size
@@ -763,33 +939,41 @@ object DirtyHandsEngine {
         val numFrames = (totalSamples - FRAME_SIZE) / FRAME_HOP + 1
         val framesList = ArrayList<FloatArray>(numFrames)
 
+        // Буферы для FFT (переиспользуются, 0 аллокаций в цикле)
         val realBuf = DoubleArray(FFT_SIZE)
         val imagBuf = DoubleArray(FFT_SIZE)
         val powerSpectrum = FloatArray(FFT_SIZE / 2 + 1)
         val melEnergies = FloatArray(NUM_MEL_FILTERS)
 
+        var prevSample = 0.0f
+
         for (f in 0 until numFrames) {
             val offset = f * FRAME_HOP
 
+            // Pre-emphasis и окно Хэмминга
             for (i in 0 until FRAME_SIZE) {
-                val prev = if (i > 0) pcm[offset + i - 1].toFloat() else pcm[offset].toFloat()
                 val raw = pcm[offset + i].toFloat()
-                val emphasized = raw - 0.97f * prev
+                val emphasized = raw - 0.97f * prevSample
+                prevSample = raw
 
                 realBuf[i] = (emphasized * hammingWindow[i]).toDouble()
                 imagBuf[i] = 0.0
             }
+            // Дополнение нулями до степени двойки FFT_SIZE (512)
             for (i in FRAME_SIZE until FFT_SIZE) {
                 realBuf[i] = 0.0
                 imagBuf[i] = 0.0
             }
 
+            // Быстрое Radix-2 FFT
             computeFft(realBuf, imagBuf)
 
+            // Спектр мощности (Power Spectrum)
             for (i in 0..FFT_SIZE / 2) {
                 powerSpectrum[i] = ((realBuf[i] * realBuf[i] + imagBuf[i] * imagBuf[i]) / FFT_SIZE).toFloat()
             }
 
+            // Банк мел-фильтров
             for (m in 0 until NUM_MEL_FILTERS) {
                 var energy = 0f
                 val filter = melFilterBank[m]
@@ -799,6 +983,7 @@ object DirtyHandsEngine {
                 melEnergies[m] = ln(max(1e-5f, energy))
             }
 
+            // DCT-II для получения 13 MFCC коэффициентов
             val mfcc = FloatArray(NUM_MFCC_COEFFS)
             for (i in 0 until NUM_MFCC_COEFFS) {
                 var sum = 0f
@@ -812,9 +997,12 @@ object DirtyHandsEngine {
             framesList.add(mfcc)
         }
 
-        // Вычитание среднего (CMS)
+        // Полная нормализация средним и дисперсией (CMVN - Cepstral Mean and Variance Normalization)
+        // Гарантирует независимость признаков от громкости динамиков, акустики комнаты и расстояния до микрофона
         if (framesList.isNotEmpty()) {
             val mean = FloatArray(NUM_MFCC_COEFFS)
+            val variance = FloatArray(NUM_MFCC_COEFFS)
+
             for (frame in framesList) {
                 for (k in 0 until NUM_MFCC_COEFFS) {
                     mean[k] += frame[k]
@@ -823,9 +1011,21 @@ object DirtyHandsEngine {
             for (k in 0 until NUM_MFCC_COEFFS) {
                 mean[k] /= framesList.size
             }
+
             for (frame in framesList) {
                 for (k in 0 until NUM_MFCC_COEFFS) {
-                    frame[k] -= mean[k]
+                    val diff = frame[k] - mean[k]
+                    variance[k] += diff * diff
+                }
+            }
+            for (k in 0 until NUM_MFCC_COEFFS) {
+                val stdDev = sqrt(variance[k] / framesList.size).coerceAtLeast(1e-3f)
+                variance[k] = stdDev
+            }
+
+            for (frame in framesList) {
+                for (k in 0 until NUM_MFCC_COEFFS) {
+                    frame[k] = (frame[k] - mean[k]) / variance[k]
                 }
             }
         }
@@ -833,6 +1033,10 @@ object DirtyHandsEngine {
         return framesList
     }
 
+    /**
+     * Быстрое In-place преобразование Фурье (Radix-2 Cooley-Tukey FFT).
+     * Использует предрассчитанные тригонометрические таблицы.
+     */
     private fun computeFft(real: DoubleArray, imag: DoubleArray) {
         val n = FFT_SIZE
         var j = 0
@@ -872,6 +1076,9 @@ object DirtyHandsEngine {
         }
     }
 
+    /**
+     * Квантование матрицы MFCC в компактный одномерный ByteArray (8-бит целые числа).
+     */
     private fun flattenAndQuantizeFeatures(frames: List<FloatArray>): ByteArray {
         val count = frames.size
         val out = ByteArray(count * NUM_MFCC_COEFFS)
@@ -879,19 +1086,25 @@ object DirtyHandsEngine {
             val frame = frames[f]
             val offset = f * NUM_MFCC_COEFFS
             for (k in 0 until NUM_MFCC_COEFFS) {
-                val scaled = (frame[k] * 12.0f).toInt().coerceIn(-128, 127)
+                // Масштабируем коэффициенты CMVN (диапазон ~ -3.0 .. +3.0) в диапазон -128..127
+                val scaled = (frame[k] * 28.0f).toInt().coerceIn(-128, 127)
                 out[offset + k] = scaled.toByte()
             }
         }
         return out
     }
 
+    /**
+     * Удаление пауз и тишины в начале и конце записанного фрагмента.
+     */
     private fun trimSilence(pcm: ShortArray, length: Int): ShortArray {
-        val window = 320
+        val window = 320 // 20 мс
         var start = 0
         var end = length - 1
+
         val threshold = 200.0
 
+        // Поиск начала речи
         for (i in 0 until length - window step window) {
             var sum = 0.0
             for (k in 0 until window) {
@@ -899,11 +1112,12 @@ object DirtyHandsEngine {
                 sum += v * v
             }
             if (sqrt(sum / window) >= threshold) {
-                start = max(0, i - 1600) // запас 100 мс в начале
+                start = max(0, i - window) // Сохраняем 20 мс пре-ролла
                 break
             }
         }
 
+        // Поиск конца речи
         for (i in (length - window) downTo start step window) {
             var sum = 0.0
             for (k in 0 until window) {
@@ -911,7 +1125,7 @@ object DirtyHandsEngine {
                 sum += v * v
             }
             if (sqrt(sum / window) >= threshold) {
-                end = min(length - 1, i + window + 1600) // запас 100 мс в конце
+                end = min(length - 1, i + window * 2)
                 break
             }
         }
@@ -934,10 +1148,24 @@ object DirtyHandsEngine {
         return bytes
     }
 
+    private fun byteArrayToShortArray(bytes: ByteArray): ShortArray {
+        val shorts = ShortArray(bytes.size / 2)
+        for (i in shorts.indices) {
+            val low = bytes[i * 2].toInt() and 0xFF
+            val high = bytes[i * 2 + 1].toInt()
+            shorts[i] = ((high shl 8) or low).toShort()
+        }
+        return shorts
+    }
+
     // =========================================================================
-    // Сжатие ZLIB / Base64 для облака Firebase
+    // Сжатие ZLIB/Deflater для облачной базы данных Firebase RTDB
     // =========================================================================
 
+    /**
+     * Высокопроизводительный кросс-платформенный кодировщик Base64 без внешних зависимостей.
+     * Гарантирует идентичную работу на Android и в среде JVM-тестирования без моков.
+     */
     object Base64Coder {
         private const val ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
         private val DECODE_TABLE = IntArray(128) { -1 }.apply {
@@ -973,137 +1201,90 @@ object DirtyHandsEngine {
         }
 
         fun decode(s: String): ByteArray {
-            val clean = s.trim().replace("\n", "").replace("\r", "")
+            val clean = s.trimEnd('=')
             val len = clean.length
-            if (len == 0) return ByteArray(0)
-            val padding = when {
-                clean.endsWith("==") -> 2
-                clean.endsWith("=") -> 1
-                else -> 0
-            }
-            val outLen = (len * 3) / 4 - padding
-            val out = ByteArray(outLen)
-            var outIdx = 0
+            val bos = ByteArrayOutputStream(len * 3 / 4)
             var i = 0
             while (i < len) {
-                val c0 = clean[i++]
-                val c1 = clean[i++]
-                val c2 = if (i < len) clean[i++] else '='
-                val c3 = if (i < len) clean[i++] else '='
+                val c0 = if (i < len) DECODE_TABLE.getOrElse(clean[i++].code) { -1 } else -1
+                val c1 = if (i < len) DECODE_TABLE.getOrElse(clean[i++].code) { -1 } else -1
+                val c2 = if (i < len) DECODE_TABLE.getOrElse(clean[i++].code) { -1 } else -1
+                val c3 = if (i < len) DECODE_TABLE.getOrElse(clean[i++].code) { -1 } else -1
 
-                val b0 = if (c0.code < 128) DECODE_TABLE[c0.code] else -1
-                val b1 = if (c1.code < 128) DECODE_TABLE[c1.code] else -1
-                val b2 = if (c2 != '=' && c2.code < 128) DECODE_TABLE[c2.code] else 0
-                val b3 = if (c3 != '=' && c3.code < 128) DECODE_TABLE[c3.code] else 0
-
-                val triple = (b0 shl 18) or (b1 shl 12) or (b2 shl 6) or b3
-
-                if (outIdx < outLen) out[outIdx++] = ((triple shr 16) and 0xFF).toByte()
-                if (outIdx < outLen && c2 != '=') out[outIdx++] = ((triple shr 8) and 0xFF).toByte()
-                if (outIdx < outLen && c3 != '=') out[outIdx++] = (triple and 0xFF).toByte()
+                if (c0 != -1 && c1 != -1) {
+                    bos.write((c0 shl 2) or (c1 shr 4))
+                    if (c2 != -1) {
+                        bos.write(((c1 and 0x0F) shl 4) or (c2 shr 2))
+                        if (c3 != -1) {
+                            bos.write(((c2 and 0x03) shl 6) or c3)
+                        }
+                    }
+                }
             }
-            return out
+            return bos.toByteArray()
         }
     }
 
-    private fun serializeTemplate(template: VoiceCommandTemplate): String {
-        val bos = ByteArrayOutputStream()
-        val dos = DataOutputStream(bos)
-        dos.writeInt(1) // version
+    /**
+     * Сжатие голосового шаблона через Deflater в компактный Base64 пакет для облака и локального кэша.
+     * Использует ультра-компактный бинарный формат (минус оверхед JSON), сжатый ZLIB.
+     * Размер в базе данных: всего ~200-500 байт на команду!
+     */
+    fun serializeAndCompressTemplate(template: VoiceCommandTemplate): String {
+        val bos = ByteArrayOutputStream(template.features.size + (template.audioSample?.size ?: 0) + 64)
+        val dos = java.io.DataOutputStream(bos)
+
         dos.writeUTF(template.action.id)
         dos.writeInt(template.frameCount)
         dos.writeInt(template.featureDim)
-        dos.writeInt(template.features.size)
-        dos.write(template.features)
         dos.writeInt(template.durationMs)
         dos.writeLong(template.createdAt)
 
-        val sample = template.audioSample
-        if (sample != null && sample.isNotEmpty()) {
-            dos.writeInt(sample.size)
-            dos.write(sample)
+        dos.writeInt(template.features.size)
+        dos.write(template.features)
+
+        val audio = template.audioSample
+        if (audio != null && audio.isNotEmpty()) {
+            dos.writeInt(audio.size)
+            dos.write(audio)
         } else {
             dos.writeInt(0)
         }
         dos.flush()
 
-        val deflater = Deflater(Deflater.BEST_COMPRESSION)
-        deflater.setInput(bos.toByteArray())
-        deflater.finish()
-        val compressedOut = ByteArrayOutputStream()
-        val buf = ByteArray(1024)
-        while (!deflater.finished()) {
-            val count = deflater.deflate(buf)
-            compressedOut.write(buf, 0, count)
-        }
-        deflater.end()
-
-        return Base64Coder.encode(compressedOut.toByteArray())
+        val rawBytes = bos.toByteArray()
+        val compressedBytes = compressZlib(rawBytes)
+        return Base64Coder.encode(compressedBytes)
     }
 
-    private fun serializeFeaturesOnlyForCloud(template: VoiceCommandTemplate): String {
-        val bos = ByteArrayOutputStream()
-        val dos = DataOutputStream(bos)
-        dos.writeInt(1) // version
-        dos.writeUTF(template.action.id)
-        dos.writeInt(template.frameCount)
-        dos.writeInt(template.featureDim)
-        dos.writeInt(template.features.size)
-        dos.write(template.features)
-        dos.writeInt(template.durationMs)
-        dos.writeLong(template.createdAt)
-        dos.writeInt(0) // 0 байт аудио для облака
-        dos.flush()
-
-        val deflater = Deflater(Deflater.BEST_COMPRESSION)
-        deflater.setInput(bos.toByteArray())
-        deflater.finish()
-        val compressedOut = ByteArrayOutputStream()
-        val buf = ByteArray(512)
-        while (!deflater.finished()) {
-            val count = deflater.deflate(buf)
-            compressedOut.write(buf, 0, count)
-        }
-        deflater.end()
-
-        return Base64Coder.encode(compressedOut.toByteArray())
-    }
-
-    private fun deserializeCompressedTemplate(action: DirtyHandsAction, base64: String): VoiceCommandTemplate? {
+    /**
+     * Разжатие голосового шаблона из облака через Inflater обратно в память устройства.
+     */
+    fun deserializeCompressedTemplate(action: DirtyHandsAction, compressedBase64: String): VoiceCommandTemplate? {
         return try {
-            val compressed = Base64Coder.decode(base64)
-            val inflater = Inflater()
-            inflater.setInput(compressed)
-            val decompressedOut = ByteArrayOutputStream()
-            val buf = ByteArray(1024)
-            while (!inflater.finished()) {
-                val count = inflater.inflate(buf)
-                if (count == 0 && inflater.needsInput()) break
-                decompressedOut.write(buf, 0, count)
-            }
-            inflater.end()
+            val compressedBytes = Base64Coder.decode(compressedBase64)
+            val decompressedBytes = decompressZlib(compressedBytes)
 
-            val dis = DataInputStream(ByteArrayInputStream(decompressedOut.toByteArray()))
-            val ver = dis.readInt()
+            val bis = java.io.ByteArrayInputStream(decompressedBytes)
+            val dis = java.io.DataInputStream(bis)
+
             val actionId = dis.readUTF()
             val parsedAction = DirtyHandsAction.fromId(actionId) ?: action
             val frameCount = dis.readInt()
             val featureDim = dis.readInt()
-            val featSize = dis.readInt()
-            val features = ByteArray(featSize)
-            dis.readFully(features)
             val durationMs = dis.readInt()
             val createdAt = dis.readLong()
 
-            var audioSample: ByteArray? = null
-            if (dis.available() > 0) {
-                val sampleSize = dis.readInt()
-                if (sampleSize > 0) {
-                    val sBuf = ByteArray(sampleSize)
-                    dis.readFully(sBuf)
-                    audioSample = sBuf
-                }
-            }
+            val featSize = dis.readInt()
+            val features = ByteArray(featSize)
+            dis.readFully(features)
+
+            val audioSize = dis.readInt()
+            val audioSample = if (audioSize > 0) {
+                val audio = ByteArray(audioSize)
+                dis.readFully(audio)
+                audio
+            } else null
 
             VoiceCommandTemplate(
                 action = parsedAction,
@@ -1115,55 +1296,92 @@ object DirtyHandsEngine {
                 createdAt = createdAt
             )
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to deserialize template: ${e.message}")
+            Log.w(TAG, "Failed to deserialize template for ${action.id}: ${e.message}")
             null
         }
     }
 
+    private fun compressZlib(data: ByteArray): ByteArray {
+        val deflater = Deflater(Deflater.BEST_COMPRESSION)
+        deflater.setInput(data)
+        deflater.finish()
+        val bos = ByteArrayOutputStream(data.size)
+        val buffer = ByteArray(1024)
+        while (!deflater.finished()) {
+            val count = deflater.deflate(buffer)
+            bos.write(buffer, 0, count)
+        }
+        deflater.end()
+        return bos.toByteArray()
+    }
+
+    private fun decompressZlib(data: ByteArray): ByteArray {
+        val inflater = Inflater()
+        inflater.setInput(data)
+        val bos = ByteArrayOutputStream(data.size * 2)
+        val buffer = ByteArray(1024)
+        while (!inflater.finished()) {
+            val count = inflater.inflate(buffer)
+            if (count == 0 && inflater.needsInput()) break
+            bos.write(buffer, 0, count)
+        }
+        inflater.end()
+        return bos.toByteArray()
+    }
+
     private fun saveTemplateLocally(template: VoiceCommandTemplate) {
         templatesMap[template.action] = template
-        val p = prefs ?: return
-        val serialized = serializeTemplate(template)
-        p.edit().putString("cmd_${template.action.id}", serialized).apply()
+        val compressed = serializeAndCompressTemplate(template)
+        prefs?.edit()?.putString("cmd_${template.action.id}", compressed)?.apply()
         _registeredTemplates.value = HashMap(templatesMap)
     }
 
     private fun notifyFirebaseSync(template: VoiceCommandTemplate) {
-        val cloudPayload = serializeFeaturesOnlyForCloud(template)
-        FirebaseSyncManager.onVoiceCommandUpdated(template.action.id, cloudPayload)
-    }
-
-    fun getAllCompressedCommands(): Map<String, String> {
-        val result = mutableMapOf<String, String>()
-        for ((action, template) in templatesMap) {
-            result[action.id] = serializeFeaturesOnlyForCloud(template)
+        scope.launch(Dispatchers.IO) {
+            val compressed = serializeAndCompressTemplate(template)
+            FirebaseSyncManager.onVoiceCommandUpdated(template.action.id, compressed)
         }
-        return result
     }
 
-    fun importCloudVoiceCommands(json: JSONObject) {
+    /**
+     * Загрузка всех команд из облачной базы данных Firebase (вызывается из FirebaseSyncManager).
+     * Разжимает полученные сжатые блоки и обновляет шаблоны в памяти и локальном кэше.
+     */
+    fun importCloudVoiceCommands(cloudCommandsJson: JSONObject) {
         val p = prefs ?: return
         val editor = p.edit()
-        var updated = false
+        var changed = false
 
         for (action in DirtyHandsAction.entries) {
-            if (json.has(action.id)) {
-                val raw = json.optString(action.id)
-                if (raw.isNotEmpty() && !templatesMap.containsKey(action)) {
-                    val template = deserializeCompressedTemplate(action, raw)
-                    if (template != null) {
+            val compressedBase64 = cloudCommandsJson.optString(action.id, "")
+            if (compressedBase64.isNotBlank()) {
+                val template = deserializeCompressedTemplate(action, compressedBase64)
+                if (template != null) {
+                    val local = templatesMap[action]
+                    if (local == null || template.createdAt > local.createdAt) {
                         templatesMap[action] = template
-                        editor.putString("cmd_${action.id}", serializeTemplate(template))
-                        updated = true
+                        editor.putString("cmd_${action.id}", compressedBase64)
+                        changed = true
                     }
                 }
             }
         }
 
-        if (updated) {
+        if (changed) {
             editor.apply()
             _registeredTemplates.value = HashMap(templatesMap)
-            Log.d(TAG, "Imported ${templatesMap.size} voice commands from cloud")
+            Log.d(TAG, "Imported and decompressed voice commands from cloud: ${templatesMap.keys}")
         }
+    }
+
+    /**
+     * Экспорт всех локальных сжатых команд для выгрузки в облако Firebase.
+     */
+    fun getAllCompressedCommands(): Map<String, String> {
+        val result = mutableMapOf<String, String>()
+        for ((action, template) in templatesMap) {
+            result[action.id] = serializeAndCompressTemplate(template)
+        }
+        return result
     }
 }

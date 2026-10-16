@@ -663,10 +663,7 @@ fun RezkaPlayer(
                                 onNextEpisode.invoke()
                                 screenNotificationMessage = "Голосовая команда: Следующая серия"
                             } else {
-                                val cur = exoPlayer.currentPosition
-                                val dur = exoPlayer.duration.coerceAtLeast(0L)
-                                exoPlayer.seekTo((cur + 15000L).coerceAtMost(dur))
-                                screenNotificationMessage = "Голосовая команда: Вперед +15 сек"
+                                screenNotificationMessage = "Следующая серия недоступна"
                             }
                         }
                         DirtyHandsAction.PREV_EPISODE -> {
@@ -674,21 +671,8 @@ fun RezkaPlayer(
                                 onPreviousEpisode.invoke()
                                 screenNotificationMessage = "Голосовая команда: Предыдущая серия"
                             } else {
-                                val cur = exoPlayer.currentPosition
-                                exoPlayer.seekTo((cur - 15000L).coerceAtLeast(0L))
-                                screenNotificationMessage = "Голосовая команда: Назад -15 сек"
+                                screenNotificationMessage = "Предыдущая серия недоступна"
                             }
-                        }
-                        DirtyHandsAction.SEEK_FORWARD -> {
-                            val cur = exoPlayer.currentPosition
-                            val dur = exoPlayer.duration.coerceAtLeast(0L)
-                            exoPlayer.seekTo((cur + 15000L).coerceAtMost(dur))
-                            screenNotificationMessage = "Голосовая команда: Вперед +15с"
-                        }
-                        DirtyHandsAction.SEEK_BACKWARD -> {
-                            val cur = exoPlayer.currentPosition
-                            exoPlayer.seekTo((cur - 15000L).coerceAtLeast(0L))
-                            screenNotificationMessage = "Голосовая команда: Назад -15с"
                         }
                     }
                 }

@@ -95,56 +95,7 @@ object FirebaseSyncManager {
             scope.launch {
                 syncAll(repository)
             }
-        } else {
-            // Для неавторизованного пользователя синхронизируем голосовые команды и настройки по ключу устройства
-            scope.launch {
-                syncGuestVoiceCommands()
-            }
         }
-    }
-
-    /**
-     * Возвращает ключ аккаунта пользователя или детерминированный ключ устройства,
-     * гарантируя, что настройки и голосовые команды ВСЕГДА попадают в Firebase RTDB.
-     */
-    fun getEffectiveUserKey(): String {
-        val current = _userKey.value
-        if (!current.isNullOrBlank()) return current
-
-        var guestKey = prefs?.getString("auth_guest_device_key", null)
-        if (guestKey.isNullOrBlank()) {
-            val raw = java.util.UUID.randomUUID().toString().replace("-", "").take(16)
-            guestKey = "guest_$raw"
-            prefs?.edit()?.putString("auth_guest_device_key", guestKey)?.apply()
-        }
-        return guestKey
-    }
-
-    private suspend fun syncGuestVoiceCommands() = withContext(Dispatchers.IO) {
-        try {
-            val key = getEffectiveUserKey()
-            val req = Request.Builder().url("$DATABASE_URL/users/$key/voice_commands.json").get().build()
-            val resp = httpClient.newCall(req).execute()
-            if (resp.isSuccessful) {
-                val body = resp.body?.string()?.trim() ?: ""
-                if (body != "null" && body.startsWith("{")) {
-                    DirtyHandsEngine.importCloudVoiceCommands(JSONObject(body))
-                }
-            }
-            // Выгружаем локальные команды в облако
-            val localCommands = DirtyHandsEngine.getAllCompressedCommands()
-            if (localCommands.isNotEmpty()) {
-                val patchJson = JSONObject()
-                for ((a, d) in localCommands) {
-                    patchJson.put(a, d)
-                }
-                val patchReq = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/voice_commands.json")
-                    .patch(patchJson.toString().toRequestBody(JSON_MEDIA_TYPE))
-                    .build()
-                httpClient.newCall(patchReq).execute().close()
-            }
-        } catch (_: Exception) {}
     }
 
     /**
@@ -647,7 +598,7 @@ object FirebaseSyncManager {
         defaultCatalogGenre: String = RezkaService.defaultCatalogGenre.value,
         defaultCatalogCountry: String = RezkaService.defaultCatalogCountry.value
     ) {
-        val key = getEffectiveUserKey()
+        val key = _userKey.value ?: return
         scope.launch {
             try {
                 val json = JSONObject().apply {
@@ -686,38 +637,22 @@ object FirebaseSyncManager {
     }
 
     /**
-     * Выгрузка сжатого образца голосовой команды в облако Firebase.
-     * Записывает строго в единственный узел voice_commands.
+     * Выгрузка сжатого ZLIB образца голосовой команды в облако Firebase.
+     * Занимает считанные сотни байт в базе данных.
      */
     fun onVoiceCommandUpdated(actionId: String, compressedBase64: String) {
-        val key = getEffectiveUserKey()
+        val key = _userKey.value ?: return
         scope.launch {
             try {
                 val json = JSONObject().apply {
                     put(actionId, compressedBase64)
                 }
-                val body = json.toString().toRequestBody(JSON_MEDIA_TYPE)
                 val request = Request.Builder()
                     .url("$DATABASE_URL/users/$key/voice_commands.json")
-                    .patch(body)
+                    .patch(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
-                httpClient.newCall(request).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        Log.d(TAG, "Uploaded voice command $actionId to voice_commands under user $key")
-                    } else {
-                        val err = try { resp.body?.string() ?: "" } catch (_: Exception) { "" }
-                        Log.w(TAG, "Failed to upload voice command to voice_commands (HTTP ${resp.code}): $err")
-                    }
-                }
-
-                // Очищаем старую дублирующую ветку voiceCommands если она осталась от прошлых версий
-                try {
-                    val cleanupReq = Request.Builder()
-                        .url("$DATABASE_URL/users/$key/voiceCommands.json")
-                        .delete()
-                        .build()
-                    httpClient.newCall(cleanupReq).execute().close()
-                } catch (_: Exception) {}
+                httpClient.newCall(request).execute().close()
+                Log.d(TAG, "Uploaded compressed voice command $actionId to cloud (~${compressedBase64.length} chars)")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to upload voice command to Firebase: ${e.message}")
             }
@@ -728,7 +663,7 @@ object FirebaseSyncManager {
      * Удаление голосовой команды из облачной базы данных Firebase.
      */
     fun onVoiceCommandDeleted(actionId: String) {
-        val key = getEffectiveUserKey()
+        val key = _userKey.value ?: return
         scope.launch {
             try {
                 val request = Request.Builder()
@@ -736,17 +671,7 @@ object FirebaseSyncManager {
                     .delete()
                     .build()
                 httpClient.newCall(request).execute().close()
-
-                // Также очищаем из старого пути на случай если там оставалось
-                try {
-                    val cleanupReq = Request.Builder()
-                        .url("$DATABASE_URL/users/$key/voiceCommands/$actionId.json")
-                        .delete()
-                        .build()
-                    httpClient.newCall(cleanupReq).execute().close()
-                } catch (_: Exception) {}
-
-                Log.d(TAG, "Deleted voice command $actionId from cloud under user $key")
+                Log.d(TAG, "Deleted voice command $actionId from cloud")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to delete voice command from Firebase: ${e.message}")
             }
