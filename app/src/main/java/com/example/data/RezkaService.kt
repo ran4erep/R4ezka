@@ -2381,6 +2381,7 @@ object RezkaService {
         detailCache.evictAll()
         streamCache.evictAll()
         seasonEpisodesCache.evictAll()
+        TranslatorEpisodeEngine.clearCache()
         translatorPremiumCache.evictAll()
         collectionsCache.evictAll()
         categoryGenres.clear()
@@ -3713,24 +3714,56 @@ object RezkaService {
 
             if (html.isBlank()) return@withContext null
 
-            val isSeriesType = typeStr.equals("SERIES", ignoreCase = true) ||
-                    typeStr.equals("ANIME", ignoreCase = true) ||
-                    typeStr.equals("CARTOON", ignoreCase = true) ||
-                    adjustedUrl.contains("/series/") ||
-                    adjustedUrl.contains("/animation/") ||
-                    adjustedUrl.contains("/cartoons/")
+            val hasSeriesPlayer = html.contains("initCDNSeriesEvents") || html.contains("b-simple_episode__item")
+            val hasMoviesPlayer = html.contains("initCDNMoviesEvents")
+            val hasTranslators = html.contains("b-translator__item") || html.contains("data-translator_id")
+            val hasAwaitingSign = html.contains("В ожидании выхода", ignoreCase = true) ||
+                    html.contains("в ожидании выхода") ||
+                    html.contains("b-post__status_awaiting") ||
+                    html.contains("ожидается выход", ignoreCase = true) ||
+                    html.contains("скоро на экранах", ignoreCase = true) ||
+                    html.contains("скоро на сайте", ignoreCase = true) ||
+                    html.contains("В качестве:</h2>\n<td>В ожидании", ignoreCase = true) ||
+                    html.contains("В качестве:</h2></td><td>В ожидании", ignoreCase = true)
 
-            if (isSeriesType) {
+            // Если сериал или фильм еще не вышел
+            if (hasAwaitingSign || (!hasSeriesPlayer && !hasMoviesPlayer)) {
+                return@withContext "В ожидании выхода"
+            }
+
+            // Анализируем тип: фильм (полнометражка) vs сериал (многосерийный)
+            val isAnimationOrCartoon = adjustedUrl.contains("/animation/") || adjustedUrl.contains("/cartoons/") ||
+                    typeStr.equals("ANIME", ignoreCase = true) || typeStr.equals("CARTOON", ignoreCase = true)
+            val isExplicitMovie = adjustedUrl.contains("/films/") || (hasMoviesPlayer && !hasSeriesPlayer)
+            val isExplicitSeries = adjustedUrl.contains("/series/") || hasSeriesPlayer
+
+            val isSeries = when {
+                isExplicitSeries -> true
+                isExplicitMovie -> false
+                isAnimationOrCartoon -> {
+                    // Аниме и мультфильмы могут быть как полнометражными (фильмы), так и сериалами!
+                    hasSeriesPlayer || (!hasMoviesPlayer && (html.contains("сериал") || html.contains("сезон") || html.contains("b-post__schedule")))
+                }
+                typeStr.equals("SERIES", ignoreCase = true) -> true
+                else -> false
+            }
+
+            if (isSeries) {
                 val scanResult = SeriesUpdateEngine.parseLatestEpisodeFromHtml(html)
+                if (scanResult.isAwaitingRelease || !hasSeriesPlayer) {
+                    return@withContext "В ожидании выхода"
+                }
                 if (scanResult.isSuccess && (scanResult.latestSeason > 0 || scanResult.latestEpisode > 0)) {
                     return@withContext "${scanResult.latestSeason} сезон ${scanResult.latestEpisode} серия"
                 }
+                return@withContext "В ожидании выхода"
             }
 
+            // Для полнометражного фильма (или полнометражного аниме/мультфильма) извлекаем рейтинг
             val doc = Jsoup.parse(html)
-            val ratingEl = doc.selectFirst(".rating, .num, .b-content__inline_item-cover .info, .b-post__info_episodes_all, .b-post__status, i.imdb, i.kp, .info")
+            val ratingEl = doc.selectFirst(".rating, .num, .b-content__inline_item-cover .info, i.imdb, i.kp, .info")
             val parsedRating = ratingEl?.text()?.trim() ?: ""
-            if (parsedRating.isNotEmpty()) {
+            if (parsedRating.isNotEmpty() && !parsedRating.contains("сезон") && !parsedRating.contains("сери")) {
                 return@withContext parsedRating
             }
 
@@ -4362,6 +4395,9 @@ object RezkaService {
                                     seasonEpisodesCache.put("${numericPostId}_${defaultTranslatorId}", seasons)
                                     seasonEpisodesCache.put("${numericPostId}_0", seasons)
                                 }
+                                TranslatorEpisodeEngine.registerSeasons(numericPostId, defaultTranslatorId, seasons)
+                                TranslatorEpisodeEngine.registerSeasons(numericPostId, "0", seasons)
+                                TranslatorEpisodeEngine.prefetchTranslators(numericPostId, translators)
                             }
 
                             // Фоновая асинхронная предзагрузка серий для остальных озвучек в оперативный кэш
@@ -4380,6 +4416,35 @@ object RezkaService {
                             }
                         }
 
+                        val hasAwaitingSign = html.contains("В ожидании выхода", ignoreCase = true) ||
+                                html.contains("в ожидании выхода") ||
+                                html.contains("b-post__status_awaiting") ||
+                                html.contains("ожидается выход", ignoreCase = true) ||
+                                html.contains("скоро на экранах", ignoreCase = true) ||
+                                html.contains("скоро на сайте", ignoreCase = true) ||
+                                html.contains("В качестве:</h2>\n<td>В ожидании", ignoreCase = true) ||
+                                html.contains("В качестве:</h2></td><td>В ожидании", ignoreCase = true) ||
+                                html.contains("В качестве:</h2> <td>В ожидании", ignoreCase = true)
+
+                        val hasSeriesPlayerCall = html.contains("initCDNSeriesEvents") || html.contains("b-simple_episode__item")
+                        val hasMoviesPlayerCall = html.contains("initCDNMoviesEvents")
+                        val hasActualEpisodes = seasons.isNotEmpty() && seasons.any { it.episodes.isNotEmpty() }
+                        val allScheduleInFuture = schedule.isNotEmpty() && schedule.all { !it.isReleased }
+
+                        val effectiveIsReleased = when {
+                            hasAwaitingSign -> false
+                            allScheduleInFuture && !hasActualEpisodes -> false
+                            type == RezkaType.SERIES -> (hasActualEpisodes || hasSeriesPlayerCall) && !hasAwaitingSign
+                            hasEpisodesMarkup || seasons.isNotEmpty() || schedule.isNotEmpty() -> (hasActualEpisodes || hasSeriesPlayerCall) && !hasAwaitingSign
+                            else -> hasMoviesPlayerCall || (translators.isNotEmpty() && !hasAwaitingSign)
+                        }
+
+                        val effectiveDetailRating = if (!effectiveIsReleased && (mainRating.isBlank() || mainRating.contains("сезон", ignoreCase = true) || mainRating.contains("сери", ignoreCase = true))) {
+                            "В ожидании выхода"
+                        } else {
+                            mainRating
+                        }
+
                         val detail = RezkaDetail(
                             id = id,
                             title = title,
@@ -4391,7 +4456,7 @@ object RezkaService {
                             country = country,
                             countryFlag = countryFlag,
                             genres = genres,
-                            rating = mainRating,
+                            rating = effectiveDetailRating,
                             ratingInfo = ratingInfo,
                             director = director,
                             directorsList = directorsList,
@@ -4416,7 +4481,7 @@ object RezkaService {
                             translators = translators,
                             seasons = seasons,
                             numericPostId = numericPostId,
-                            isReleased = isReleased
+                            isReleased = effectiveIsReleased
                         )
                         detailCache.put(cacheKey, detail)
                         return@withContext detail
@@ -4824,6 +4889,7 @@ object RezkaService {
                         synchronized(seasonEpisodesCache) {
                             seasonEpisodesCache.put(cacheKey, parsedFromPage)
                         }
+                        TranslatorEpisodeEngine.registerSeasons(cleanId, cleanTranslatorId, parsedFromPage)
                         return@withContext parsedFromPage
                     }
                 }
@@ -4961,6 +5027,7 @@ object RezkaService {
                             synchronized(seasonEpisodesCache) {
                                 seasonEpisodesCache.put(cacheKey, seasonsList)
                             }
+                            TranslatorEpisodeEngine.registerSeasons(cleanId, cleanTranslatorId, seasonsList)
                             return@withContext seasonsList
                         }
                     }
@@ -4971,20 +5038,33 @@ object RezkaService {
             Log.w(TAG, "Ошибка загрузки серий через AJAX для озвучки $cleanTranslatorId: ${e.message}")
         }
 
-        // 3. Безопасный фоллбэк: если есть кэшированные серии дефолтной озвучки для этого тайтла
-        synchronized(seasonEpisodesCache) {
-            val defaultKey = "${cleanId}_0"
-            val fallback = seasonEpisodesCache.get(defaultKey)
-                ?: seasonEpisodesCache.snapshot().entries.firstOrNull { it.key.startsWith("${cleanId}_") && it.value.isNotEmpty() }?.value
-            if (fallback != null && fallback.isNotEmpty()) {
-                val adapted = fallback.map { s ->
-                    s.copy(episodes = s.episodes.map { ep -> ep.copy(translatorId = cleanTranslatorId) })
+        // 3. Безопасный фоллбэк: только для дефолтной озвучки (id == "0"), если есть кэшированные серии
+        if (cleanTranslatorId.isEmpty() || cleanTranslatorId == "0") {
+            synchronized(seasonEpisodesCache) {
+                val defaultKey = "${cleanId}_0"
+                val fallback = seasonEpisodesCache.get(defaultKey)
+                    ?: seasonEpisodesCache.snapshot().entries.firstOrNull { it.key.startsWith("${cleanId}_") && it.value.isNotEmpty() }?.value
+                if (fallback != null && fallback.isNotEmpty()) {
+                    return@withContext fallback
                 }
-                return@withContext adapted
             }
         }
 
         return@withContext emptyList()
+    }
+
+    /**
+     * Синхронное O(1) получение серий из кэша для указанной озвучки.
+     */
+    fun getCachedEpisodes(numericId: String, translatorId: String): List<Season>? {
+        val cleanId = extractNumericId(numericId)
+        val cleanTransId = translatorId.trim()
+        val fromEngine = TranslatorEpisodeEngine.getCachedSeasons(cleanId, cleanTransId)
+        if (fromEngine != null) return fromEngine
+        val cacheKey = "${cleanId}_${cleanTransId}"
+        return synchronized(seasonEpisodesCache) {
+            seasonEpisodesCache.get(cacheKey)
+        }
     }
 
     /**

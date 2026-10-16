@@ -1210,10 +1210,10 @@ fun RezkaItemCard(
                         .background(bottomFadeBrush)
                 )
 
-                // Adaptive Episode Badge (Series only)
+                // Adaptive Episode Badge (Series & Awaiting status)
                 AdaptivePosterBadge(
                     rawText = item.rating,
-                    isSeries = item.type != RezkaType.MOVIE,
+                    isSeries = item.isSeriesContent(),
                     columnsCount = columnsCount,
                     cardHeight = cardHeight,
                     cardWidth = cardWidth,

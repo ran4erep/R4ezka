@@ -112,9 +112,14 @@ object PosterBadgeEngine {
     private val SEASON_ONLY_REGEX = Regex("""(?i)(\d+)\s*сез[а-я\.]*""")
     private val EPISODE_ONLY_REGEX = Regex("""(?i)(\d+)\s*сер[а-я\.]*""")
     private val RATING_NUMBER_REGEX = Regex("""\b(\d+[\.,]\d+)\b""")
-
     // Потокобезопасный L1 Fast Cache разобранных строк (до 256 уникальных надписей)
     private val variantsCache = LruCache<String, BadgeTextVariants>(256)
+
+    fun isAwaiting(raw: String): Boolean {
+        if (raw.isBlank()) return false
+        val lower = raw.trim().lowercase()
+        return lower.contains("ожидани") || lower.contains("ожидается") || lower.contains("скоро") || lower.contains("анонс")
+    }
 
     /**
      * Получение вариантов текста за O(1) из кэша.
@@ -139,8 +144,19 @@ object PosterBadgeEngine {
 
     private fun parseBadgeVariants(raw: String): BadgeTextVariants {
         val clean = BRACKETS_REGEX.replace(raw, "").trim()
+        val textToCheck = if (clean.isNotEmpty()) clean else raw
 
-        val seMatch = SEASON_EPISODE_REGEX.find(clean.ifEmpty { raw })
+        // Статус "В ожидании выхода" для невышедших сериалов / фильмов
+        if (isAwaiting(textToCheck)) {
+            return BadgeTextVariants(
+                full = "В ожидании выхода",
+                clean = "В ожидании выхода",
+                compact = "В ожидании",
+                micro = "Ожид."
+            )
+        }
+
+        val seMatch = SEASON_EPISODE_REGEX.find(textToCheck)
         if (seMatch != null) {
             val s = seMatch.groupValues[1]
             val e = seMatch.groupValues[2]
@@ -152,7 +168,7 @@ object PosterBadgeEngine {
             )
         }
 
-        val sMatch = SEASON_ONLY_REGEX.find(clean.ifEmpty { raw })
+        val sMatch = SEASON_ONLY_REGEX.find(textToCheck)
         if (sMatch != null) {
             val s = sMatch.groupValues[1]
             return BadgeTextVariants(
@@ -163,7 +179,7 @@ object PosterBadgeEngine {
             )
         }
 
-        val eMatch = EPISODE_ONLY_REGEX.find(clean.ifEmpty { raw })
+        val eMatch = EPISODE_ONLY_REGEX.find(textToCheck)
         if (eMatch != null) {
             val e = eMatch.groupValues[1]
             return BadgeTextVariants(
@@ -206,7 +222,13 @@ object PosterBadgeEngine {
         cardHeight: Dp = Dp.Unspecified,
         columnsCount: Int = 2
     ): BadgeStyle {
-        if (rawText.isBlank() || !isSeries || seriesBadgeMode == SeriesBadgeMode.DISABLED) {
+        if (rawText.isBlank() || seriesBadgeMode == SeriesBadgeMode.DISABLED) {
+            return BadgeStyle.HIDDEN
+        }
+
+        val awaiting = isAwaiting(rawText)
+        // Плашка отображается для сериалов, либо для статуса "В ожидании выхода" для любых тайтлов
+        if (!isSeries && !awaiting) {
             return BadgeStyle.HIDDEN
         }
 
@@ -225,7 +247,7 @@ object PosterBadgeEngine {
         }
 
         // Если постер экстремально мал — в адаптивном режиме скрываем, чтобы не закрывать весь постер
-        if (seriesBadgeMode == SeriesBadgeMode.ADAPTIVE && isSeries) {
+        if (seriesBadgeMode == SeriesBadgeMode.ADAPTIVE && (isSeries || awaiting)) {
             if (effWidthDp < 46f || effHeightDp < 64f) {
                 return BadgeStyle.HIDDEN
             }
@@ -258,7 +280,7 @@ object PosterBadgeEngine {
                 SeriesBadgeMode.DISABLED -> return BadgeStyle.HIDDEN
                 SeriesBadgeMode.ADAPTIVE -> {
                     // Если строка длинная (более 10 символов), сжимаем до компактной, чтобы не перекрывать постер
-                    if (isSeries && variants.clean.length > 10) {
+                    if (variants.clean.length > 10) {
                         variants.compact
                     } else {
                         variants.clean
@@ -282,9 +304,7 @@ object PosterBadgeEngine {
             SeriesBadgeMode.ORIGINAL -> variants.full
             SeriesBadgeMode.COMPACT -> variants.compact
             SeriesBadgeMode.DISABLED -> return BadgeStyle.HIDDEN
-            SeriesBadgeMode.ADAPTIVE -> {
-                if (isSeries) variants.clean else variants.clean
-            }
+            SeriesBadgeMode.ADAPTIVE -> variants.clean
         }
 
         return BadgeStyle(
@@ -326,11 +346,15 @@ fun AdaptivePosterBadge(
 
     if (!style.visible || style.text.isEmpty()) return
 
+    val awaiting = PosterBadgeEngine.isAwaiting(rawText)
+    // Стильный янтарный цвет для статуса "В ожидании выхода", CinemaPrimary для вышедших серий
+    val badgeBg = if (awaiting) Color(0xFFD97706) else CinemaPrimary
+
     Box(
         modifier = modifier
             .padding(style.outerPadding)
             .then(if (style.maxBadgeWidth != null) Modifier.widthIn(max = style.maxBadgeWidth) else Modifier)
-            .background(CinemaPrimary, RoundedCornerShape(style.cornerRadius))
+            .background(badgeBg, RoundedCornerShape(style.cornerRadius))
             .padding(horizontal = style.horizontalPadding, vertical = style.verticalPadding)
     ) {
         Text(

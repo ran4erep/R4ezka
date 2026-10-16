@@ -2599,10 +2599,10 @@ private fun TvMovieCard(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Adaptive Episode Badge (Series only)
+                // Adaptive Episode Badge (Series & Awaiting status)
                 AdaptivePosterBadge(
                     rawText = item.rating,
-                    isSeries = item.type != RezkaType.MOVIE,
+                    isSeries = item.isSeriesContent(),
                     columnsCount = columnCount,
                     cardHeight = cardHeight,
                     cardWidth = cardWidth,

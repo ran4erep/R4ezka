@@ -184,6 +184,52 @@ data class RezkaItem(
     val countryCodes: Set<String> = CountryFlags.extractCanonicalCountryCodes(subtitle)
 ) : Serializable
 
+/**
+ * Высокопроизводительное O(1) определение, является ли карточка контентом с сериями
+ * (сериалы, аниме-сериалы, мультсериалы, многосерийные фильмы)
+ * или же полнометражным фильмом (фильмы, полнометражные аниме, полнометражные мультфильмы).
+ */
+fun RezkaItem.isSeriesContent(): Boolean {
+    if (type == RezkaType.SERIES) return true
+    if (type == RezkaType.COLLECTIONS) return false
+
+    val r = rating.lowercase()
+    val sub = subtitle.lowercase()
+
+    // 1. Проверка явных признаков серий в рейтинге/плашке ("1 сезон 2 серия", "12 серий", "2 сезон")
+    val hasSeriesBadge = r.contains("сезон") || r.contains("сез") || r.contains("сер") || r.contains("эпизод")
+
+    // 2. Многосерийные фильмы (категория MOVIE, но с сериями)
+    if (type == RezkaType.MOVIE) {
+        return hasSeriesBadge || sub.contains("многосерийный")
+    }
+
+    // 3. Аниме и Мультфильмы: могут быть как полнометражными (фильмы), так и сериалами!
+    val hasSeriesKeywords = sub.contains("сериал") || sub.contains("сериалы") ||
+            sub.contains("мультсериал") || sub.contains("аниме-сериал")
+    if (hasSeriesKeywords || hasSeriesBadge) {
+        return true
+    }
+
+    val hasMovieKeywords = sub.contains("фильм") || sub.contains("фильмы") ||
+            sub.contains("полнометраж") || sub.contains("movie")
+    if (hasMovieKeywords) {
+        return false
+    }
+
+    // Числовой рейтинг без упоминания серий (например, "8.4", "7.9") на карточке аниме/мультфильма указывает на фильм
+    if (r.isNotEmpty() && r.matches(Regex("""^\s*\d+([\.,]\d+)?\s*$"""))) {
+        return false
+    }
+
+    // Проверка явных путей в URL
+    if (url.contains("/series/")) return true
+    if (url.contains("/films/")) return false
+
+    // По умолчанию: если нет признаков серий — считаем полнометражным фильмом
+    return false
+}
+
 data class RatingInfo(
     val imdb: String = "",
     val imdbVotes: String = "",
@@ -258,17 +304,35 @@ data class RezkaDetail(
     val isReleased: Boolean = true
 ) : Serializable {
     /**
-     * Показывает, имеет ли релиз серии/эпизоды (сериалы, мультсериалы, аниме,
-     * а также многосерийные фильмы).
+     * Показывает, имеет ли релиз серии/эпизоды:
+     * - Сериалы, аниме-сериалы, мультсериалы (как вышедшие, так и ожидающие релиза с расписанием)
+     * - Многосерийные фильмы
+     * Возвращает false для любых полнометражных фильмов, полнометражных аниме и полнометражных мультфильмов.
      */
     val hasEpisodes: Boolean
-        get() = type == RezkaType.SERIES || (seasons.isNotEmpty() && seasons.any { it.episodes.isNotEmpty() })
+        get() {
+            if (type == RezkaType.SERIES) return true
+            if (seasons.isNotEmpty() && seasons.any { it.episodes.isNotEmpty() }) return true
+            if (schedule.isNotEmpty()) return true
+            // Для аниме и мультиков проверяем наличие сериальных жанров / коллекций
+            val isExplicitSeries = genres.any { g ->
+                val lower = g.lowercase()
+                lower.contains("сериал") || lower.contains("мультсериал") || lower.contains("аниме-сериал")
+            } || inCollections.any { c ->
+                val lower = c.lowercase()
+                lower.contains("сериал") || lower.contains("мультсериал") || lower.contains("аниме-сериал")
+            }
+            if (isExplicitSeries) return true
+            return false
+        }
 
     /**
-     * Является ли контент многосерийным фильмом (категория MOVIE, но с наличием серий/частей).
+     * Является ли контент многосерийным фильмом (категория MOVIE/ANIME/CARTOON, но с наличием серий/частей).
      */
     val isMultiSeriesMovie: Boolean
-        get() = type == RezkaType.MOVIE && seasons.isNotEmpty() && seasons.any { it.episodes.isNotEmpty() }
+        get() = (type == RezkaType.MOVIE || type == RezkaType.ANIME || type == RezkaType.CARTOON) &&
+                seasons.isNotEmpty() && seasons.any { it.episodes.isNotEmpty() } &&
+                !genres.any { it.contains("сериал", ignoreCase = true) }
 }
 
 data class FranchiseItem(

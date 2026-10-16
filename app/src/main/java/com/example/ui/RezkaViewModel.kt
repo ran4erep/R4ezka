@@ -1838,12 +1838,13 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 FirebaseSyncManager.onSubscriptionRemoved(item.id)
                 onResult?.invoke(false, 0, 0)
             } else {
-                val isMovie = (detail?.type ?: item.type) == RezkaType.MOVIE
+                val isMovie = detail?.let { !it.hasEpisodes } ?: !item.isSeriesContent()
                 val isUnreleased = if (detail != null) {
-                    !detail.isReleased
+                    !detail.isReleased || detail.rating.contains("ожидани", ignoreCase = true)
                 } else {
                     val subText = item.subtitle.lowercase()
-                    subText.contains("скоро") || subText.contains("в ожидании") || subText.contains("ожидается")
+                    val rText = item.rating.lowercase()
+                    com.example.ui.util.PosterBadgeEngine.isAwaiting(subText) || com.example.ui.util.PosterBadgeEngine.isAwaiting(rText)
                 }
 
                 var maxSeason = 1
@@ -1851,34 +1852,37 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 var lastEpName = "Серия 1"
 
                 if (isMovie) {
+                    val movieName = when (item.type) {
+                        RezkaType.ANIME -> "аниме"
+                        RezkaType.CARTOON -> "мультфильма"
+                        else -> "фильма"
+                    }
                     if (isUnreleased) {
                         maxSeason = 0
                         maxEpisode = 0
-                        lastEpName = "Ожидается выход фильма"
+                        lastEpName = "Ожидается выход $movieName"
                     } else {
                         maxSeason = 1
                         maxEpisode = 1
                         lastEpName = "Фильм вышел"
                     }
                 } else {
-                    if (isUnreleased) {
+                    val effectiveSeasons = detail?.seasons.orEmpty().filter { it.episodes.isNotEmpty() }
+                    if (isUnreleased || effectiveSeasons.isEmpty()) {
                         maxSeason = 0
                         maxEpisode = 0
-                        lastEpName = "Сериал еще не вышел"
+                        lastEpName = "В ожидании выхода"
                     } else {
-                        val effectiveSeasons = detail?.seasons.orEmpty()
-                        if (effectiveSeasons.isNotEmpty()) {
-                            maxSeason = effectiveSeasons.maxOfOrNull { it.id } ?: 1
-                            val seasonObj = effectiveSeasons.find { it.id == maxSeason }
-                            val eps = seasonObj?.episodes.orEmpty()
-                            if (eps.isNotEmpty()) {
-                                val parsedMax = eps.mapNotNull { ep ->
-                                    Regex("""\d+""").find(ep.id)?.value?.toIntOrNull()
-                                        ?: Regex("""\d+""").find(ep.name)?.value?.toIntOrNull()
-                                }.maxOrNull() ?: eps.size
-                                maxEpisode = parsedMax
-                                lastEpName = eps.lastOrNull()?.name ?: "Серия $maxEpisode"
-                            }
+                        maxSeason = effectiveSeasons.maxOfOrNull { it.id } ?: 1
+                        val seasonObj = effectiveSeasons.find { it.id == maxSeason }
+                        val eps = seasonObj?.episodes.orEmpty()
+                        if (eps.isNotEmpty()) {
+                            val parsedMax = eps.mapNotNull { ep ->
+                                Regex("""\d+""").find(ep.id)?.value?.toIntOrNull()
+                                    ?: Regex("""\d+""").find(ep.name)?.value?.toIntOrNull()
+                            }.maxOrNull() ?: eps.size
+                            maxEpisode = parsedMax
+                            lastEpName = eps.lastOrNull()?.name ?: "Серия $maxEpisode"
                         }
                     }
                 }
@@ -2478,7 +2482,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             if (offlineList.isNotEmpty()) {
                 val filtered = offlineList.filter { it.translatorId == translatorId || translatorId.isBlank() }
                     .ifEmpty { offlineList }
-                return filtered.groupBy { it.season }.map { (sNum, eps) ->
+                val res = filtered.groupBy { it.season }.map { (sNum, eps) ->
                     Season(
                         id = sNum,
                         name = "Сезон $sNum",
@@ -2492,10 +2496,16 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                         }.sortedBy { it.id.toIntOrNull() ?: 0 }
                     )
                 }.sortedBy { it.id }
+                TranslatorEpisodeEngine.registerSeasons(numericId, translatorId, res)
+                return res
             }
         }
         return try {
-            RezkaService.getEpisodesForTranslator(numericId, translatorId, translatorUrl)
+            val res = RezkaService.getEpisodesForTranslator(numericId, translatorId, translatorUrl)
+            if (res.isNotEmpty()) {
+                TranslatorEpisodeEngine.registerSeasons(numericId, translatorId, res)
+            }
+            res
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             NetworkMonitor.handleNetworkException(e)

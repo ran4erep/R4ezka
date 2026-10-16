@@ -50,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.RezkaItem
+import com.example.data.isSeriesContent
 import com.example.ui.util.rememberSavedLazyGridState
 import com.example.data.RezkaService
 import com.example.data.RezkaType
@@ -698,10 +699,10 @@ private fun TvFavoriteCard(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Adaptive Episode Badge (Series only)
+                // Adaptive Episode Badge (Series & Awaiting status)
                 AdaptivePosterBadge(
                     rawText = item.rating,
-                    isSeries = item.type != RezkaType.MOVIE,
+                    isSeries = item.isSeriesContent(),
                     columnsCount = columnCount,
                     cardHeight = cardHeight,
                     cardWidth = cardWidth,
