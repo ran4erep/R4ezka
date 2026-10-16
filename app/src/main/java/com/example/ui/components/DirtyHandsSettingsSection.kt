@@ -6,35 +6,35 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -54,9 +54,6 @@ import com.example.ui.tv.tvFocusableItem
 
 /**
  * Секция настроек режима «Грязные руки» в категории «Воспроизведение».
- *
- * Компактный дизайн в едином стиле приложения: аккуратные карточки команд
- * без подсказок со словами, без растягивания по вертикали и со стабильной вёрсткой.
  */
 @Composable
 fun DirtyHandsSettingsSection(
@@ -73,12 +70,13 @@ fun DirtyHandsSettingsSection(
     var recordingRemainingMs by remember { mutableStateOf(2000) }
     var recordingStatusText by remember { mutableStateOf<String?>(null) }
 
+    // Проверка и запрос разрешения на использование микрофона
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
             viewModel.setDirtyHandsMode(true)
-            Toast.makeText(context, "Режим «Грязные руки» включен", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Режим «Грязные руки» активирован", Toast.LENGTH_SHORT).show()
         } else {
             viewModel.setDirtyHandsMode(false)
             Toast.makeText(context, "Для работы режима необходим доступ к микрофону", Toast.LENGTH_LONG).show()
@@ -91,7 +89,7 @@ fun DirtyHandsSettingsSection(
         val action = activeRecordingAction
         if (isGranted && action != null) {
             recordingRemainingMs = 2000
-            recordingStatusText = "Говорите..."
+            recordingStatusText = "Слушаю..."
             DirtyHandsEngine.startRecordingCommand(
                 action = action,
                 onProgress = { remaining, _ ->
@@ -100,11 +98,11 @@ fun DirtyHandsSettingsSection(
                 onFinished = { success, errorMsg ->
                     if (success) {
                         HapticEngine.get().perform(HapticType.CONFIRM)
-                        Toast.makeText(context, "Команда сохранена", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Команда «${action.title}» записана", Toast.LENGTH_SHORT).show()
                         activeRecordingAction = null
                     } else {
                         HapticEngine.get().perform(HapticType.WARNING)
-                        recordingStatusText = errorMsg ?: "Ошибка записи"
+                        recordingStatusText = errorMsg ?: "Ошибка записи. Повторите попытку."
                     }
                 }
             )
@@ -149,71 +147,65 @@ fun DirtyHandsSettingsSection(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 12.dp)
             ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(if (dirtyHandsEnabled) CinemaPrimary.copy(alpha = 0.2f) else CinemaDark)
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = Icons.Default.Mic,
+                        imageVector = Icons.Default.RecordVoiceOver,
                         contentDescription = null,
                         tint = if (dirtyHandsEnabled) CinemaPrimary else CinemaTextGray,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Режим «Грязные руки»",
                         color = CinemaTextWhite,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = if (dirtyHandsEnabled) "Голосовое управление активно" else "Управление плеером без касания экрана",
-                        color = CinemaTextGray,
-                        fontSize = 12.sp
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Голосовое управление плеером",
+                    color = CinemaTextGray,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
+                )
             }
 
             Switch(
                 checked = dirtyHandsEnabled,
-                onCheckedChange = { isChecked ->
-                    if (isChecked) {
+                onCheckedChange = { checked ->
+                    HapticEngine.get().perform(HapticType.TOGGLE)
+                    if (checked) {
                         val hasPerm = ContextCompat.checkSelfPermission(
                             context,
                             Manifest.permission.RECORD_AUDIO
                         ) == PackageManager.PERMISSION_GRANTED
                         if (hasPerm) {
-                            HapticEngine.get().perform(HapticType.TOGGLE)
                             viewModel.setDirtyHandsMode(true)
                         } else {
                             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         }
                     } else {
-                        HapticEngine.get().perform(HapticType.TOGGLE)
                         viewModel.setDirtyHandsMode(false)
                         DirtyHandsEngine.stopListening()
                     }
                 },
                 colors = SwitchDefaults.colors(
-                    checkedThumbColor = CinemaPrimary,
-                    checkedTrackColor = CinemaPrimary.copy(alpha = 0.3f),
+                    checkedThumbColor = CinemaTextWhite,
+                    checkedTrackColor = CinemaPrimary,
                     uncheckedThumbColor = CinemaTextGray,
                     uncheckedTrackColor = CinemaDark
                 ),
-                modifier = Modifier.testTag("dirty_hands_switch")
+                modifier = Modifier.testTag("dirty_hands_mode_switch")
             )
         }
 
-        // Блок списка команд при включенном режиме
+        // Настройки команд под тумблером
         AnimatedVisibility(
             visible = dirtyHandsEnabled,
             enter = expandVertically() + fadeIn(),
@@ -222,19 +214,22 @@ fun DirtyHandsSettingsSection(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp)
+                    .padding(top = 12.dp)
             ) {
+                // Заголовок списка команд
                 Text(
                     text = "Команды управления",
                     color = CinemaTextWhite,
-                    fontSize = 13.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(start = 2.dp, bottom = 8.dp)
+                    modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp)
                 )
 
-                // Список команд
+                Spacer(modifier = Modifier.height(8.dp))
+
                 DirtyHandsAction.entries.forEach { action ->
                     val isConfigured = registeredTemplates.containsKey(action)
+
                     CommandItemCard(
                         action = action,
                         isConfigured = isConfigured,
@@ -246,7 +241,7 @@ fun DirtyHandsSettingsSection(
                             ) == PackageManager.PERMISSION_GRANTED
                             if (hasPerm) {
                                 recordingRemainingMs = 2000
-                                recordingStatusText = "Говорите..."
+                                recordingStatusText = "Слушаю..."
                                 DirtyHandsEngine.startRecordingCommand(
                                     action = action,
                                     onProgress = { remaining, _ ->
@@ -255,11 +250,11 @@ fun DirtyHandsSettingsSection(
                                     onFinished = { success, errorMsg ->
                                         if (success) {
                                             HapticEngine.get().perform(HapticType.CONFIRM)
-                                            Toast.makeText(context, "Команда сохранена", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "Команда «${action.title}» записана", Toast.LENGTH_SHORT).show()
                                             activeRecordingAction = null
                                         } else {
                                             HapticEngine.get().perform(HapticType.WARNING)
-                                            recordingStatusText = errorMsg ?: "Ошибка записи"
+                                            recordingStatusText = errorMsg ?: "Ошибка записи. Попробуйте еще раз."
                                         }
                                     }
                                 )
@@ -272,16 +267,16 @@ fun DirtyHandsSettingsSection(
                         },
                         onDelete = {
                             DirtyHandsEngine.deleteCommand(action)
-                            Toast.makeText(context, "Команда удалена", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Команда «${action.title}» удалена", Toast.LENGTH_SHORT).show()
                         }
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                 }
             }
         }
     }
 
-    // Компактный диалог записи команды (строгий, аккуратный, без вертикального растягивания)
+    // Диалог интерактивной записи команды
     if (activeRecordingAction != null) {
         val action = activeRecordingAction!!
         Dialog(onDismissRequest = {
@@ -289,15 +284,14 @@ fun DirtyHandsSettingsSection(
             activeRecordingAction = null
         }) {
             Surface(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = CinemaCard,
-                border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.4f)),
                 modifier = Modifier
-                    .widthIn(max = 320.dp)
-                    .wrapContentHeight()
+                    .fillMaxWidth()
+                    .padding(16.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Row(
@@ -308,7 +302,7 @@ fun DirtyHandsSettingsSection(
                         Text(
                             text = "Запись команды",
                             color = CinemaTextWhite,
-                            fontSize = 15.sp,
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
                         )
                         IconButton(
@@ -321,79 +315,107 @@ fun DirtyHandsSettingsSection(
                             Icon(
                                 imageVector = Icons.Default.Close,
                                 contentDescription = "Закрыть",
-                                tint = CinemaTextGray,
-                                modifier = Modifier.size(18.dp)
+                                tint = CinemaTextGray
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     Text(
                         text = action.title,
                         color = CinemaPrimary,
-                        fontSize = 17.sp,
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
+                    Text(
+                        text = "Говорите четко в микрофон",
+                        color = CinemaTextGray,
+                        fontSize = 12.sp
+                    )
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
 
-                    // Аккуратный индикатор микрофона фиксированного размера
-                    val micBackground = if (isRecordingEngine && liveAudioLevel > 0.08f) {
-                        CinemaPrimary
-                    } else {
-                        CinemaPrimary.copy(alpha = 0.25f)
-                    }
+                    // Анимированная пульсирующая сфера микрофона в зависимости от уровня звука
+                    val pulseScale by rememberInfiniteTransition(label = "pulse").animateFloat(
+                        initialValue = 1f,
+                        targetValue = 1.08f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(600, easing = LinearEasing),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "mic_scale"
+                    )
+
+                    val audioLevelScale = 1f + liveAudioLevel * 0.45f
 
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .size(54.dp)
+                            .size(110.dp)
+                            .scale(pulseScale * audioLevelScale)
                             .clip(CircleShape)
-                            .background(micBackground)
+                            .background(
+                                Brush.radialGradient(
+                                    listOf(
+                                        CinemaPrimary.copy(alpha = 0.7f),
+                                        CinemaPrimary.copy(alpha = 0.15f),
+                                        Color.Transparent
+                                    )
+                                )
+                            )
                     ) {
-                        Icon(
-                            imageVector = if (isRecordingEngine) Icons.Default.Mic else Icons.Default.GraphicEq,
-                            contentDescription = null,
-                            tint = if (isRecordingEngine && liveAudioLevel > 0.08f) Color.Black else CinemaPrimary,
-                            modifier = Modifier.size(26.dp)
-                        )
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(CinemaPrimary)
+                        ) {
+                            Icon(
+                                imageVector = if (isRecordingEngine) Icons.Default.Mic else Icons.Default.GraphicEq,
+                                contentDescription = null,
+                                tint = Color.Black,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
 
+                    // Оставшееся время
                     val secondsFormatted = String.format("%.1f с", recordingRemainingMs / 1000f)
                     Text(
                         text = secondsFormatted,
                         color = CinemaTextWhite,
-                        fontSize = 18.sp,
+                        fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
 
-                    Spacer(modifier = Modifier.height(2.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = recordingStatusText ?: "Говорите...",
+                        text = recordingStatusText ?: "Говорите четко и громко...",
                         color = CinemaTextGray,
                         fontSize = 12.sp,
                         textAlign = TextAlign.Center,
-                        maxLines = 1
+                        lineHeight = 16.sp
                     )
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
 
                     Button(
                         onClick = {
                             DirtyHandsEngine.cancelCurrentRecording()
                             activeRecordingAction = null
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = CinemaDark),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(36.dp)
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = CinemaDark
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Отмена", color = CinemaTextWhite, fontSize = 13.sp)
+                        Text("Отмена", color = CinemaTextWhite)
                     }
                 }
             }
@@ -402,22 +424,10 @@ fun DirtyHandsSettingsSection(
 }
 
 /**
- * Иконка соответствующего действия плеера.
- */
-private fun getActionIcon(action: DirtyHandsAction): ImageVector {
-    return when (action) {
-        DirtyHandsAction.PAUSE -> Icons.Default.Pause
-        DirtyHandsAction.RESUME -> Icons.Default.PlayArrow
-        DirtyHandsAction.NEXT_EPISODE -> Icons.Default.SkipNext
-        DirtyHandsAction.PREV_EPISODE -> Icons.Default.SkipPrevious
-        DirtyHandsAction.SEEK_FORWARD -> Icons.Default.FastForward
-        DirtyHandsAction.SEEK_BACKWARD -> Icons.Default.FastRewind
-    }
-}
-
-/**
  * Карточка настройки отдельной голосовой команды.
- * Компактная, строгая вёрстка без растягиваний и без навязывания слов пользователю.
+ *
+ * Имеет фиксированную, устойчивую геометрию, соответствующую единому дизайну
+ * приложения Rezka, без вертикального распирания и скачков верстки.
  */
 @Composable
 private fun CommandItemCard(
@@ -427,168 +437,146 @@ private fun CommandItemCard(
     onPlay: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val borderColor by animateColorAsState(
-        targetValue = if (isConfigured) CinemaPrimary.copy(alpha = 0.35f) else CinemaBorder.copy(alpha = 0.2f),
-        label = "border_color"
-    )
-
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = CinemaCard,
-        border = BorderStroke(1.dp, borderColor),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Иконка действия слева
-            Box(
-                contentAlignment = Alignment.Center,
+            // Название команды
+            Text(
+                text = action.title,
+                color = CinemaTextWhite,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(if (isConfigured) CinemaPrimary.copy(alpha = 0.15f) else CinemaDark)
-            ) {
-                Icon(
-                    imageVector = getActionIcon(action),
-                    contentDescription = null,
-                    tint = if (isConfigured) CinemaPrimary else CinemaTextGray,
-                    modifier = Modifier.size(17.dp)
-                )
-            }
+                    .weight(1f)
+                    .padding(end = 12.dp)
+            )
 
-            Spacer(modifier = Modifier.width(10.dp))
-
-            // Название действия и статус
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = action.title,
-                    color = CinemaTextWhite,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                if (isConfigured) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = CinemaPrimary,
-                            modifier = Modifier.size(11.dp)
-                        )
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text(
-                            text = "Записано",
-                            color = CinemaPrimary,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                } else {
-                    Text(
-                        text = "Не настроено",
-                        color = CinemaTextGray.copy(alpha = 0.7f),
-                        fontSize = 10.sp
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Кнопки управления справа
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                if (isConfigured) {
-                    // Кнопка прослушивания
-                    IconButton(
-                        onClick = {
-                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
-                            onPlay()
-                        },
+            // Правая часть: компактные действия фиксированного размера
+            if (isConfigured) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Прослушать образец
+                    Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(34.dp)
                             .clip(CircleShape)
                             .background(CinemaDark)
                             .tvFocusableItem(
-                                onClick = onPlay,
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                    onPlay()
+                                },
                                 shape = CircleShape,
                                 scaleFactor = 1.05f
                             )
+                            .testTag("play_cmd_${action.id}"),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Прослушать",
+                            contentDescription = "Прослушать образец",
                             tint = CinemaPrimary,
-                            modifier = Modifier.size(15.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
 
-                    // Кнопка удаления
-                    IconButton(
-                        onClick = {
-                            HapticEngine.get().perform(HapticType.SOFT_CLICK)
-                            onDelete()
-                        },
+                    // Перезаписать
+                    Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(34.dp)
                             .clip(CircleShape)
                             .background(CinemaDark)
                             .tvFocusableItem(
-                                onClick = onDelete,
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.SELECTION)
+                                    onRecord()
+                                },
                                 shape = CircleShape,
                                 scaleFactor = 1.05f
                             )
+                            .testTag("rerecord_cmd_${action.id}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = "Перезаписать команду",
+                            tint = CinemaTextWhite,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // Удалить
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(CinemaDark)
+                            .tvFocusableItem(
+                                onClick = {
+                                    HapticEngine.get().perform(HapticType.WARNING)
+                                    onDelete()
+                                },
+                                shape = CircleShape,
+                                scaleFactor = 1.05f
+                            )
+                            .testTag("delete_cmd_${action.id}"),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Delete,
-                            contentDescription = "Удалить",
-                            tint = Color.Red.copy(alpha = 0.75f),
-                            modifier = Modifier.size(14.dp)
+                            contentDescription = "Удалить команду",
+                            tint = Color(0xFFE53935).copy(alpha = 0.85f),
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
-
-                // Кнопка записи / перезаписи
-                Button(
-                    onClick = {
-                        HapticEngine.get().perform(HapticType.SELECTION)
-                        onRecord()
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isConfigured) CinemaDark else CinemaPrimary
-                    ),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+            } else {
+                // Кнопка записи (когда команда еще не настроена)
+                Box(
                     modifier = Modifier
-                        .height(30.dp)
+                        .height(34.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(CinemaPrimary)
                         .tvFocusableItem(
-                            onClick = onRecord,
+                            onClick = {
+                                HapticEngine.get().perform(HapticType.SELECTION)
+                                onRecord()
+                            },
                             shape = RoundedCornerShape(8.dp),
                             scaleFactor = 1.02f
                         )
+                        .padding(horizontal = 12.dp)
+                        .testTag("record_btn_${action.id}"),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Mic,
-                        contentDescription = null,
-                        tint = if (isConfigured) CinemaTextWhite else Color.Black,
-                        modifier = Modifier.size(12.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = if (isConfigured) "Заново" else "Записать",
-                        color = if (isConfigured) CinemaTextWhite else Color.Black,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = null,
+                            tint = Color.Black,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "Записать",
+                            color = Color.Black,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
         }
