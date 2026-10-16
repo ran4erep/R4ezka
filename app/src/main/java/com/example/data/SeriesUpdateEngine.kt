@@ -45,7 +45,8 @@ data class SeriesScanResult(
     val isAntiBot: Boolean = false,
     val errorMessage: String? = null,
     val totalEpisodes: Int = 0,
-    val totalSeasons: Int = 0
+    val totalSeasons: Int = 0,
+    val isAwaitingRelease: Boolean = false
 )
 
 object SeriesUpdateEngine {
@@ -112,6 +113,30 @@ object SeriesUpdateEngine {
     fun parseLatestEpisodeFromHtml(html: String): SeriesScanResult {
         if (html.isBlank()) {
             return SeriesScanResult(0, 0, "", false, errorMessage = "Пустой HTML")
+        }
+
+        val hasPlayer = html.contains("initCDNSeriesEvents") || html.contains("initCDNMoviesEvents")
+        val hasRealEpisodeTags = html.contains("b-simple_episode__item") || html.contains("data-episode_id")
+        val hasAwaitingSign = html.contains("В ожидании выхода", ignoreCase = true) ||
+                html.contains("в ожидании выхода") ||
+                html.contains("b-post__status_awaiting") ||
+                html.contains("ожидается выход", ignoreCase = true) ||
+                html.contains("скоро на экранах", ignoreCase = true) ||
+                html.contains("скоро на сайте", ignoreCase = true) ||
+                html.contains("В качестве:</h2>\n<td>В ожидании", ignoreCase = true) ||
+                html.contains("В качестве:</h2></td><td>В ожидании", ignoreCase = true)
+
+        // Если сериал или фильм еще не вышел, либо на странице нет плеера и нет реальных серий
+        if (hasAwaitingSign || (!hasPlayer && !hasRealEpisodeTags)) {
+            return SeriesScanResult(
+                latestSeason = 0,
+                latestEpisode = 0,
+                latestEpisodeName = "В ожидании выхода",
+                isSuccess = true,
+                isAwaitingRelease = true,
+                totalEpisodes = 0,
+                totalSeasons = 0
+            )
         }
 
         var maxSeason = 0
@@ -233,7 +258,7 @@ object SeriesUpdateEngine {
         }
 
         // 3. Текстовый парсинг статуса "X сезон Y серия" или "X серий" (для многосерийных фильмов)
-        if (!matchesFound || (maxSeason == 0 && maxEpisode == 0)) {
+        if (hasPlayer && (!matchesFound || (maxSeason == 0 && maxEpisode == 0))) {
             val statusMatch = STATUS_SEASON_EPISODE_REGEX.find(html)
             if (statusMatch != null) {
                 val season = statusMatch.groupValues[1].toIntOrNull() ?: 1

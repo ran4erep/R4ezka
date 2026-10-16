@@ -176,7 +176,7 @@ fun DetailScreen(
             val transId = selectedTranslator?.id ?: currentDetail?.translators?.firstOrNull()?.id
             viewModel.toggleSubscription(item, currentDetail, transId, false) { isSubNow, _, _ ->
                 if (isSubNow) {
-                    val isSeries = currentDetail?.hasEpisodes ?: (item.type == RezkaType.SERIES)
+                    val isSeries = currentDetail?.hasEpisodes ?: item.isSeriesContent()
                     val toastMsg = if (isSeries) "Подписка оформлена (уведомления о новых сериях)" else "Подписка оформлена: сообщим, как только фильм выйдет!"
                     Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
                 }
@@ -201,7 +201,7 @@ fun DetailScreen(
             } else {
                 viewModel.toggleSubscription(item, currentDetail, transId, false) { isSubNow, _, _ ->
                     if (isSubNow) {
-                        val isSeries = currentDetail?.hasEpisodes ?: (item.type == RezkaType.SERIES)
+                        val isSeries = currentDetail?.hasEpisodes ?: item.isSeriesContent()
                         val toastMsg = if (isSeries) "Подписка оформлена (уведомления о новых сериях)" else "Подписка оформлена: сообщим, как только фильм выйдет!"
                         Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
                     }
@@ -209,6 +209,7 @@ fun DetailScreen(
             }
         }
     }
+
 
     val scope = rememberCoroutineScope()
 
@@ -260,6 +261,33 @@ fun DetailScreen(
     var selectedSeasonId by remember { mutableStateOf<Int?>(null) }
     var selectedEpisodeId by remember { mutableStateOf<String?>(null) }
     var dynamicSeasons by remember { mutableStateOf<List<Season>>(emptyList()) }
+
+    val onToggleFavoriteClick: () -> Unit = {
+        val currentDetail = (detailState as? DetailState.Success)?.detail
+        val effectiveRating = when {
+            currentDetail != null && (!currentDetail.isReleased || currentDetail.rating.contains("ожидани", ignoreCase = true)) -> "В ожидании выхода"
+            currentDetail != null && currentDetail.hasEpisodes -> {
+                val effSeasons = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else currentDetail.seasons
+                val releasedSeasons = effSeasons.filter { it.episodes.isNotEmpty() }
+                if (releasedSeasons.isEmpty()) {
+                    "В ожидании выхода"
+                } else {
+                    val maxS = releasedSeasons.maxOfOrNull { it.id } ?: 1
+                    val maxE = releasedSeasons.find { it.id == maxS }?.episodes?.size ?: 1
+                    "$maxS сезон $maxE серия"
+                }
+            }
+            currentDetail != null -> currentDetail.rating.ifBlank { item.rating }
+            else -> if (com.example.ui.util.PosterBadgeEngine.isAwaiting(item.rating) || com.example.ui.util.PosterBadgeEngine.isAwaiting(item.subtitle)) "В ожидании выхода" else item.rating
+        }
+        val updatedItem = item.copy(
+            rating = effectiveRating,
+            title = currentDetail?.title?.takeIf { it.isNotBlank() } ?: item.title,
+            imageUrl = currentDetail?.imageUrl?.takeIf { it.isNotBlank() } ?: item.imageUrl,
+            type = currentDetail?.type ?: item.type
+        )
+        viewModel.toggleFavorite(updatedItem, isFavorite)
+    }
 
     // Deterministic calculation of comments section item index in the LazyColumn
     val commentsSectionIndex by remember(detailState, dynamicSeasons, selectedSeasonId) {
@@ -410,7 +438,7 @@ fun DetailScreen(
         selectedEpisodeId = episodeId
 
         val currentDetail = (detailState as? DetailState.Success)?.detail
-        val isSeries = currentDetail?.let { it.hasEpisodes } ?: (item.type == RezkaType.SERIES || episodeId.isNotBlank())
+        val isSeries = currentDetail?.let { it.hasEpisodes } ?: (item.isSeriesContent() || episodeId.isNotBlank())
         val effectiveSeason = if (isSeries) seasonId.coerceAtLeast(1) else 0
         val effectiveEpisode = if (isSeries) (if (episodeId.isBlank() || episodeId == "0") "1" else episodeId) else ""
 
@@ -521,12 +549,16 @@ fun DetailScreen(
                             episodeIndex = calculatedEpIndex,
                             totalSeasons = effectiveSeasons.size.coerceAtLeast(1)
                         )
-                    } else {
+                        val movieHistorySub = when (item.type) {
+                            RezkaType.ANIME -> "Аниме (фильм)"
+                            RezkaType.CARTOON -> "Мультфильм"
+                            else -> "Фильм"
+                        }
                         viewModel.saveWatchProgress(
                             itemId = item.id,
                             title = item.title,
                             imageUrl = effectiveImageUrl,
-                            subtitle = "Фильм",
+                            subtitle = movieHistorySub,
                             url = item.url,
                             translatorId = translator.id,
                             translatorName = translator.name,
@@ -902,6 +934,17 @@ fun DetailScreen(
                             }
                         }
                     }
+
+                    if (detail.hasEpisodes && detail.numericPostId.isNotEmpty()) {
+                        if (detail.seasons.isNotEmpty()) {
+                            val defTrans = detail.translators.find { it.isDefault } ?: detail.translators.firstOrNull()
+                            if (defTrans != null) {
+                                TranslatorEpisodeEngine.registerSeasons(detail.numericPostId, defTrans.id, detail.seasons)
+                            }
+                            TranslatorEpisodeEngine.registerSeasons(detail.numericPostId, "0", detail.seasons)
+                        }
+                        TranslatorEpisodeEngine.prefetchTranslators(detail.numericPostId, detail.translators, scope)
+                    }
                 }
             }
 
@@ -912,7 +955,7 @@ fun DetailScreen(
                         detail = detail,
                         item = item,
                         isFavorite = isFavorite,
-                        onToggleFavorite = { viewModel.toggleFavorite(item, isFavorite) },
+                        onToggleFavorite = onToggleFavoriteClick,
                         isSubscribed = isSubscribed,
                         onToggleSubscription = onToggleSubscriptionClick,
                         onDownloadClick = onDownloadClick,
@@ -2100,8 +2143,8 @@ fun DetailScreen(
                     }
                 }
 
-                    // 7. Cinema Play Movie button & Trailer button
-                    if (detail.type == RezkaType.MOVIE && effectiveSeasons.isEmpty()) {
+                    // 7. Cinema Play Movie button & Trailer button (для любых полнометражных фильмов, аниме и мультфильмов)
+                    if (!detail.hasEpisodes) {
                         item {
                             Spacer(modifier = Modifier.height(28.dp))
                             Column(
@@ -2236,15 +2279,20 @@ fun DetailScreen(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.Center
                                         ) {
+                                            val movieDownloadTitle = when (detail.type) {
+                                                RezkaType.ANIME -> "Загрузить аниме"
+                                                RezkaType.CARTOON -> "Загрузить мультфильм"
+                                                else -> "Загрузить фильм"
+                                            }
                                             Icon(
                                                 imageVector = Icons.Default.Download,
-                                                contentDescription = "Загрузить фильм",
+                                                contentDescription = movieDownloadTitle,
                                                 tint = CinemaPrimary,
                                                 modifier = Modifier.size(20.dp)
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                text = "Загрузить фильм",
+                                                text = movieDownloadTitle,
                                                 color = CinemaTextWhite,
                                                 fontSize = 14.sp,
                                                 fontWeight = FontWeight.Bold
@@ -2678,7 +2726,7 @@ fun DetailScreen(
 
                     // Плавающая кнопка Подписки (для сериалов или ещё не вышедших фильмов/тайтлов)
                     val detailObj = (detailState as? DetailState.Success)?.detail
-                    val isSeries = detailObj?.hasEpisodes ?: (item.type == RezkaType.SERIES)
+                    val isSeries = detailObj?.hasEpisodes ?: item.isSeriesContent()
                     val isUnreleased = detailObj?.isReleased == false
                     val showSubBtn = isSeries || isUnreleased || isSubscribed
 
@@ -2716,7 +2764,7 @@ fun DetailScreen(
                     IconButton(
                         onClick = {
                             HapticEngine.get().perform(HapticType.CONFIRM)
-                            viewModel.toggleFavorite(item, isFavorite)
+                            onToggleFavoriteClick()
                         },
                         modifier = Modifier
                             .size(46.dp)
@@ -3255,11 +3303,55 @@ fun DetailScreen(
         if (isPlayerOpen) {
             val streams = activePlayerStreams ?: emptyList()
             val currentDetail = (detailState as? DetailState.Success)?.detail
-            val isSeries = currentDetail?.let { it.hasEpisodes } ?: (item.type == RezkaType.SERIES)
+            val isSeries = currentDetail?.let { it.hasEpisodes } ?: item.isSeriesContent()
             val seasonsList = if (dynamicSeasons.isNotEmpty()) dynamicSeasons else (currentDetail?.seasons ?: emptyList())
             val curSeason = seasonsList.find { it.id == selectedSeasonId } ?: seasonsList.firstOrNull()
             val curEpisodes = curSeason?.episodes ?: emptyList()
-            val curEpisodeIndex = curEpisodes.indexOfFirst { it.id == selectedEpisodeId }
+            val curEpisode = curEpisodes.find { it.id == selectedEpisodeId }
+                ?: findMatchingEpisode(selectedEpisodeId.orEmpty(), selectedEpisodeId.orEmpty(), curEpisodes)
+                ?: curEpisodes.firstOrNull()
+            val curEpisodeIndex = if (curEpisode != null) curEpisodes.indexOfFirst { it.id == curEpisode.id } else curEpisodes.indexOfFirst { it.id == selectedEpisodeId }
+
+            val translatorCacheVersion by TranslatorEpisodeEngine.cacheVersion.collectAsState()
+
+            val curSeasonId = curSeason?.id ?: selectedSeasonId ?: 1
+            val curSeasonName = curSeason?.name.orEmpty()
+            val curEpisodeId = curEpisode?.id ?: selectedEpisodeId.orEmpty()
+            val curEpisodeName = curEpisode?.name.orEmpty()
+
+            val availableTranslators = remember(
+                translatorCacheVersion,
+                currentDetail?.translators,
+                selectedTranslator,
+                curSeasonId,
+                curSeasonName,
+                curEpisodeId,
+                curEpisodeName,
+                curEpisodeIndex,
+                isSeries
+            ) {
+                if (currentDetail != null && isSeries && currentDetail.numericPostId.isNotEmpty()) {
+                    TranslatorEpisodeEngine.filterTranslatorsForEpisode(
+                        numericPostId = currentDetail.numericPostId,
+                        allTranslators = currentDetail.translators,
+                        currentTranslator = selectedTranslator ?: currentDetail.translators.firstOrNull(),
+                        currentSeasonId = curSeasonId,
+                        currentSeasonName = curSeasonName,
+                        currentEpisodeId = curEpisodeId,
+                        currentEpisodeName = curEpisodeName,
+                        currentEpisodeIndex = curEpisodeIndex,
+                        isSeries = true
+                    )
+                } else {
+                    currentDetail?.translators ?: emptyList()
+                }
+            }
+
+            LaunchedEffect(isPlayerOpen, currentDetail?.numericPostId) {
+                if (isPlayerOpen && currentDetail != null && isSeries && currentDetail.numericPostId.isNotEmpty()) {
+                    TranslatorEpisodeEngine.prefetchTranslators(currentDetail.numericPostId, currentDetail.translators, scope)
+                }
+            }
 
             val hasPreviousEpisode = if (isSeries && curSeason != null) {
                 if (curEpisodeIndex > 0) {
@@ -3286,8 +3378,8 @@ fun DetailScreen(
                 streams = streams,
                 isLoading = isDecryptingStreams,
                 isTvMode = isTvMode,
-                translators = currentDetail?.translators ?: emptyList(),
-                currentTranslator = selectedTranslator ?: currentDetail?.translators?.firstOrNull(),
+                translators = availableTranslators,
+                currentTranslator = selectedTranslator ?: availableTranslators.firstOrNull() ?: currentDetail?.translators?.firstOrNull(),
                 onSelectTranslatorWithQuality = { newTrans, currentPosMs, currentQuality ->
                     selectedTranslator = newTrans
                     val qualityToKeep = currentQuality ?: currentPlayingQuality
@@ -3298,6 +3390,7 @@ fun DetailScreen(
                             try {
                                 val fetchedSeasons = viewModel.getEpisodesForTranslator(currentDetail.numericPostId, newTrans.id, newTrans.url)
                                 val effectiveSeasonsList = if (fetchedSeasons.isNotEmpty()) {
+                                    TranslatorEpisodeEngine.registerSeasons(currentDetail.numericPostId, newTrans.id, fetchedSeasons)
                                     dynamicSeasons = fetchedSeasons
                                     fetchedSeasons
                                 } else {
@@ -3311,7 +3404,7 @@ fun DetailScreen(
 
                                 val targetSeason = effectiveSeasonsList.find { s ->
                                     s.name.trim().lowercase() == currentSeasonName.trim().lowercase() ||
-                                    Regex("""\d+""").find(s.name)?.value == Regex("""\d+""").find(currentSeasonName)?.value
+                                    TranslatorEpisodeEngine.extractNumbers(s.name) == TranslatorEpisodeEngine.extractNumbers(currentSeasonName)
                                 } ?: effectiveSeasonsList.firstOrNull()
 
                                 val targetSeasonId = targetSeason?.id ?: curSeason?.id ?: 1
