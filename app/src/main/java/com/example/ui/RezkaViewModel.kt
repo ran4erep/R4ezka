@@ -387,6 +387,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     // Default catalog settings
     val defaultCatalogType: StateFlow<RezkaType?> = RezkaService.defaultCatalogType
     val defaultCatalogSection: StateFlow<SectionType> = RezkaService.defaultCatalogSection
+    val defaultCatalogGenre: StateFlow<String> = RezkaService.defaultCatalogGenre
+    val defaultCatalogCountry: StateFlow<String> = RezkaService.defaultCatalogCountry
 
     // Current filter selections
     private val _currentType = MutableStateFlow<RezkaType?>(RezkaService.defaultCatalogType.value)
@@ -395,7 +397,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val _currentSection = MutableStateFlow(RezkaService.defaultCatalogSection.value)
     val currentSection: StateFlow<SectionType> = _currentSection.asStateFlow()
 
-    private val _currentGenre = MutableStateFlow("")
+    private val _currentGenre = MutableStateFlow(RezkaService.defaultCatalogGenre.value)
     val currentGenre: StateFlow<String> = _currentGenre.asStateFlow()
 
     private val _genresList = MutableStateFlow<List<GenreItem>>(listOf(GenreItem("Без жанра", "")))
@@ -407,7 +409,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val _yearsList = MutableStateFlow<List<YearItem>>(listOf(YearItem("Все года", "")))
     val yearsList: StateFlow<List<YearItem>> = _yearsList.asStateFlow()
 
-    private val _currentCountry = MutableStateFlow("")
+    private val _currentCountry = MutableStateFlow(RezkaService.defaultCatalogCountry.value)
     val currentCountry: StateFlow<String> = _currentCountry.asStateFlow()
 
     private val _countriesList = MutableStateFlow<List<CountryItem>>(CountryFilterList.defaultCountries)
@@ -510,9 +512,36 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             requestCatalogScrollToTop()
             applySearchFilters()
         } else {
+            val oldType = _currentType.value
+            if (oldType == type) return
+
+            // Сохраняем активные фильтры года, страны и жанра без непреднамеренного сброса
+            val currentYearVal = _currentYear.value
+            val currentCountryVal = _currentCountry.value
+            val resolvedGenre = RezkaService.validateOrResolveGenre(type, _currentGenre.value)
+
             _currentType.value = type
+            _currentGenre.value = resolvedGenre
+            _currentYear.value = currentYearVal
+            _currentCountry.value = currentCountryVal
+
+            val cachedGenres = RezkaService.getGenresForCategory(type)
+            if (cachedGenres.isNotEmpty()) {
+                _genresList.value = cachedGenres
+            }
+            val cachedYears = RezkaService.getYearsForCategory(type)
+            if (cachedYears.isNotEmpty()) {
+                _yearsList.value = cachedYears
+            }
+
             requestCatalogScrollToTop()
-            loadCatalog(type = type, genre = "", year = "", forceRefresh = true)
+            loadCatalog(
+                type = type,
+                section = _currentSection.value,
+                genre = resolvedGenre,
+                year = currentYearVal,
+                forceRefresh = true
+            )
         }
     }
 
@@ -785,7 +814,16 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             startMirrorAudit(isFirstLaunch = true)
         } else {
             // Load default catalog on startup
-            loadCatalog(RezkaService.defaultCatalogType.value, RezkaService.defaultCatalogSection.value, "", forceRefresh = true)
+            val defType = RezkaService.defaultCatalogType.value
+            val defSection = RezkaService.defaultCatalogSection.value
+            val defGenre = RezkaService.defaultCatalogGenre.value
+            val defCountry = RezkaService.defaultCatalogCountry.value
+            _currentCountry.value = defCountry
+            _currentGenre.value = defGenre
+            loadCatalog(defType, defSection, defGenre, forceRefresh = true)
+            if (defCountry.isNotEmpty()) {
+                prefetchForCountryFilter(defCountry)
+            }
         }
     }
 
@@ -851,16 +889,21 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             resetSearchFilters()
             applySearchFilters()
         } else {
-            _currentCountry.value = ""
-            _currentGenre.value = ""
+            val defGenre = RezkaService.defaultCatalogGenre.value
+            val defCountry = RezkaService.defaultCatalogCountry.value
+            _currentCountry.value = defCountry
+            _currentGenre.value = defGenre
             _currentYear.value = ""
             loadCatalog(
                 type = RezkaService.defaultCatalogType.value,
                 section = RezkaService.defaultCatalogSection.value,
-                genre = "",
+                genre = defGenre,
                 year = "",
                 forceRefresh = true
             )
+            if (defCountry.isNotEmpty()) {
+                prefetchForCountryFilter(defCountry)
+            }
         }
     }
 
@@ -886,10 +929,14 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // If category changed, reset active genre and year to default
-        val actualGenre = if (type != _currentType.value) "" else genre
-        val actualYear = if (type != _currentType.value) "" else year
-        val actualCountry = if (type != _currentType.value) "" else _currentCountry.value
+        // При смене категории сохраняем год и страну, а жанр адаптируем под новую категорию
+        val actualGenre = if (type != _currentType.value) {
+            RezkaService.validateOrResolveGenre(type, genre)
+        } else {
+            genre
+        }
+        val actualYear = year
+        val actualCountry = _currentCountry.value
 
         val isFilterChanged = type != _currentType.value || section != _currentSection.value || actualGenre != _currentGenre.value || actualYear != _currentYear.value
         if (forceRefresh || isFilterChanged) {
@@ -2620,6 +2667,9 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     // Auto next episode setting
     val autoNextEpisode: StateFlow<Boolean> = RezkaService.autoNextEpisode
 
+    // Dirty Hands Mode (voice commands)
+    val dirtyHandsMode: StateFlow<Boolean> = RezkaService.dirtyHandsMode
+
     // Subtitle and Player settings
     val preferredSubtitleLang: StateFlow<String> = RezkaService.preferredSubtitleLang
     val subtitleTextScale: StateFlow<Float> = RezkaService.subtitleTextScale
@@ -2681,6 +2731,11 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         FirebaseSyncManager.onSettingsUpdated(autoNextEpisode = enabled)
     }
 
+    fun setDirtyHandsMode(enabled: Boolean) {
+        RezkaService.setDirtyHandsMode(enabled)
+        FirebaseSyncManager.onSettingsUpdated(dirtyHandsMode = enabled)
+    }
+
     fun setPreferredSubtitleLang(lang: String) {
         RezkaService.setPreferredSubtitleLang(lang)
         FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = lang)
@@ -2728,6 +2783,41 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             loadCatalog(type = _currentType.value, section = section, forceRefresh = true)
         }
         FirebaseSyncManager.onSettingsUpdated(defaultCatalogSection = section.name)
+    }
+
+    fun setDefaultCatalogGenre(genre: String) {
+        RezkaService.setDefaultCatalogGenre(genre)
+        if (searchQuery.isEmpty()) {
+            _currentGenre.value = genre
+            loadCatalog(
+                type = _currentType.value,
+                section = _currentSection.value,
+                genre = genre,
+                year = _currentYear.value,
+                forceRefresh = true
+            )
+        }
+        FirebaseSyncManager.onSettingsUpdated(defaultCatalogGenre = genre)
+    }
+
+    fun setDefaultCatalogCountry(country: String) {
+        RezkaService.setDefaultCatalogCountry(country)
+        if (searchQuery.isEmpty()) {
+            _currentCountry.value = country
+            requestCatalogScrollToTop()
+            if (country.isNotEmpty()) {
+                prefetchForCountryFilter(country)
+            } else {
+                loadCatalog(
+                    type = _currentType.value,
+                    section = _currentSection.value,
+                    genre = _currentGenre.value,
+                    year = _currentYear.value,
+                    forceRefresh = true
+                )
+            }
+        }
+        FirebaseSyncManager.onSettingsUpdated(defaultCatalogCountry = country)
     }
 
     fun setMirror(newUrl: String): Boolean {
@@ -2994,7 +3084,16 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         if (wasFirstLaunch) {
             RezkaService.markFirstLaunchAuditDone()
             RezkaService.resetMirrorToDefault()
-            loadCatalog(RezkaService.defaultCatalogType.value, RezkaService.defaultCatalogSection.value, "", forceRefresh = true)
+            val defType = RezkaService.defaultCatalogType.value
+            val defSection = RezkaService.defaultCatalogSection.value
+            val defGenre = RezkaService.defaultCatalogGenre.value
+            val defCountry = RezkaService.defaultCatalogCountry.value
+            _currentCountry.value = defCountry
+            _currentGenre.value = defGenre
+            loadCatalog(defType, defSection, defGenre, forceRefresh = true)
+            if (defCountry.isNotEmpty()) {
+                prefetchForCountryFilter(defCountry)
+            }
         }
     }
 

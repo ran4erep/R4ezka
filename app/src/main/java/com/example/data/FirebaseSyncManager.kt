@@ -586,6 +586,7 @@ object FirebaseSyncManager {
         mirror: String = RezkaService.currentMirror.value,
         quality: String = RezkaService.defaultQuality.value,
         autoNextEpisode: Boolean = RezkaService.autoNextEpisode.value,
+        dirtyHandsMode: Boolean = RezkaService.dirtyHandsMode.value,
         preferredSubtitleLang: String = RezkaService.preferredSubtitleLang.value,
         subtitleTextScale: Float = RezkaService.subtitleTextScale.value,
         resizeMode: String = RezkaService.defaultResizeMode.value,
@@ -593,7 +594,9 @@ object FirebaseSyncManager {
         cardGridMode: String = RezkaService.cardGridMode.value,
         seriesBadgeMode: String = RezkaService.seriesBadgeMode.value.id,
         defaultCatalogType: String = RezkaService.defaultCatalogType.value?.name ?: "ALL",
-        defaultCatalogSection: String = RezkaService.defaultCatalogSection.value.name
+        defaultCatalogSection: String = RezkaService.defaultCatalogSection.value.name,
+        defaultCatalogGenre: String = RezkaService.defaultCatalogGenre.value,
+        defaultCatalogCountry: String = RezkaService.defaultCatalogCountry.value
     ) {
         val key = _userKey.value ?: return
         scope.launch {
@@ -602,6 +605,7 @@ object FirebaseSyncManager {
                     put("mirror", mirror)
                     put("defaultQuality", quality)
                     put("autoNextEpisode", autoNextEpisode)
+                    put("dirtyHandsMode", dirtyHandsMode)
                     put("preferredSubtitleLang", preferredSubtitleLang)
                     put("subtitleTextScale", subtitleTextScale.toDouble())
                     put("resizeMode", resizeMode)
@@ -610,6 +614,8 @@ object FirebaseSyncManager {
                     put("seriesBadgeMode", seriesBadgeMode)
                     put("defaultCatalogType", defaultCatalogType)
                     put("defaultCatalogSection", defaultCatalogSection)
+                    put("defaultCatalogGenre", defaultCatalogGenre)
+                    put("defaultCatalogCountry", defaultCatalogCountry)
                     put("updatedAt", System.currentTimeMillis())
                 }
                 val request = Request.Builder()
@@ -618,7 +624,7 @@ object FirebaseSyncManager {
                     .build()
                 httpClient.newCall(request).execute().use { resp ->
                     if (resp.isSuccessful) {
-                        Log.d(TAG, "Settings synced to cloud: mirror=$mirror, quality=$quality, autoNext=$autoNextEpisode, sub=$preferredSubtitleLang, subScale=$subtitleTextScale, resize=$resizeMode, tvMode=$tvMode, cardGridMode=$cardGridMode, defaultType=$defaultCatalogType, defaultSection=$defaultCatalogSection")
+                        Log.d(TAG, "Settings synced to cloud: mirror=$mirror, quality=$quality, autoNext=$autoNextEpisode, dirtyHands=$dirtyHandsMode, sub=$preferredSubtitleLang, subScale=$subtitleTextScale, resize=$resizeMode, tvMode=$tvMode, cardGridMode=$cardGridMode, defaultType=$defaultCatalogType, defaultSection=$defaultCatalogSection, defaultGenre=$defaultCatalogGenre, defaultCountry=$defaultCatalogCountry")
                     } else {
                         val errorBody = try { resp.body?.string() ?: "" } catch (_: Exception) { "" }
                         Log.w(TAG, "Failed to sync settings to Firebase (HTTP ${resp.code}): $errorBody")
@@ -626,6 +632,48 @@ object FirebaseSyncManager {
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync settings to Firebase: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Выгрузка сжатого ZLIB образца голосовой команды в облако Firebase.
+     * Занимает считанные сотни байт в базе данных.
+     */
+    fun onVoiceCommandUpdated(actionId: String, compressedBase64: String) {
+        val key = _userKey.value ?: return
+        scope.launch {
+            try {
+                val json = JSONObject().apply {
+                    put(actionId, compressedBase64)
+                }
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/voice_commands.json")
+                    .patch(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                httpClient.newCall(request).execute().close()
+                Log.d(TAG, "Uploaded compressed voice command $actionId to cloud (~${compressedBase64.length} chars)")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to upload voice command to Firebase: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Удаление голосовой команды из облачной базы данных Firebase.
+     */
+    fun onVoiceCommandDeleted(actionId: String) {
+        val key = _userKey.value ?: return
+        scope.launch {
+            try {
+                val request = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/voice_commands/$actionId.json")
+                    .delete()
+                    .build()
+                httpClient.newCall(request).execute().close()
+                Log.d(TAG, "Deleted voice command $actionId from cloud")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to delete voice command from Firebase: ${e.message}")
             }
         }
     }
@@ -960,6 +1008,13 @@ object FirebaseSyncManager {
                                 RezkaService.setAutoNextEpisode(remoteAutoNext)
                             }
                         }
+                        val hasDirtyHands = setJson.has("dirtyHandsMode")
+                        val remoteDirtyHands = setJson.optBoolean("dirtyHandsMode", false)
+                        if (hasDirtyHands && remoteDirtyHands != RezkaService.dirtyHandsMode.value) {
+                            withContext(Dispatchers.Main) {
+                                RezkaService.setDirtyHandsMode(remoteDirtyHands)
+                            }
+                        }
                         if (remoteSubLang.isNotBlank() && remoteSubLang != RezkaService.preferredSubtitleLang.value) {
                             withContext(Dispatchers.Main) {
                                 RezkaService.setPreferredSubtitleLang(remoteSubLang)
@@ -1015,6 +1070,18 @@ object FirebaseSyncManager {
                                     }
                                 }
                             } catch (_: Exception) {}
+                        }
+                        val remoteGenre = setJson.optString("defaultCatalogGenre", "")
+                        if (remoteGenre != RezkaService.defaultCatalogGenre.value) {
+                            withContext(Dispatchers.Main) {
+                                RezkaService.setDefaultCatalogGenre(remoteGenre)
+                            }
+                        }
+                        val remoteCountry = setJson.optString("defaultCatalogCountry", "")
+                        if (remoteCountry != RezkaService.defaultCatalogCountry.value) {
+                            withContext(Dispatchers.Main) {
+                                RezkaService.setDefaultCatalogCountry(remoteCountry)
+                            }
                         }
                     } else {
                         // В облаке ещё нет настроек пользователя - выгружаем текущие
@@ -1154,6 +1221,34 @@ object FirebaseSyncManager {
                 Log.w(TAG, "Failed to sync subscriptions from Firebase: ${e.message}")
             }
 
+            // 6. Синхронизация голосовых команд режима «Грязные руки» (со сжатием ZLIB)
+            try {
+                val voiceReq = Request.Builder().url("$DATABASE_URL/users/$key/voice_commands.json").get().build()
+                val voiceResp = httpClient.newCall(voiceReq).execute()
+                if (voiceResp.isSuccessful) {
+                    val voiceBody = voiceResp.body?.string()?.trim() ?: ""
+                    if (voiceBody != "null" && voiceBody.isNotEmpty() && voiceBody.startsWith("{")) {
+                        val cloudCommands = JSONObject(voiceBody)
+                        DirtyHandsEngine.importCloudVoiceCommands(cloudCommands)
+                    }
+                }
+                // Дозаливаем локальные команды, которых ещё нет в облаке
+                val localCommands = DirtyHandsEngine.getAllCompressedCommands()
+                if (localCommands.isNotEmpty()) {
+                    val patchJson = JSONObject()
+                    for ((cmdAction, cmdData) in localCommands) {
+                        patchJson.put(cmdAction, cmdData)
+                    }
+                    val patchReq = Request.Builder()
+                        .url("$DATABASE_URL/users/$key/voice_commands.json")
+                        .patch(patchJson.toString().toRequestBody(JSON_MEDIA_TYPE))
+                        .build()
+                    httpClient.newCall(patchReq).execute().close()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to sync voice commands from Firebase: ${e.message}")
+            }
+
             Log.d(TAG, "Sync complete: ${remoteFavorites.size} favorites, ${remoteHistory.size} history items")
         } catch (e: Exception) {
             Log.e(TAG, "Error during syncAll: ${e.message}", e)
@@ -1209,6 +1304,20 @@ object FirebaseSyncManager {
                 val req = Request.Builder()
                     .url("$DATABASE_URL/users/$key/subscriptions.json")
                     .patch(subJson.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                httpClient.newCall(req).execute().close()
+            }
+
+            // Выгружаем голосовые команды в облако со сжатием ZLIB
+            val localVoice = DirtyHandsEngine.getAllCompressedCommands()
+            if (localVoice.isNotEmpty()) {
+                val voiceJson = JSONObject()
+                for ((a, d) in localVoice) {
+                    voiceJson.put(a, d)
+                }
+                val req = Request.Builder()
+                    .url("$DATABASE_URL/users/$key/voice_commands.json")
+                    .patch(voiceJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 httpClient.newCall(req).execute().close()
             }

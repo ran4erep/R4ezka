@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.gestures.Orientation
@@ -72,6 +73,18 @@ import com.example.ui.tv.requestFocusSafe
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.input.key.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import com.example.data.CountryItem
+import com.example.data.GenreItem
+import com.example.ui.components.StableDropdownPositionProvider
+import com.example.ui.components.filterCountryItems
+import com.example.ui.components.DirtyHandsSettingsSection
+import com.example.ui.haptics.LocalHapticEngine
 import kotlinx.coroutines.launch
 
 private data class QualityOption(
@@ -105,6 +118,10 @@ fun SettingsScreen(
     var badgeModeDropdownExpanded by remember { mutableStateOf(false) }
     val defaultCatalogType by viewModel.defaultCatalogType.collectAsState()
     val defaultCatalogSection by viewModel.defaultCatalogSection.collectAsState()
+    val defaultCatalogGenre by viewModel.defaultCatalogGenre.collectAsState()
+    val defaultCatalogCountry by viewModel.defaultCatalogCountry.collectAsState()
+    val genresList by viewModel.genresList.collectAsState()
+    val countriesList by viewModel.countriesList.collectAsState()
     val dnsPreference by viewModel.dnsPreference.collectAsState()
     val customDnsAddress by viewModel.customDnsAddress.collectAsState()
     var customDnsInput by remember(customDnsAddress) { mutableStateOf(customDnsAddress) }
@@ -171,6 +188,8 @@ fun SettingsScreen(
     val playbackLastItemRequester = remember { FocusRequester() }
     val tvFirstItemRequester = remember { FocusRequester() }
     val tvLastItemRequester = remember { FocusRequester() }
+    val defaultGenreRequester = remember { FocusRequester() }
+    val defaultCountryRequester = remember { FocusRequester() }
     val subscriptionsFirstItemRequester = remember { FocusRequester() }
     val subscriptionsLastItemRequester = remember { FocusRequester() }
     val offlineFirstItemRequester = remember { FocusRequester() }
@@ -1567,6 +1586,13 @@ fun SettingsScreen(
                         HorizontalDivider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
                         Spacer(modifier = Modifier.height(16.dp))
 
+                        // Режим «Грязные руки» (управление воспроизведением голосовыми метками)
+                        DirtyHandsSettingsSection(viewModel = viewModel)
+
+                        Spacer(modifier = Modifier.height(18.dp))
+                        HorizontalDivider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(16.dp))
+
                         // Настройка: Режим масштабирования видео (FIT, ZOOM, FILL)
                         Text(
                             text = "Масштабирование видео по умолчанию",
@@ -2188,7 +2214,7 @@ fun SettingsScreen(
                                                 if (isLastSection) {
                                                     Modifier.onKeyEvent { keyEvent ->
                                                         if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
-                                                            subscriptionsCategoryRequester.requestFocusSafe()
+                                                            defaultGenreRequester.requestFocusSafe()
                                                             true
                                                         } else false
                                                     }
@@ -2197,8 +2223,7 @@ fun SettingsScreen(
                                             .tvFocusableItem(
                                                 onClick = triggerSection,
                                                 shape = RoundedCornerShape(10.dp),
-                                                scaleFactor = 1.02f,
-                                                focusRequester = if (isLastSection) tvLastItemRequester else null
+                                                scaleFactor = 1.02f
                                             )
                                             .testTag("default_section_${section.name.lowercase()}")
                                     ) {
@@ -2229,6 +2254,59 @@ fun SettingsScreen(
                                 }
                             }
                         }
+
+                        val availableDefaultGenres = remember(defaultCatalogType, genresList) {
+                            RezkaService.getGenresForCategory(defaultCatalogType)
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Подраздел: Жанр
+                        Text(
+                            text = "Жанр",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = CinemaTextWhite
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        DefaultGenreDropdown(
+                            selectedGenreSlug = defaultCatalogGenre,
+                            genres = availableDefaultGenres,
+                            onGenreSelected = { slug ->
+                                val name = availableDefaultGenres.find { it.slug == slug }?.name ?: "Все жанры"
+                                viewModel.setDefaultCatalogGenre(slug)
+                                Toast.makeText(context, "Жанр по умолчанию: $name", Toast.LENGTH_SHORT).show()
+                            },
+                            focusRequester = defaultGenreRequester,
+                            onDown = { tvLastItemRequester.requestFocusSafe() },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Подраздел: Страна
+                        Text(
+                            text = "Страна",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = CinemaTextWhite
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        DefaultCountryDropdown(
+                            selectedCountryQuery = defaultCatalogCountry,
+                            countries = countriesList,
+                            onCountrySelected = { query ->
+                                val name = countriesList.find { it.query == query }?.name ?: if (query.isEmpty()) "Все страны" else query
+                                viewModel.setDefaultCatalogCountry(query)
+                                Toast.makeText(context, "Страна по умолчанию: $name", Toast.LENGTH_SHORT).show()
+                            },
+                            focusRequester = tvLastItemRequester,
+                            onDown = { subscriptionsCategoryRequester.requestFocusSafe() },
+                            onUp = { defaultGenreRequester.requestFocusSafe() },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }
@@ -3493,5 +3571,459 @@ private fun CustomGridDialog(
             }
         }
     )
+}
+
+/**
+ * Высокопроизводительный выпадающий список для выбора жанра по умолчанию в настройках.
+ * Обеспечивает мгновенный отклик, чистый рендеринг без лишних аллокаций и плавную навигацию.
+ */
+@Composable
+private fun DefaultGenreDropdown(
+    selectedGenreSlug: String,
+    genres: List<GenreItem>,
+    onGenreSelected: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+    onDown: (() -> Unit)? = null,
+    onUp: (() -> Unit)? = null
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+
+    val currentGenreItem = remember(genres, selectedGenreSlug) {
+        genres.find { it.slug.equals(selectedGenreSlug, ignoreCase = true) }
+            ?: genres.firstOrNull()
+            ?: GenreItem("Все жанры", "")
+    }
+
+    val lazyListState = rememberLazyListState()
+
+    BackHandler(enabled = expanded) {
+        expanded = false
+    }
+
+    Box(modifier = modifier) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(CinemaCard)
+                .border(
+                    1.dp,
+                    if (expanded) CinemaPrimary else CinemaMuted.copy(alpha = 0.25f),
+                    RoundedCornerShape(10.dp)
+                )
+                .then(
+                    if (onDown != null || onUp != null) {
+                        Modifier.onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                        onDown?.invoke()
+                                        onDown != null
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                        onUp?.invoke()
+                                        onUp != null
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
+                    } else Modifier
+                )
+                .tvFocusableItem(
+                    onClick = { expanded = !expanded },
+                    shape = RoundedCornerShape(10.dp),
+                    scaleFactor = 1.0f,
+                    focusRequester = focusRequester
+                )
+                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .testTag("default_genre_dropdown_trigger"),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f, fill = false)
+            ) {
+                Text(
+                    text = currentGenreItem.name,
+                    color = CinemaTextWhite,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(
+                imageVector = if (expanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                contentDescription = "Выбор жанра",
+                tint = CinemaPrimary,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+
+        if (expanded) {
+            val positionProvider = remember(density) {
+                StableDropdownPositionProvider(density, verticalOffsetDp = 6)
+            }
+
+            Popup(
+                popupPositionProvider = positionProvider,
+                onDismissRequest = {
+                    expanded = false
+                },
+                properties = PopupProperties(focusable = true)
+            ) {
+                Surface(
+                    color = CinemaDark,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+                    shadowElevation = 8.dp,
+                    modifier = Modifier
+                        .widthIn(min = 280.dp, max = 360.dp)
+                        .heightIn(max = 380.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp)
+                    ) {
+                        LazyColumn(
+                            state = lazyListState,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = false)
+                        ) {
+                            items(
+                                items = genres,
+                                key = { it.slug }
+                            ) { item ->
+                                val isSelected = selectedGenreSlug.equals(item.slug, ignoreCase = true)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            HapticEngine.get().perform(HapticType.SELECTION)
+                                            expanded = false
+                                            onGenreSelected(item.slug)
+                                        }
+                                        .background(if (isSelected) CinemaPrimary.copy(alpha = 0.12f) else Color.Transparent)
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = item.name,
+                                        color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                        fontSize = 13.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = CinemaPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Высокопроизводительный виртуализированный выпадающий список для выбора страны по умолчанию в настройках.
+ * Быстрая фильтрация из 200+ стран с флагами, закрепленным пунктом «Все страны» и нулевой нагрузкой на CPU.
+ */
+@Composable
+private fun DefaultCountryDropdown(
+    selectedCountryQuery: String,
+    countries: List<CountryItem>,
+    onCountrySelected: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+    onDown: (() -> Unit)? = null,
+    onUp: (() -> Unit)? = null
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    val density = LocalDensity.current
+
+    val currentCountryItem = remember(countries, selectedCountryQuery) {
+        countries.find { it.query.equals(selectedCountryQuery, ignoreCase = true) }
+            ?: countries.firstOrNull { it.query.isEmpty() }
+            ?: CountryItem("Все страны", "")
+    }
+
+    val allCountriesItem = remember(countries) {
+        countries.firstOrNull { it.query.isEmpty() } ?: CountryItem("Все страны", "")
+    }
+
+    val rawCountries = remember(countries) {
+        countries.filter { it.query.isNotEmpty() }
+    }
+
+    val filteredCountries = remember(rawCountries, searchQuery) {
+        if (searchQuery.isBlank()) {
+            rawCountries
+        } else {
+            filterCountryItems(rawCountries, searchQuery)
+        }
+    }
+
+    val lazyListState = rememberLazyListState()
+
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isNotBlank()) {
+            lazyListState.scrollToItem(0)
+        }
+    }
+
+    LaunchedEffect(expanded) {
+        if (!expanded) {
+            searchQuery = ""
+        }
+    }
+
+    BackHandler(enabled = expanded) {
+        expanded = false
+    }
+
+    Box(modifier = modifier) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(CinemaCard)
+                .border(
+                    1.dp,
+                    if (expanded) CinemaPrimary else CinemaMuted.copy(alpha = 0.25f),
+                    RoundedCornerShape(10.dp)
+                )
+                .then(
+                    if (onDown != null || onUp != null) {
+                        Modifier.onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                        onDown?.invoke()
+                                        onDown != null
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                        onUp?.invoke()
+                                        onUp != null
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
+                    } else Modifier
+                )
+                .tvFocusableItem(
+                    onClick = { expanded = !expanded },
+                    shape = RoundedCornerShape(10.dp),
+                    scaleFactor = 1.0f,
+                    focusRequester = focusRequester
+                )
+                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .testTag("default_country_dropdown_trigger"),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f, fill = false)
+            ) {
+                Text(
+                    text = currentCountryItem.name,
+                    color = CinemaTextWhite,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(
+                imageVector = if (expanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                contentDescription = "Выбор страны",
+                tint = CinemaPrimary,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+
+        if (expanded) {
+            val positionProvider = remember(density) {
+                StableDropdownPositionProvider(density, verticalOffsetDp = 6)
+            }
+
+            Popup(
+                popupPositionProvider = positionProvider,
+                onDismissRequest = {
+                    expanded = false
+                    searchQuery = ""
+                },
+                properties = PopupProperties(focusable = true)
+            ) {
+                Surface(
+                    color = CinemaDark,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
+                    shadowElevation = 8.dp,
+                    modifier = Modifier
+                        .widthIn(min = 280.dp, max = 360.dp)
+                        .heightIn(max = 380.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp)
+                    ) {
+                        // 1. Фиксированный пункт «Все страны» (всегда сверху)
+                        val isAllSelected = selectedCountryQuery.isEmpty()
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    HapticEngine.get().perform(HapticType.SELECTION)
+                                    expanded = false
+                                    onCountrySelected("")
+                                }
+                                .background(if (isAllSelected) CinemaPrimary.copy(alpha = 0.12f) else Color.Transparent)
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = allCountriesItem.name,
+                                color = if (isAllSelected) CinemaPrimary else CinemaTextWhite,
+                                fontSize = 13.sp,
+                                fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.SemiBold
+                            )
+                            if (isAllSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = CinemaPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = CinemaMuted.copy(alpha = 0.25f), thickness = 1.dp)
+
+                        // 2. Поле поиска
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(CinemaCard)
+                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                tint = CinemaTextGray,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            androidx.compose.foundation.text.BasicTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                singleLine = true,
+                                textStyle = androidx.compose.ui.text.TextStyle(
+                                    color = CinemaTextWhite,
+                                    fontSize = 13.sp
+                                ),
+                                cursorBrush = androidx.compose.ui.graphics.SolidColor(CinemaPrimary),
+                                modifier = Modifier.weight(1f),
+                                decorationBox = { innerTextField ->
+                                    if (searchQuery.isEmpty()) {
+                                        Text(
+                                            text = "Поиск страны...",
+                                            color = CinemaTextGray.copy(alpha = 0.6f),
+                                            fontSize = 13.sp
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            )
+                            if (searchQuery.isNotEmpty()) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Очистить",
+                                    tint = CinemaTextGray,
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .clickable { searchQuery = "" }
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = CinemaMuted.copy(alpha = 0.25f), thickness = 1.dp)
+
+                        // 3. Виртуализированный LazyColumn со странами
+                        LazyColumn(
+                            state = lazyListState,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = false)
+                        ) {
+                            items(
+                                items = filteredCountries,
+                                key = { it.query }
+                            ) { item ->
+                                val isSelected = selectedCountryQuery.equals(item.query, ignoreCase = true)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            HapticEngine.get().perform(HapticType.SELECTION)
+                                            expanded = false
+                                            onCountrySelected(item.query)
+                                        }
+                                        .background(if (isSelected) CinemaPrimary.copy(alpha = 0.12f) else Color.Transparent)
+                                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = item.name,
+                                        color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                        fontSize = 13.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = CinemaPrimary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 

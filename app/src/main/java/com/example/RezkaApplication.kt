@@ -30,6 +30,7 @@ class RezkaApplication : Application(), ImageLoaderFactory {
         com.example.ui.haptics.HapticEngine.init(this)
         com.example.data.NetworkMonitor.init(this)
         RezkaService.init(this)
+        com.example.data.DirtyHandsEngine.init(this)
         FirebaseSyncManager.init(this, repository)
         com.example.data.SeriesUpdateEngine.createNotificationChannel(this)
         

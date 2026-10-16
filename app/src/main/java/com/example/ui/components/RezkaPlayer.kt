@@ -13,6 +13,11 @@ import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.WindowManager
 import android.view.KeyEvent as AndroidKeyEvent
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import com.example.data.DirtyHandsAction
+import com.example.data.DirtyHandsEngine
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -627,6 +632,82 @@ fun RezkaPlayer(
     val shouldShowPause by remember {
         derivedStateOf {
             isPlayWhenReady && playbackState != Player.STATE_ENDED
+        }
+    }
+
+    // Режим «Грязные руки»: прослушивание микрофона во время воспроизведения в плеере
+    val dirtyHandsEnabled by RezkaService.dirtyHandsMode.collectAsState()
+    DisposableEffect(lifecycleOwner, exoPlayer, dirtyHandsEnabled) {
+        val hasAudioPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val startVoiceListeningIfAllowed = {
+            if (dirtyHandsEnabled && hasAudioPermission) {
+                DirtyHandsEngine.startListening(context) { action ->
+                    HapticEngine.get().perform(HapticType.CONFIRM)
+                    when (action) {
+                        DirtyHandsAction.PAUSE -> {
+                            exoPlayer.pause()
+                            isPlayWhenReady = false
+                            screenNotificationMessage = "Голосовая команда: Пауза"
+                        }
+                        DirtyHandsAction.RESUME -> {
+                            exoPlayer.play()
+                            isPlayWhenReady = true
+                            screenNotificationMessage = "Голосовая команда: Продолжить"
+                        }
+                        DirtyHandsAction.NEXT_EPISODE -> {
+                            if (isSeries && hasNextEpisode && onNextEpisode != null) {
+                                onNextEpisode.invoke()
+                                screenNotificationMessage = "Голосовая команда: Следующая серия"
+                            } else {
+                                val cur = exoPlayer.currentPosition
+                                val dur = exoPlayer.duration.coerceAtLeast(0L)
+                                exoPlayer.seekTo((cur + 15000L).coerceAtMost(dur))
+                                screenNotificationMessage = "Голосовая команда: Вперед +15 сек"
+                            }
+                        }
+                        DirtyHandsAction.PREV_EPISODE -> {
+                            if (isSeries && hasPreviousEpisode && onPreviousEpisode != null) {
+                                onPreviousEpisode.invoke()
+                                screenNotificationMessage = "Голосовая команда: Предыдущая серия"
+                            } else {
+                                val cur = exoPlayer.currentPosition
+                                exoPlayer.seekTo((cur - 15000L).coerceAtLeast(0L))
+                                screenNotificationMessage = "Голосовая команда: Назад -15 сек"
+                            }
+                        }
+                        DirtyHandsAction.SEEK_FORWARD -> {
+                            val cur = exoPlayer.currentPosition
+                            val dur = exoPlayer.duration.coerceAtLeast(0L)
+                            exoPlayer.seekTo((cur + 15000L).coerceAtMost(dur))
+                            screenNotificationMessage = "Голосовая команда: Вперед +15с"
+                        }
+                        DirtyHandsAction.SEEK_BACKWARD -> {
+                            val cur = exoPlayer.currentPosition
+                            exoPlayer.seekTo((cur - 15000L).coerceAtLeast(0L))
+                            screenNotificationMessage = "Голосовая команда: Назад -15с"
+                        }
+                    }
+                }
+            }
+        }
+
+        startVoiceListeningIfAllowed()
+
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                DirtyHandsEngine.stopListening()
+            } else if (event == Lifecycle.Event.ON_RESUME) {
+                startVoiceListeningIfAllowed()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            DirtyHandsEngine.stopListening()
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
@@ -2174,6 +2255,7 @@ fun RezkaPlayer(
                     ) {
                         Icon(
                             imageVector = when {
+                                screenNotificationMessage?.startsWith("Голосовая команда:") == true -> Icons.Default.RecordVoiceOver
                                 screenNotificationMessage?.contains("разблокирован") == true -> Icons.Default.LockOpen
                                 screenNotificationMessage?.contains("заблокирован") == true -> Icons.Default.Lock
                                 currentResizeMode == VideoResizeMode.FIT -> Icons.Default.FitScreen

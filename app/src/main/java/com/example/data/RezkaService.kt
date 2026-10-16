@@ -37,6 +37,7 @@ import java.net.InetAddress
 import java.net.URLEncoder
 import java.net.UnknownHostException
 import java.security.MessageDigest
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
@@ -1505,6 +1506,10 @@ object RezkaService {
     private val _autoNextEpisode = MutableStateFlow(true)
     val autoNextEpisode: StateFlow<Boolean> = _autoNextEpisode.asStateFlow()
 
+    // Режим «Грязные руки»: управление воспроизведением голосовыми метками (по умолчанию выключен)
+    private val _dirtyHandsMode = MutableStateFlow(false)
+    val dirtyHandsMode: StateFlow<Boolean> = _dirtyHandsMode.asStateFlow()
+
     // Предпочтительный язык субтитров ("ru", "en", "uk", "off" и т.д.)
     private val _preferredSubtitleLang = MutableStateFlow("ru")
     val preferredSubtitleLang: StateFlow<String> = _preferredSubtitleLang.asStateFlow()
@@ -1566,6 +1571,8 @@ object RezkaService {
 
     const val KEY_DEFAULT_CATALOG_TYPE = "default_catalog_type"
     const val KEY_DEFAULT_CATALOG_SECTION = "default_catalog_section"
+    const val KEY_DEFAULT_CATALOG_GENRE = "default_catalog_genre"
+    const val KEY_DEFAULT_CATALOG_COUNTRY = "default_catalog_country"
     const val KEY_SETTINGS_UPDATED_AT = "settings_updated_at"
     const val KEY_DNS_PREFERENCE = "dns_preference"
     const val KEY_CUSTOM_DNS = "dns_custom_address"
@@ -1581,6 +1588,12 @@ object RezkaService {
 
     private val _defaultCatalogSection = MutableStateFlow(SectionType.LATEST)
     val defaultCatalogSection: StateFlow<SectionType> = _defaultCatalogSection.asStateFlow()
+
+    private val _defaultCatalogGenre = MutableStateFlow("")
+    val defaultCatalogGenre: StateFlow<String> = _defaultCatalogGenre.asStateFlow()
+
+    private val _defaultCatalogCountry = MutableStateFlow("")
+    val defaultCatalogCountry: StateFlow<String> = _defaultCatalogCountry.asStateFlow()
 
     private val _settingsUpdatedAt = MutableStateFlow(0L)
     val settingsUpdatedAt: StateFlow<Long> = _settingsUpdatedAt.asStateFlow()
@@ -1613,6 +1626,9 @@ object RezkaService {
 
         val savedAutoNext = prefs?.getBoolean("auto_next_episode", true) ?: true
         _autoNextEpisode.value = savedAutoNext
+
+        val savedDirtyHands = prefs?.getBoolean("dirty_hands_mode", false) ?: false
+        _dirtyHandsMode.value = savedDirtyHands
 
         val savedSubLang = prefs?.getString("preferred_subtitle_lang", "ru") ?: "ru"
         _preferredSubtitleLang.value = savedSubLang
@@ -1659,6 +1675,12 @@ object RezkaService {
         }
         _defaultCatalogSection.value = parsedSection
 
+        val savedGenreStr = prefs?.getString(KEY_DEFAULT_CATALOG_GENRE, "") ?: ""
+        _defaultCatalogGenre.value = savedGenreStr
+
+        val savedCountryStr = prefs?.getString(KEY_DEFAULT_CATALOG_COUNTRY, "") ?: ""
+        _defaultCatalogCountry.value = savedCountryStr
+
         val savedSettingsUpdatedAt = prefs?.getLong(KEY_SETTINGS_UPDATED_AT, 0L) ?: 0L
         _settingsUpdatedAt.value = savedSettingsUpdatedAt
 
@@ -1703,6 +1725,11 @@ object RezkaService {
     fun setAutoNextEpisode(enabled: Boolean) {
         _autoNextEpisode.value = enabled
         prefs?.edit()?.putBoolean("auto_next_episode", enabled)?.apply()
+    }
+
+    fun setDirtyHandsMode(enabled: Boolean) {
+        _dirtyHandsMode.value = enabled
+        prefs?.edit()?.putBoolean("dirty_hands_mode", enabled)?.apply()
     }
 
     fun setPreferredSubtitleLang(lang: String) {
@@ -1792,6 +1819,28 @@ object RezkaService {
         _settingsUpdatedAt.value = now
         prefs?.edit()
             ?.putString(KEY_DEFAULT_CATALOG_SECTION, section.name)
+            ?.putLong(KEY_SETTINGS_UPDATED_AT, now)
+            ?.commit()
+    }
+
+    fun setDefaultCatalogGenre(genre: String) {
+        val valid = genre.trim()
+        _defaultCatalogGenre.value = valid
+        val now = System.currentTimeMillis()
+        _settingsUpdatedAt.value = now
+        prefs?.edit()
+            ?.putString(KEY_DEFAULT_CATALOG_GENRE, valid)
+            ?.putLong(KEY_SETTINGS_UPDATED_AT, now)
+            ?.commit()
+    }
+
+    fun setDefaultCatalogCountry(country: String) {
+        val valid = country.trim()
+        _defaultCatalogCountry.value = valid
+        val now = System.currentTimeMillis()
+        _settingsUpdatedAt.value = now
+        prefs?.edit()
+            ?.putString(KEY_DEFAULT_CATALOG_COUNTRY, valid)
             ?.putLong(KEY_SETTINGS_UPDATED_AT, now)
             ?.commit()
     }
@@ -2646,12 +2695,144 @@ object RezkaService {
     private val categoryYears = ConcurrentHashMap<RezkaType, List<YearItem>>()
     private val collectionsCache = LruCache<String, List<CollectionItem>>(20)
 
+    val COMMON_GENRES: List<GenreItem> = listOf(
+        GenreItem("Аниме", "anime"),
+        GenreItem("Биография", "biographical"),
+        GenreItem("Боевики", "action"),
+        GenreItem("Вестерны", "western"),
+        GenreItem("Военные", "military"),
+        GenreItem("Детективы", "detective"),
+        GenreItem("Детские", "kids"),
+        GenreItem("Документальные", "documentary"),
+        GenreItem("Дорамы", "dorama"),
+        GenreItem("Драмы", "drama"),
+        GenreItem("Исторические", "historical"),
+        GenreItem("Комедии", "comedy"),
+        GenreItem("Короткометражки", "short"),
+        GenreItem("Криминал", "crime"),
+        GenreItem("Мелодрамы", "romance"),
+        GenreItem("Мистические", "mystery"),
+        GenreItem("Мультфильмы", "cartoons"),
+        GenreItem("Мюзиклы", "musical"),
+        GenreItem("Приключения", "adventure"),
+        GenreItem("Семейные", "family"),
+        GenreItem("Спорт", "sports"),
+        GenreItem("Триллеры", "thriller"),
+        GenreItem("Ужасы", "horror"),
+        GenreItem("Фантастика", "sci-fi"),
+        GenreItem("Фэнтези", "fantasy")
+    )
+
+    fun getGenreNameBySlug(slug: String): String {
+        if (slug.isEmpty()) return "Все жанры"
+        for (list in categoryGenres.values) {
+            val found = list.find { it.slug.equals(slug, ignoreCase = true) }
+            if (found != null) return found.name
+        }
+        val foundCommon = COMMON_GENRES.find { it.slug.equals(slug, ignoreCase = true) }
+        if (foundCommon != null) return foundCommon.name
+        return slug.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
+    }
+
+    /**
+     * Интеллектуальное сопоставление и сохранение жанра при смене категории каталога.
+     * Не сбрасывает жанры, поддерживаемые новой категорией или общеупотребительные.
+     */
+    fun validateOrResolveGenre(newType: RezkaType?, currentGenreSlug: String): String {
+        if (currentGenreSlug.isEmpty()) return ""
+        if (newType == null) return currentGenreSlug
+        val available = getGenresForCategory(newType)
+        if (available.any { it.slug.equals(currentGenreSlug, ignoreCase = true) }) {
+            return currentGenreSlug
+        }
+        val currentName = getGenreNameBySlug(currentGenreSlug)
+        val matchedByName = available.find { it.name.equals(currentName, ignoreCase = true) }
+        if (matchedByName != null) {
+            return matchedByName.slug
+        }
+        if (COMMON_GENRES.any { it.slug.equals(currentGenreSlug, ignoreCase = true) }) {
+            return currentGenreSlug
+        }
+        return ""
+    }
+
+    /**
+     * Сбалансированное многопоточное слияние результатов категорий для "Все категории"
+     * с сохранением хронологии, рейтинга или равномерного чередования (Round-Robin).
+     */
+    fun interleaveOrSortCatalogItems(
+        categorizedItems: List<List<RezkaItem>>,
+        section: SectionType
+    ): List<RezkaItem> {
+        val totalCount = categorizedItems.sumOf { it.size }
+        if (totalCount == 0) return emptyList()
+
+        val seenIds = HashSet<String>(totalCount)
+        val filteredCategories = ArrayList<ArrayList<RezkaItem>>(categorizedItems.size)
+        for (list in categorizedItems) {
+            val uniqueList = ArrayList<RezkaItem>(list.size)
+            for (item in list) {
+                if (seenIds.add(item.id)) {
+                    uniqueList.add(item)
+                }
+            }
+            if (uniqueList.isNotEmpty()) {
+                filteredCategories.add(uniqueList)
+            }
+        }
+
+        if (filteredCategories.isEmpty()) return emptyList()
+        if (filteredCategories.size == 1) return filteredCategories[0]
+
+        if (section == SectionType.LATEST) {
+            val allItems = ArrayList<RezkaItem>(seenIds.size)
+            for (list in filteredCategories) {
+                allItems.addAll(list)
+            }
+            allItems.sortWith(MovieDateParser.MovieDateComparator)
+            return allItems
+        }
+
+        if (section == SectionType.POPULAR) {
+            val allItems = ArrayList<RezkaItem>(seenIds.size)
+            for (list in filteredCategories) {
+                allItems.addAll(list)
+            }
+            allItems.sortByDescending { it.rating.filter { c -> c.isDigit() || c == '.' }.toDoubleOrNull() ?: 0.0 }
+            return allItems
+        }
+
+        // Round-Robin интерливинг для WATCHING, AWAITING и других разделов:
+        // берет по 1 элементу из каждой категории циклически, давая равномерную выдачу
+        val merged = ArrayList<RezkaItem>(seenIds.size)
+        var hasMore = true
+        var index = 0
+        while (hasMore) {
+            hasMore = false
+            for (catList in filteredCategories) {
+                if (index < catList.size) {
+                    merged.add(catList[index])
+                    hasMore = true
+                }
+            }
+            index++
+        }
+        return merged
+    }
+
     fun getGenresForCategory(type: RezkaType?): List<GenreItem> {
         if (type == null) {
             val all = categoryGenres.values.flatten().distinctBy { it.slug }.filter { it.slug.isNotEmpty() }
-            return listOf(GenreItem("Все жанры", "")) + all
+            if (all.isNotEmpty()) {
+                return (listOf(GenreItem("Все жанры", "")) + all).distinctBy { it.slug }
+            }
+            return listOf(GenreItem("Все жанры", "")) + COMMON_GENRES
         }
-        return categoryGenres[type] ?: listOf(GenreItem("Все жанры", ""))
+        val cached = categoryGenres[type]
+        if (!cached.isNullOrEmpty()) {
+            return cached
+        }
+        return listOf(GenreItem("Все жанры", "")) + COMMON_GENRES
     }
 
     fun getYearsForCategory(type: RezkaType?): List<YearItem> {
@@ -2677,7 +2858,7 @@ object RezkaService {
         }
 
         val genres = mutableListOf<GenreItem>()
-        genres.add(GenreItem("Без жанра", ""))
+        genres.add(GenreItem("Все жанры", ""))
 
         val nonGenreSlugs = setOf(
             "films", "series", "animation", "cartoons",
@@ -2705,7 +2886,8 @@ object RezkaService {
         }
 
         if (genres.size > 1) {
-            categoryGenres[type] = genres
+            val combined = (genres + COMMON_GENRES).distinctBy { it.slug }
+            categoryGenres[type] = combined
         }
     }
 
@@ -2808,18 +2990,12 @@ object RezkaService {
         val cleanGenre = genre.trim().trim('/')
         val cleanYear = year.trim().trim('/')
 
-        val effectiveCategoryPath = if (categoryPath.isEmpty() && (cleanGenre.isNotEmpty() || cleanYear.isNotEmpty())) {
-            "films"
-        } else {
-            categoryPath
-        }
-
         val sb = StringBuilder(domain.length + 60)
             .append(domain)
             .append('/')
 
-        if (effectiveCategoryPath.isNotEmpty()) {
-            sb.append(effectiveCategoryPath).append('/')
+        if (categoryPath.isNotEmpty()) {
+            sb.append(categoryPath).append('/')
         }
 
         if (cleanYear.isNotEmpty()) {
@@ -2850,7 +3026,8 @@ object RezkaService {
     }
 
     /**
-     * Получение каталога фильмов/сериалов с актуального зеркала с динамической фильтрацией по разделу, жанру и году
+     * Получение каталога фильмов/сериалов с актуального зеркала с динамической фильтрацией по разделу, жанру и году.
+     * При выборе "Все категории" (type == null) и активных фильтрах (жанр/год) параллельно опрашивает все категории.
      */
     suspend fun getCatalog(
         type: RezkaType?,
@@ -2861,6 +3038,38 @@ object RezkaService {
     ): List<RezkaItem> = withContext(Dispatchers.IO) {
         val cacheKey = "${type?.name ?: "ALL"}-$section-$genre-$year-$page"
         catalogCache.get(cacheKey)?.let { return@withContext it }
+
+        val cleanGenre = genre.trim().trim('/')
+        val cleanYear = year.trim().trim('/')
+
+        // Если выбрано "Все категории" (type == null) И задан фильтр по жанру или году:
+        // На сайте Rezka нет единого общего URL для всех категорий с жанром/годом.
+        // Запускаем параллельные асинхронные запросы по всем 4 категориям и сбалансированно объединяем
+        if (type == null && (cleanGenre.isNotEmpty() || cleanYear.isNotEmpty())) {
+            val categories = listOf(
+                RezkaType.MOVIE,
+                RezkaType.SERIES,
+                RezkaType.CARTOON,
+                RezkaType.ANIME
+            )
+            val categorizedResults = coroutineScope {
+                categories.map { cat ->
+                    async {
+                        try {
+                            getCatalog(cat, section, cleanGenre, cleanYear, page)
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            Log.w(TAG, "Ошибка параллельной загрузки категории $cat для 'Все категории': ${e.message}")
+                            emptyList<RezkaItem>()
+                        }
+                    }
+                }.awaitAll()
+            }
+
+            val merged = interleaveOrSortCatalogItems(categorizedResults, section)
+            catalogCache.put(cacheKey, merged)
+            return@withContext merged
+        }
 
         val url = buildCatalogUrl(type, section, genre, year, page)
 
@@ -2919,7 +3128,13 @@ object RezkaService {
                     parseYearsFromHtml(doc, type)
                 } else {
                     parseGenresFromHtml(doc, RezkaType.MOVIE)
+                    parseGenresFromHtml(doc, RezkaType.SERIES)
+                    parseGenresFromHtml(doc, RezkaType.CARTOON)
+                    parseGenresFromHtml(doc, RezkaType.ANIME)
                     parseYearsFromHtml(doc, RezkaType.MOVIE)
+                    parseYearsFromHtml(doc, RezkaType.SERIES)
+                    parseYearsFromHtml(doc, RezkaType.CARTOON)
+                    parseYearsFromHtml(doc, RezkaType.ANIME)
                 }
                 val items = parseCatalogHtml(html, type ?: RezkaType.MOVIE)
                 catalogCache.put(cacheKey, items)
@@ -3681,6 +3896,7 @@ object RezkaService {
                     url.contains("/series/") -> RezkaType.SERIES
                     url.contains("/animation/") -> RezkaType.ANIME
                     url.contains("/cartoons/") -> RezkaType.CARTOON
+                    url.contains("/films/") -> RezkaType.MOVIE
                     else -> defaultType
                 }
 
@@ -4336,6 +4552,9 @@ object RezkaService {
                             )
                         }
 
+                        // Разделение озвучек: сначала бесплатные (в порядке сайта), затем платные (в порядке сайта)
+                        val organizedTranslators = TranslatorEpisodeEngine.organizeTranslatorsFreeFirst(translators)
+
                         // Точное определение категории тайтла:
                         // Фильмы на сайте размещаются в /films/, сериалы в /series/, аниме в /animation/, мультфильмы в /cartoons/.
                         // Многосерийный фильм остаётся в категории MOVIE (это фильм, у которого есть серии, но это не сериал).
@@ -4478,7 +4697,7 @@ object RezkaService {
                             commentsTotalCount = commentsTotalCount,
                             schedule = schedule,
                             type = type,
-                            translators = translators,
+                            translators = organizedTranslators,
                             seasons = seasons,
                             numericPostId = numericPostId,
                             isReleased = effectiveIsReleased

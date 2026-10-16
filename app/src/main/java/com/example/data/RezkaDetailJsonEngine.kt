@@ -370,6 +370,7 @@ object RezkaDetailJsonEngine {
                     }
                 }
             }
+            val organizedTranslators = TranslatorEpisodeEngine.organizeTranslatorsFreeFirst(translators)
 
             // seasons
             val seasons = ArrayList<Season>()
@@ -435,7 +436,7 @@ object RezkaDetailJsonEngine {
                 commentsTotalCount = commentsTotalCount,
                 schedule = schedule,
                 type = rezkaType,
-                translators = translators,
+                translators = organizedTranslators,
                 seasons = seasons,
                 numericPostId = numericPostId,
                 isReleased = isReleased

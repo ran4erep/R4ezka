@@ -1777,8 +1777,11 @@ private fun TvCatalogFiltersBar(
 
             // Dropdown 3: Жанр
             val currentGenreItem = genresList.find { it.slug == currentGenre }
-                ?: genresList.firstOrNull()
-                ?: GenreItem("Все жанры", "")
+                ?: if (currentGenre.isNotEmpty()) {
+                    GenreItem(RezkaService.getGenreNameBySlug(currentGenre), currentGenre)
+                } else {
+                    genresList.firstOrNull() ?: GenreItem("Все жанры", "")
+                }
 
             TvRezkaDropdown(
                 label = "",
@@ -1800,8 +1803,11 @@ private fun TvCatalogFiltersBar(
 
             // Dropdown 4: Год
             val currentYearItem = yearsList.find { it.year == currentYear }
-                ?: yearsList.firstOrNull()
-                ?: YearItem("Все года", "")
+                ?: if (currentYear.isNotEmpty()) {
+                    YearItem(currentYear, currentYear)
+                } else {
+                    yearsList.firstOrNull() ?: YearItem("Все года", "")
+                }
 
             TvRezkaDropdown(
                 label = "",
@@ -1823,8 +1829,11 @@ private fun TvCatalogFiltersBar(
 
             // Dropdown 5: Страна
             val currentCountryItem = countriesList.find { it.query == currentCountry }
-                ?: countriesList.firstOrNull()
-                ?: CountryItem("Все страны", "")
+                ?: if (currentCountry.isNotEmpty()) {
+                    CountryItem(currentCountry, currentCountry)
+                } else {
+                    countriesList.firstOrNull() ?: CountryItem("Все страны", "")
+                }
 
             TvCountryDropdown(
                 selectedCountry = currentCountryItem,
@@ -2607,6 +2616,7 @@ private fun TvMovieCard(
                     cardHeight = cardHeight,
                     cardWidth = cardWidth,
                     seriesBadgeMode = seriesBadgeMode,
+                    isTv = true,
                     modifier = Modifier.align(Alignment.TopEnd)
                 )
             }

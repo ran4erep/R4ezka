@@ -59,6 +59,58 @@ object TranslatorEpisodeEngine {
     }
 
     /**
+     * Сверхбыстрое O(N) разделение содержимого списка озвучек на бесплатные и платные (премиум).
+     *
+     * Архитектурные принципы и оптимизация производительности:
+     * 1. Бесплатные озвучки располагаются сверху списка, платные — внизу.
+     * 2. Стабильное сохранение исходного порядка (Stable Partitioning): взаимное расположение
+     *    озвучек с сайта строго сохраняется как внутри бесплатного блока, так и внутри платного блока.
+     * 3. Zero-Allocation оптимизация: если в списке нет платных озвучек (или наоборот все платные),
+     *    возвращается исходная ссылка на список без лишних аллокаций памяти в куче (Heap).
+     * 4. Единый плоский линейный цикл O(N) без создания тяжелых Comparator/Sort объектов и без дублирующих вызовов filter { }.
+     */
+    @JvmStatic
+    fun organizeTranslatorsFreeFirst(translators: List<Translator>): List<Translator> {
+        if (translators.size <= 1) return translators
+
+        var hasPaid = false
+        var hasFree = false
+        for (i in 0 until translators.size) {
+            val t = translators[i]
+            val isPaid = t.isPremium || t.premiumUrl.isNotBlank()
+            if (isPaid) {
+                hasPaid = true
+            } else {
+                hasFree = true
+            }
+            if (hasPaid && hasFree) break
+        }
+
+        // Если все озвучки бесплатные или все платные — сохраняем исходный список без переаллокации
+        if (!hasPaid || !hasFree) {
+            return translators
+        }
+
+        val freeList = ArrayList<Translator>(translators.size)
+        val paidList = ArrayList<Translator>(translators.size)
+
+        for (i in 0 until translators.size) {
+            val t = translators[i]
+            val isPaid = t.isPremium || t.premiumUrl.isNotBlank()
+            if (isPaid) {
+                paidList.add(t)
+            } else {
+                freeList.add(t)
+            }
+        }
+
+        val result = ArrayList<Translator>(translators.size)
+        result.addAll(freeList)
+        result.addAll(paidList)
+        return result
+    }
+
+    /**
      * Сверхбыстрое O(N) извлечение всех чисел из строки без использования Regex и лишних аллокаций.
      */
     fun extractNumbers(text: String): List<Int> {
