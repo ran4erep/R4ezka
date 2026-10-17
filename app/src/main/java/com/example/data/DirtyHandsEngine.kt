@@ -149,12 +149,13 @@ class BiquadFilter(
 }
 
 /**
- * Высокопроизводительный каскадный полосовой фильтр речевого диапазона (300 Гц – 3400 Гц).
- * Отсекает рокот, басы и саундтрек фильма (< 300 Гц), а также высокочастотные свисты и шум (> 3400 Гц).
+ * Высокопроизводительный каскадный полосовой фильтр речевого диапазона (130 Гц – 7000 Гц).
+ * Надежно отсекает басы, сабвуферы и рокот фильма (< 130 Гц), сохраняя естественные форманты
+ * мужского и женского голоса (85-300 Гц), а также все глухие и шипящие согласные звуки ("П", "С", "З", "Ш") до 7 кГц.
  */
 class SpeechBandpassFilter(sampleRate: Int = DirtyHandsEngine.SAMPLE_RATE) {
-    private val hp = BiquadFilter.createHighPass(sampleRate, 300.0)
-    private val lp = BiquadFilter.createLowPass(sampleRate, 3400.0)
+    private val hp = BiquadFilter.createHighPass(sampleRate, 130.0)
+    private val lp = BiquadFilter.createLowPass(sampleRate, 7000.0)
 
     fun reset() {
         hp.reset()
@@ -179,12 +180,12 @@ class SpeechBandpassFilter(sampleRate: Int = DirtyHandsEngine.SAMPLE_RATE) {
 }
 
 /**
- * Управление аппаратными эффектами Android AudioFX (AEC, NoiseSuppressor, AGC) на уровне DSP.
+ * Управление аппаратными эффектами Android AudioFX (AEC, NoiseSuppressor) на уровне DSP.
+ * Исключен AutomaticGainControl, вызывавший "заглушение" и временную слепоту микрофона после громких звуков.
  */
 private class HardwareAudioEffects(sessionId: Int) {
     private var aec: AcousticEchoCanceler? = null
     private var ns: NoiseSuppressor? = null
-    private var agc: AutomaticGainControl? = null
 
     init {
         try {
@@ -208,44 +209,32 @@ private class HardwareAudioEffects(sessionId: Int) {
         } catch (t: Throwable) {
             Log.w("DirtyHandsEngine", "Hardware NoiseSuppressor init error: ${t.message}")
         }
-
-        try {
-            if (AutomaticGainControl.isAvailable()) {
-                agc = AutomaticGainControl.create(sessionId)?.apply {
-                    enabled = true
-                }
-                Log.d("DirtyHandsEngine", "Hardware AutomaticGainControl enabled successfully")
-            }
-        } catch (t: Throwable) {
-            Log.w("DirtyHandsEngine", "Hardware AGC init error: ${t.message}")
-        }
     }
 
     fun release() {
         try { aec?.release() } catch (_: Throwable) {}
         try { ns?.release() } catch (_: Throwable) {}
-        try { agc?.release() } catch (_: Throwable) {}
         aec = null
         ns = null
-        agc = null
     }
 }
 
 /**
  * Высокопроизводительный движок голосового управления «Грязные руки» (Dirty Hands Voice Engine).
  *
- * Создан по принципам классических сотовых телефонов Siemens/Nokia конца 90-х — начала 2000-х годов:
+ * Создан по принципам классических систем распознавания речи:
  * 1. Никаких тяжелых нейросетей, внешних облачных API распознавания или сторонних библиотек.
  * 2. Однопользовательское сопоставление акустических шаблонов (Speaker-Dependent Isolated Word Template Matching).
  * 3. Извлечение 13 Mel-Frequency Cepstral Coefficients (MFCC) с Pre-emphasis, окном Хэмминга,
  *    FFT на 512 точек с предрассчитанными тригонометрическими таблицами и банком 16 мел-фильтров.
- * 4. Полная CMVN нормализация (Mean & Variance) для независимости от громкости и акустики окружения.
- * 5. Аппаратное эхоподавление Android (AcousticEchoCanceler) + полосовой IIR-фильтр речи (300-3400 Гц).
- * 6. Частотный VAD с отслеживанием шума по минимумам (Minimum Statistics) без зависания на звуках фильма.
+ * 4. Робастная цепстральная нормализация среднего (CMN) с синусоидальным лифтерингом формант.
+ *    Сохраняет естественный спектральный контраст и надежно разделяет разные слова ("Пауза" vs "Назад").
+ * 5. Аппаратное эхоподавление Android (AcousticEchoCanceler) + широкополосный фильтр речи (130-7000 Гц).
+ * 6. Частотный VAD с пред-буфером (pre-roll 140 мс), гарантирующий сохранение начальных согласных ("П", "Д", "Н").
+ *    Отслеживание шума фона исключительно во время тишины предотвращает ослепление микрофона.
  * 7. Динамическое выравнивание временной шкалы (Fast Dynamic Time Warping — DTW)
- *    с окном Сако-Чибы (Sakoe-Chiba band) для мгновенного сопоставления за < 1.5 мс.
- * 8. Компактное ZLIB/Deflate сжатие голосовых меток перед синхронизацией с облачной базой Firebase RTDB
- *    (до ~300-800 байт на команду) и мгновенная декомпрессия (Inflate) на устройстве.
+ *    с окном Сако-Чибы (Sakoe-Chiba band) для мгновенного сопоставления за < 0.1 мс.
+ * 8. Автоматическое обновление ранее записанных шаблонов из PCM-оригиналов в памяти.
  */
 object DirtyHandsEngine {
     private const val TAG = "DirtyHandsEngine"
@@ -258,14 +247,15 @@ object DirtyHandsEngine {
     private const val FFT_SIZE = 512   // Степень двойки для быстрого FFT
     private const val NUM_MEL_FILTERS = 16
     private const val NUM_MFCC_COEFFS = 13
+    private const val LIFTER_L = 22    // Параметр цепстрального лифтера
 
-    // Пороги VAD и распознавания: поддержка любых фраз пользователя до 2.0с, быстрый отклик и защита от шума
-    private const val SPEECH_RMS_MIN_THRESHOLD = 300.0
-    private const val MIN_SPEECH_DURATION_MS = 200
-    private const val MAX_SPEECH_DURATION_MS = 2000 // Соответствует полному 2-секундному окну записи пользовательского шаблона
-    private const val SILENCE_TRAILING_FRAMES = 10 // ~200 мс паузы после слова для мгновенной фиксации фразы
-    private const val DTW_MAX_NORMALIZED_DISTANCE = 360.0 // Порог уверенности акустического совпадения с шаблоном
-    private const val DTW_BEST_MARGIN_RATIO = 0.88 // Уверенный отрыв лучшего совпадения от других действий
+    // Пороги VAD и распознавания: естественная чувствительность, устойчивость к шуму фильма и мгновенный отклик
+    private const val SPEECH_RMS_MIN_THRESHOLD = 110.0
+    private const val MIN_SPEECH_DURATION_MS = 160
+    private const val MAX_SPEECH_DURATION_MS = 2000 // Окно записи команды
+    private const val SILENCE_TRAILING_FRAMES = 8   // ~160 мс паузы после слова для мгновенной фиксации
+    private const val DTW_MAX_NORMALIZED_DISTANCE = 85.0 // Порог уверенности акустического совпадения с шаблоном
+    private const val DTW_BEST_MARGIN_RATIO = 0.85       // Уверенный отрыв лучшего кандидата от других действий
 
     @Volatile
     private var shouldKeepListening = false
@@ -307,13 +297,14 @@ object DirtyHandsEngine {
     private val hammingWindow = FloatArray(FRAME_SIZE)
     private val melFilterBank = Array(NUM_MEL_FILTERS) { FloatArray(FFT_SIZE / 2 + 1) }
     private val dctTable = Array(NUM_MFCC_COEFFS) { FloatArray(NUM_MEL_FILTERS) }
+    private val lifterTable = FloatArray(NUM_MFCC_COEFFS)
 
     init {
         initMathTables()
     }
 
     /**
-     * Предварительный расчет статических таблиц окон, синусов/косинусов и мел-фильтров.
+     * Предварительный расчет статических таблиц окон, синусов/косинусов, мел-фильтров и цепстрального лифтера.
      */
     private fun initMathTables() {
         // Окно Хэмминга
@@ -328,11 +319,11 @@ object DirtyHandsEngine {
             sinTable[i] = sin(angle)
         }
 
-        // Мел-фильтры от 100 Гц до 7000 Гц
+        // Мел-фильтры от 130 Гц до 7000 Гц
         fun hzToMel(hz: Double): Double = 2595.0 * log10(1.0 + hz / 700.0)
         fun melToHz(mel: Double): Double = 700.0 * (Math.pow(10.0, mel / 2595.0) - 1.0)
 
-        val minMel = hzToMel(100.0)
+        val minMel = hzToMel(130.0)
         val maxMel = hzToMel(7000.0)
         val melStep = (maxMel - minMel) / (NUM_MEL_FILTERS + 1)
 
@@ -366,6 +357,14 @@ object DirtyHandsEngine {
                 dctTable[i][m] = cos(PI * i * (m + 0.5) / NUM_MEL_FILTERS).toFloat()
             }
         }
+
+        // Цепстральный синусоидальный лифтер (Lifter)
+        // Снижает вес c0 (энергии), чтобы разница в громкости не путала команды,
+        // и усиливает форманты c1-c6 для абсолютного разделения "Пауза" и "Назад"
+        lifterTable[0] = 0.4f
+        for (i in 1 until NUM_MFCC_COEFFS) {
+            lifterTable[i] = (1.0 + 0.5 * LIFTER_L * sin(PI * i / LIFTER_L)).toFloat()
+        }
     }
 
     /**
@@ -385,8 +384,31 @@ object DirtyHandsEngine {
         for (action in DirtyHandsAction.entries) {
             val raw = p.getString("cmd_${action.id}", null) ?: continue
             try {
-                val template = deserializeCompressedTemplate(action, raw)
+                var template = deserializeCompressedTemplate(action, raw)
                 if (template != null) {
+                    // Если шаблон имеет сохраненный audioSample, автоматически переизвлекаем фичи
+                    // с новым робастным конвейером CMN + Liftering без необходимости переписывать команды
+                    val sample = template.audioSample
+                    if (sample != null && sample.isNotEmpty()) {
+                        try {
+                            val pcmShorts = byteArrayToShortArray(sample)
+                            val bandpass = SpeechBandpassFilter(SAMPLE_RATE)
+                            bandpass.processInPlace(pcmShorts, pcmShorts.size)
+                            val trimmed = trimSilence(pcmShorts, pcmShorts.size)
+                            if (trimmed.size >= SAMPLE_RATE * 0.16) {
+                                val feats = extractMfccFeatures(trimmed)
+                                if (feats.isNotEmpty()) {
+                                    template = template.copy(
+                                        frameCount = feats.size,
+                                        featureDim = NUM_MFCC_COEFFS,
+                                        features = flattenAndQuantizeFeatures(feats)
+                                    )
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to re-extract features for ${action.id}: ${e.message}")
+                        }
+                    }
                     templatesMap[action] = template
                     map[action] = template
                 }
@@ -492,7 +514,7 @@ object DirtyHandsEngine {
 
                     // Обрезаем тишину в начале и конце записанного сэмпла по порогу энергии
                     val trimmed = trimSilence(pcmBuffer, samplesReadTotal)
-                    if (trimmed.size >= SAMPLE_RATE * 0.22) { // Минимум 220 мс голоса
+                    if (trimmed.size >= SAMPLE_RATE * 0.16) { // Минимум 160 мс голоса
                         val features = extractMfccFeatures(trimmed)
                         if (features.isNotEmpty()) {
                             val pcmBytes = shortArrayToByteArray(trimmed)
@@ -648,9 +670,12 @@ object DirtyHandsEngine {
                         SAMPLE_RATE * 2
                     )
 
+                    // Используем VOICE_RECOGNITION — единый стандарт с записью команд в настройках,
+                    // исключающий переход Android в телефонный VoIP режим, искажения динамиков и AGC
                     val sourcesToTry = intArrayOf(
-                        MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                        MediaRecorder.AudioSource.VOICE_RECOGNITION
+                        MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                        MediaRecorder.AudioSource.MIC,
+                        MediaRecorder.AudioSource.DEFAULT
                     )
 
                     for (source in sourcesToTry) {
@@ -679,126 +704,141 @@ object DirtyHandsEngine {
                         continue
                     }
 
-                    // Системный аппаратный AEC и NoiseSuppressor
+                    // Аппаратное эхоподавление Android (AEC) и подавление шума (NS)
                     effects = HardwareAudioEffects(audioRecord.audioSessionId)
                     audioRecord.startRecording()
-                    Log.d(TAG, "DirtyHandsEngine: microphone listening active and listening")
+                    Log.d(TAG, "DirtyHandsEngine: microphone listening active and continuous")
 
-                    val rawChunk = ShortArray(320) // 20 мс
-                    val filteredChunk = ShortArray(320)
+                    val chunkSize = 320 // 20 мс
+                    val rawChunk = ShortArray(chunkSize)
+                    val filteredChunk = ShortArray(chunkSize)
                     val bandpass = SpeechBandpassFilter(SAMPLE_RATE)
-                    val speechRingBuffer = ShortArray(SAMPLE_RATE * 3)
+
+                    // Кольцевой пред-буфер (pre-roll 140 мс = 7 фреймов по 20 мс)
+                    // Гарантирует сохранение начальных согласных ("П" в "Пауза", "Н" в "Назад")
+                    val preRollFrames = 7
+                    val preRollBuffer = Array(preRollFrames) { ShortArray(chunkSize) }
+                    var preRollIndex = 0
+                    var preRollFilled = 0
+
+                    val maxSpeechSamples = (SAMPLE_RATE * MAX_SPEECH_DURATION_MS) / 1000 // 2 секунды
+                    val speechAccumBuffer = ShortArray(maxSpeechSamples + chunkSize * (preRollFrames + 2))
                     var speechSamplesCount = 0
                     var isSpeechActive = false
                     var silenceFramesCounter = 0
 
-                    var noiseFloor = 200.0
-                    var minRmsSubwindow = Double.MAX_VALUE
-                    var subwindowFramesCount = 0
+                    var noiseFloor = 120.0
                     var lastRecognitionTimestamp = 0L
+
+                    suspend fun processSpeechAndMatch(count: Int, now: Long) {
+                        val durationMs = (count * 1000) / SAMPLE_RATE
+                        if (durationMs >= MIN_SPEECH_DURATION_MS && (now - lastRecognitionTimestamp > 750L)) {
+                            val speechPcm = ShortArray(count)
+                            System.arraycopy(speechAccumBuffer, 0, speechPcm, 0, count)
+
+                            val trimmed = trimSilence(speechPcm, count)
+                            if (trimmed.size >= SAMPLE_RATE * 0.16) {
+                                val matchedAction = matchVoiceCommand(trimmed)
+                                if (matchedAction != null) {
+                                    lastRecognitionTimestamp = now
+                                    Log.d(TAG, "Recognized command: ${matchedAction.title} ($matchedAction)")
+                                    withContext(Dispatchers.Main) {
+                                        onCommandRecognized(matchedAction)
+                                        _commandEvents.tryEmit(matchedAction)
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     while (isActive && shouldKeepListening) {
                         val read = audioRecord.read(rawChunk, 0, rawChunk.size)
                         if (read <= 0) {
-                            kotlinx.coroutines.delay(40)
+                            kotlinx.coroutines.delay(30)
                             break
                         }
 
-                        // 1. Полосовой фильтр речи 300 - 3400 Гц
+                        // 1. Полосовой фильтр речи 130 Гц – 7000 Гц
                         bandpass.process(rawChunk, filteredChunk, read)
 
                         // 2. Расчет энергии речевой полосы и сырого сигнала
                         var speechSumSq = 0.0
                         var rawSumSq = 0.0
-                        var zeroCrossings = 0
-                        var prevSample = filteredChunk[0].toInt()
-
                         for (i in 0 until read) {
                             val sv = filteredChunk[i].toDouble()
                             speechSumSq += sv * sv
                             val rv = rawChunk[i].toDouble()
                             rawSumSq += rv * rv
-
-                            val curr = filteredChunk[i].toInt()
-                            if ((curr xor prevSample) < 0) {
-                                zeroCrossings++
-                            }
-                            prevSample = curr
                         }
-
                         val speechRms = sqrt(speechSumSq / read)
                         val rawRms = sqrt(rawSumSq / read)
 
-                        // 3. Отслеживание минимума шума (Minimum Statistics)
-                        if (speechRms < minRmsSubwindow) {
-                            minRmsSubwindow = speechRms
-                        }
-                        subwindowFramesCount++
-                        if (subwindowFramesCount >= 35) { // Окно ~700 мс
-                            noiseFloor = noiseFloor * 0.85 + minRmsSubwindow * 0.15
-                            noiseFloor = noiseFloor.coerceIn(140.0, 1500.0)
-                            minRmsSubwindow = Double.MAX_VALUE
-                            subwindowFramesCount = 0
+                        // 3. Отслеживание шума фона: обновляется ТОЛЬКО в тишине,
+                        // чтобы произносимые команды не задирали адаптивный порог VAD
+                        if (!isSpeechActive) {
+                            noiseFloor = noiseFloor * 0.94 + speechRms * 0.06
+                            noiseFloor = noiseFloor.coerceIn(35.0, 500.0)
                         }
 
-                        // 4. Частотный VAD с повышенным порогом и защитой от ложных срабатываний
-                        val speechThreshold = max(SPEECH_RMS_MIN_THRESHOLD, noiseFloor * 1.85)
-                        val isSpeechBandDominant = speechRms >= (rawRms * 0.40) || rawRms < 420.0
+                        // 4. Детекция речи (VAD):
+                        // Естественная чувствительность без необходимости кричать
+                        val speechThreshold = max(SPEECH_RMS_MIN_THRESHOLD, noiseFloor * 1.50)
                         val isCandidateSpeech = speechRms >= speechThreshold &&
-                                isSpeechBandDominant &&
-                                zeroCrossings in 12..150
+                                (speechRms >= rawRms * 0.30 || rawRms < 300.0)
+
+                        val now = System.currentTimeMillis()
 
                         if (isCandidateSpeech) {
                             if (!isSpeechActive) {
                                 isSpeechActive = true
                                 speechSamplesCount = 0
                                 silenceFramesCounter = 0
+
+                                // Заполняем начало пред-буфером (pre-roll 140 мс)
+                                val framesToCopy = min(preRollFilled, preRollFrames)
+                                for (p in 0 until framesToCopy) {
+                                    val idx = (preRollIndex - framesToCopy + p + preRollFrames) % preRollFrames
+                                    val src = preRollBuffer[idx]
+                                    System.arraycopy(src, 0, speechAccumBuffer, speechSamplesCount, chunkSize)
+                                    speechSamplesCount += chunkSize
+                                }
                             }
 
-                            if (speechSamplesCount + read < speechRingBuffer.size) {
-                                System.arraycopy(filteredChunk, 0, speechRingBuffer, speechSamplesCount, read)
+                            if (speechSamplesCount + read <= speechAccumBuffer.size) {
+                                System.arraycopy(filteredChunk, 0, speechAccumBuffer, speechSamplesCount, read)
                                 speechSamplesCount += read
                             }
                             silenceFramesCounter = 0
 
-                            // Защита от речи фильма: команда не бывает длиннее 1.1 сек
-                            if (speechSamplesCount >= (SAMPLE_RATE * MAX_SPEECH_DURATION_MS) / 1000) {
+                            // Если звук длится дольше 2 секунд:
+                            // НЕ выбрасываем в пустоту! Анализируем накопленное слово
+                            if (speechSamplesCount >= maxSpeechSamples) {
+                                processSpeechAndMatch(speechSamplesCount, now)
                                 isSpeechActive = false
                                 speechSamplesCount = 0
                                 silenceFramesCounter = 0
                             }
-                        } else if (isSpeechActive) {
-                            if (speechSamplesCount + read < speechRingBuffer.size) {
-                                System.arraycopy(filteredChunk, 0, speechRingBuffer, speechSamplesCount, read)
-                                speechSamplesCount += read
-                            }
-                            silenceFramesCounter++
-
-                            // Мгновенная реакция: всего 9 фреймов (~180 мс) тишины после фразы
-                            if (silenceFramesCounter >= SILENCE_TRAILING_FRAMES) {
-                                isSpeechActive = false
-                                val speechDurationMs = (speechSamplesCount * 1000) / SAMPLE_RATE
-                                val now = System.currentTimeMillis()
-
-                                if (speechDurationMs in MIN_SPEECH_DURATION_MS..MAX_SPEECH_DURATION_MS && (now - lastRecognitionTimestamp > 800L)) {
-                                    val speechPcm = ShortArray(speechSamplesCount)
-                                    System.arraycopy(speechRingBuffer, 0, speechPcm, 0, speechSamplesCount)
-
-                                    val trimmed = trimSilence(speechPcm, speechSamplesCount)
-                                    if (trimmed.size >= SAMPLE_RATE * 0.20) {
-                                        val matchedAction = matchVoiceCommand(trimmed)
-                                        if (matchedAction != null) {
-                                            lastRecognitionTimestamp = now
-                                            Log.d(TAG, "Recognized command: ${matchedAction.title} ($matchedAction)")
-                                            withContext(Dispatchers.Main) {
-                                                onCommandRecognized(matchedAction)
-                                                _commandEvents.tryEmit(matchedAction)
-                                            }
-                                        }
-                                    }
+                        } else {
+                            if (!isSpeechActive) {
+                                // Тишина: сохраняем фрейм в кольцевой pre-roll буфер
+                                System.arraycopy(filteredChunk, 0, preRollBuffer[preRollIndex], 0, read)
+                                preRollIndex = (preRollIndex + 1) % preRollFrames
+                                if (preRollFilled < preRollFrames) preRollFilled++
+                            } else {
+                                // Голос только что затих: аккумулируем завершающие фреймы
+                                if (speechSamplesCount + read <= speechAccumBuffer.size) {
+                                    System.arraycopy(filteredChunk, 0, speechAccumBuffer, speechSamplesCount, read)
+                                    speechSamplesCount += read
                                 }
-                                speechSamplesCount = 0
-                                silenceFramesCounter = 0
+                                silenceFramesCounter++
+
+                                // Конец фразы: 8 фреймов (~160 мс) тишины
+                                if (silenceFramesCounter >= SILENCE_TRAILING_FRAMES) {
+                                    processSpeechAndMatch(speechSamplesCount, now)
+                                    isSpeechActive = false
+                                    speechSamplesCount = 0
+                                    silenceFramesCounter = 0
+                                }
                             }
                         }
                     }
@@ -879,9 +919,10 @@ object DirtyHandsEngine {
     }
 
     /**
-     * Dynamic Time Warping (DTW) с полосой Сако-Чибы.
-     * Вычисляет нормализованную дистанцию между двумя последовательностями MFCC признаков.
-     * Потребляет 0 динамической памяти за счет циклического использования 2 одномерных массивов.
+     * Dynamic Time Warping (DTW) с диагональной полосой Сако-Чибы.
+     * Вычисляет нормализованную дистанцию между последовательностями признаков.
+     * Идет строго вдоль динамической диагонали от (1,1) до (aFrames, bFrames),
+     * исключая обрыв траектории при разной скорости произнесения команды.
      */
     private fun computeDtwDistance(
         a: ByteArray,
@@ -892,8 +933,12 @@ object DirtyHandsEngine {
     ): Double {
         if (aFrames == 0 || bFrames == 0) return Double.MAX_VALUE
 
-        // Ширина полосы Сако-Чибы: ~25% от максимальной длины
-        val window = max(6, (max(aFrames, bFrames) * 0.25).toInt())
+        // Если длительности различаются более чем в 2.2 раза — команды заведомо разные
+        val lenRatio = max(aFrames, bFrames).toDouble() / min(aFrames, bFrames).toDouble()
+        if (lenRatio > 2.2) return Double.MAX_VALUE
+
+        // Ширина полосы Сако-Чибы вокруг динамической диагонали
+        val window = max(8, (max(aFrames, bFrames) * 0.35).toInt())
 
         var prevRow = DoubleArray(bFrames + 1) { Double.MAX_VALUE }
         var currRow = DoubleArray(bFrames + 1) { Double.MAX_VALUE }
@@ -904,8 +949,10 @@ object DirtyHandsEngine {
             currRow.fill(Double.MAX_VALUE)
             val aOffset = (i - 1) * featureDim
 
-            val jStart = max(1, i - window)
-            val jEnd = min(bFrames, i + window)
+            // Центр полосы Сако-Чибы следует диагонали масштабирования времени
+            val centerJ = ((i.toDouble() / aFrames) * bFrames).toInt().coerceIn(1, bFrames)
+            val jStart = max(1, centerJ - window)
+            val jEnd = min(bFrames, centerJ + window)
 
             for (j in jStart..jEnd) {
                 val bOffset = (j - 1) * featureDim
@@ -923,7 +970,6 @@ object DirtyHandsEngine {
                 }
             }
 
-            // Меняем строки местами для следующей итерации без аллокаций
             val temp = prevRow
             prevRow = currRow
             currRow = temp
@@ -932,8 +978,10 @@ object DirtyHandsEngine {
         val totalCost = prevRow[bFrames]
         if (totalCost == Double.MAX_VALUE) return Double.MAX_VALUE
 
-        // Нормализация по суммарной длине пути
-        return totalCost / (aFrames + bFrames)
+        // Нормализация по суммарной длине пути с учетом отношения темпа
+        val normalizedCost = totalCost / (aFrames + bFrames)
+        val lengthPenalty = 1.0 + (lenRatio - 1.0) * 0.12
+        return normalizedCost * lengthPenalty
     }
 
     /**
@@ -952,12 +1000,11 @@ object DirtyHandsEngine {
         val powerSpectrum = FloatArray(FFT_SIZE / 2 + 1)
         val melEnergies = FloatArray(NUM_MEL_FILTERS)
 
-        var prevSample = 0.0f
-
         for (f in 0 until numFrames) {
             val offset = f * FRAME_HOP
 
-            // Pre-emphasis и окно Хэмминга
+            // Pre-emphasis с правильной границей фрейма и окно Хэмминга
+            var prevSample = if (offset > 0) pcm[offset - 1].toFloat() else pcm[offset].toFloat()
             for (i in 0 until FRAME_SIZE) {
                 val raw = pcm[offset + i].toFloat()
                 val emphasized = raw - 0.97f * prevSample
@@ -1004,35 +1051,26 @@ object DirtyHandsEngine {
             framesList.add(mfcc)
         }
 
-        // Полная нормализация средним и дисперсией (CMVN - Cepstral Mean and Variance Normalization)
-        // Гарантирует независимость признаков от громкости динамиков, акустики комнаты и расстояния до микрофона
+        // Цепстральная нормализация среднего (CMN) с применением синусоидального лифтера (Liftering)
+        // 1. Вычитание среднего устраняет частотную неравномерность микрофона и акустику помещения.
+        // 2. Лифтеринг усиливает резонансные речевые форманты c1-c6 и приглушает энергию c0 и шумы c8-c12.
+        // Важно: деление на дисперсию намеренно НЕ используется, чтобы не раздувать шумы в тихих мел-бинах
+        // и гарантировать абсолютную различимость команд ("Пауза" vs "Назад").
         if (framesList.isNotEmpty()) {
             val mean = FloatArray(NUM_MFCC_COEFFS)
-            val variance = FloatArray(NUM_MFCC_COEFFS)
-
             for (frame in framesList) {
                 for (k in 0 until NUM_MFCC_COEFFS) {
                     mean[k] += frame[k]
                 }
             }
+            val numFrames = framesList.size.toFloat()
             for (k in 0 until NUM_MFCC_COEFFS) {
-                mean[k] /= framesList.size
+                mean[k] /= numFrames
             }
 
             for (frame in framesList) {
                 for (k in 0 until NUM_MFCC_COEFFS) {
-                    val diff = frame[k] - mean[k]
-                    variance[k] += diff * diff
-                }
-            }
-            for (k in 0 until NUM_MFCC_COEFFS) {
-                val stdDev = sqrt(variance[k] / framesList.size).coerceAtLeast(1e-3f)
-                variance[k] = stdDev
-            }
-
-            for (frame in framesList) {
-                for (k in 0 until NUM_MFCC_COEFFS) {
-                    frame[k] = (frame[k] - mean[k]) / variance[k]
+                    frame[k] = (frame[k] - mean[k]) * lifterTable[k]
                 }
             }
         }
@@ -1093,8 +1131,8 @@ object DirtyHandsEngine {
             val frame = frames[f]
             val offset = f * NUM_MFCC_COEFFS
             for (k in 0 until NUM_MFCC_COEFFS) {
-                // Масштабируем коэффициенты CMVN (диапазон ~ -3.0 .. +3.0) в диапазон -128..127
-                val scaled = (frame[k] * 28.0f).toInt().coerceIn(-128, 127)
+                // Масштабируем коэффициенты CMN с лифтерингом в 8-битный диапазон
+                val scaled = (frame[k] * 4.0f).toInt().coerceIn(-128, 127)
                 out[offset + k] = scaled.toByte()
             }
         }
@@ -1102,16 +1140,35 @@ object DirtyHandsEngine {
     }
 
     /**
-     * Удаление пауз и тишины в начале и конце записанного фрагмента.
+     * Адаптивное удаление пауз и тишины в начале и конце записанного фрагмента.
+     * Автоматически калибрует порог относительно пиковой энергии и гарантирует сохранение
+     * тихих взрывных согласных звуков (например, "П" в начале "Пауза") с пре-роллом 40 мс.
      */
     private fun trimSilence(pcm: ShortArray, length: Int): ShortArray {
         val window = 320 // 20 мс
+        if (length < window) return pcm.copyOf(length)
+
+        // 1. Поиск пиковой RMS энергии для адаптивного расчета порога отсечки
+        var peakRms = 0.0
+        for (i in 0 until length - window step window) {
+            var sum = 0.0
+            for (k in 0 until window) {
+                val v = pcm[i + k].toDouble()
+                sum += v * v
+            }
+            val rms = sqrt(sum / window)
+            if (rms > peakRms) {
+                peakRms = rms
+            }
+        }
+
+        // Адаптивный порог: 10% от пика или минимум 45.0
+        val threshold = max(45.0, peakRms * 0.10)
+
         var start = 0
         var end = length - 1
 
-        val threshold = 200.0
-
-        // Поиск начала речи
+        // Поиск начала речи с сохранением 40 мс пре-ролла (чтобы не отрезать тихое начало согласных звуков)
         for (i in 0 until length - window step window) {
             var sum = 0.0
             for (k in 0 until window) {
@@ -1119,12 +1176,12 @@ object DirtyHandsEngine {
                 sum += v * v
             }
             if (sqrt(sum / window) >= threshold) {
-                start = max(0, i - window) // Сохраняем 20 мс пре-ролла
+                start = max(0, i - window * 2)
                 break
             }
         }
 
-        // Поиск конца речи
+        // Поиск конца речи с сохранением 40 мс пост-ролла
         for (i in (length - window) downTo start step window) {
             var sum = 0.0
             for (k in 0 until window) {
