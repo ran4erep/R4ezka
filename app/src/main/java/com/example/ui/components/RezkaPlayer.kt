@@ -635,9 +635,17 @@ fun RezkaPlayer(
         }
     }
 
-    // Режим «Грязные руки»: прослушивание микрофона во время воспроизведения в плеере
+    // Режим «Грязные руки»: непрерывное прослушивание микрофона во время воспроизведения в плеере
     val dirtyHandsEnabled by RezkaService.dirtyHandsMode.collectAsState()
-    DisposableEffect(lifecycleOwner, exoPlayer, dirtyHandsEnabled) {
+
+    val currentOnNextEpisode by rememberUpdatedState(onNextEpisode)
+    val currentOnPreviousEpisode by rememberUpdatedState(onPreviousEpisode)
+    val currentHasNextEpisode by rememberUpdatedState(hasNextEpisode)
+    val currentHasPreviousEpisode by rememberUpdatedState(hasPreviousEpisode)
+    val currentIsSeries by rememberUpdatedState(isSeries)
+    val currentExoPlayer by rememberUpdatedState(exoPlayer)
+
+    DisposableEffect(lifecycleOwner, dirtyHandsEnabled) {
         val hasAudioPermission = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.RECORD_AUDIO
@@ -649,27 +657,27 @@ fun RezkaPlayer(
                     HapticEngine.get().perform(HapticType.CONFIRM)
                     when (action) {
                         DirtyHandsAction.PAUSE -> {
-                            exoPlayer.pause()
+                            currentExoPlayer.pause()
                             isPlayWhenReady = false
                             screenNotificationMessage = "Голосовая команда: Пауза"
                         }
                         DirtyHandsAction.RESUME -> {
-                            exoPlayer.play()
+                            currentExoPlayer.play()
                             isPlayWhenReady = true
                             screenNotificationMessage = "Голосовая команда: Продолжить"
                         }
                         DirtyHandsAction.NEXT_EPISODE -> {
-                            if (isSeries && hasNextEpisode && onNextEpisode != null) {
-                                onNextEpisode.invoke()
-                                screenNotificationMessage = "Голосовая команда: Следующая серия"
+                            if (currentIsSeries && currentHasNextEpisode && currentOnNextEpisode != null) {
+                                currentOnNextEpisode?.invoke()
+                                screenNotificationMessage = "Следующая серия"
                             } else {
                                 screenNotificationMessage = "Следующая серия недоступна"
                             }
                         }
                         DirtyHandsAction.PREV_EPISODE -> {
-                            if (isSeries && hasPreviousEpisode && onPreviousEpisode != null) {
-                                onPreviousEpisode.invoke()
-                                screenNotificationMessage = "Голосовая команда: Предыдущая серия"
+                            if (currentIsSeries && currentHasPreviousEpisode && currentOnPreviousEpisode != null) {
+                                currentOnPreviousEpisode?.invoke()
+                                screenNotificationMessage = "Предыдущая серия"
                             } else {
                                 screenNotificationMessage = "Предыдущая серия недоступна"
                             }

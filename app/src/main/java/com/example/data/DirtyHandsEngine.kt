@@ -259,13 +259,16 @@ object DirtyHandsEngine {
     private const val NUM_MEL_FILTERS = 16
     private const val NUM_MFCC_COEFFS = 13
 
-    // Пороги VAD и распознавания
-    private const val SPEECH_RMS_MIN_THRESHOLD = 240.0
-    private const val MIN_SPEECH_DURATION_MS = 260
-    private const val MAX_SPEECH_DURATION_MS = 1800
-    private const val SILENCE_TRAILING_FRAMES = 16 // ~320 мс тишины после речи для детекции окончания фразы
-    private const val DTW_MAX_NORMALIZED_DISTANCE = 420.0 // Порог уверенности DTW для совпадения команды с CMVN
-    private const val DTW_BEST_MARGIN_RATIO = 0.90 // Отрыв лучшего кандидата от второго для уверенного распознавания
+    // Пороги VAD и распознавания: поддержка любых фраз пользователя до 2.0с, быстрый отклик и защита от шума
+    private const val SPEECH_RMS_MIN_THRESHOLD = 300.0
+    private const val MIN_SPEECH_DURATION_MS = 200
+    private const val MAX_SPEECH_DURATION_MS = 2000 // Соответствует полному 2-секундному окну записи пользовательского шаблона
+    private const val SILENCE_TRAILING_FRAMES = 10 // ~200 мс паузы после слова для мгновенной фиксации фразы
+    private const val DTW_MAX_NORMALIZED_DISTANCE = 360.0 // Порог уверенности акустического совпадения с шаблоном
+    private const val DTW_BEST_MARGIN_RATIO = 0.88 // Уверенный отрыв лучшего совпадения от других действий
+
+    @Volatile
+    private var shouldKeepListening = false
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var prefs: SharedPreferences? = null
@@ -622,198 +625,201 @@ object DirtyHandsEngine {
             return
         }
 
-        if (_isListening.value) return
+        shouldKeepListening = true
+        if (_isListening.value && listeningJob?.isActive == true) return
 
         listeningJob?.cancel()
         listeningJob = scope.launch(Dispatchers.IO) {
             _isListening.value = true
-            var audioRecord: AudioRecord? = null
-            var effects: HardwareAudioEffects? = null
 
-            try {
-                val bufferSize = max(
-                    AudioRecord.getMinBufferSize(
-                        SAMPLE_RATE,
-                        AudioFormat.CHANNEL_IN_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT
-                    ),
-                    SAMPLE_RATE * 2
-                )
+            // Внешний устойчивый цикл: микрофон непрерывно работает всё время воспроизведения в плеере,
+            // восстанавливаясь за 150 мс при смене аудиофокуса, переключении серии или смене дорожки ExoPlayer
+            while (isActive && shouldKeepListening && RezkaService.dirtyHandsMode.value && templatesMap.isNotEmpty()) {
+                var audioRecord: AudioRecord? = null
+                var effects: HardwareAudioEffects? = null
 
-                // Пробуем VOICE_COMMUNICATION для аппаратной привязки к вычитанию звука динамиков (AEC),
-                // а если система устройства не поддерживает — переходим на VOICE_RECOGNITION
-                val sourcesToTry = intArrayOf(
-                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                    MediaRecorder.AudioSource.VOICE_RECOGNITION
-                )
-
-                for (source in sourcesToTry) {
-                    try {
-                        val candidate = AudioRecord(
-                            source,
+                try {
+                    val bufferSize = max(
+                        AudioRecord.getMinBufferSize(
                             SAMPLE_RATE,
                             AudioFormat.CHANNEL_IN_MONO,
-                            AudioFormat.ENCODING_PCM_16BIT,
-                            bufferSize
-                        )
-                        if (candidate.state == AudioRecord.STATE_INITIALIZED) {
-                            audioRecord = candidate
-                            Log.d(TAG, "AudioRecord initialized with audioSource: $source")
+                            AudioFormat.ENCODING_PCM_16BIT
+                        ),
+                        SAMPLE_RATE * 2
+                    )
+
+                    val sourcesToTry = intArrayOf(
+                        MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                        MediaRecorder.AudioSource.VOICE_RECOGNITION
+                    )
+
+                    for (source in sourcesToTry) {
+                        try {
+                            val candidate = AudioRecord(
+                                source,
+                                SAMPLE_RATE,
+                                AudioFormat.CHANNEL_IN_MONO,
+                                AudioFormat.ENCODING_PCM_16BIT,
+                                bufferSize
+                            )
+                            if (candidate.state == AudioRecord.STATE_INITIALIZED) {
+                                audioRecord = candidate
+                                break
+                            } else {
+                                candidate.release()
+                            }
+                        } catch (e: Throwable) {
+                            Log.w(TAG, "AudioRecord init attempt failed for source $source: ${e.message}")
+                        }
+                    }
+
+                    if (audioRecord == null || audioRecord.state != AudioRecord.STATE_INITIALIZED) {
+                        Log.w(TAG, "AudioRecord could not be initialized, retry in 300ms")
+                        kotlinx.coroutines.delay(300)
+                        continue
+                    }
+
+                    // Системный аппаратный AEC и NoiseSuppressor
+                    effects = HardwareAudioEffects(audioRecord.audioSessionId)
+                    audioRecord.startRecording()
+                    Log.d(TAG, "DirtyHandsEngine: microphone listening active and listening")
+
+                    val rawChunk = ShortArray(320) // 20 мс
+                    val filteredChunk = ShortArray(320)
+                    val bandpass = SpeechBandpassFilter(SAMPLE_RATE)
+                    val speechRingBuffer = ShortArray(SAMPLE_RATE * 3)
+                    var speechSamplesCount = 0
+                    var isSpeechActive = false
+                    var silenceFramesCounter = 0
+
+                    var noiseFloor = 200.0
+                    var minRmsSubwindow = Double.MAX_VALUE
+                    var subwindowFramesCount = 0
+                    var lastRecognitionTimestamp = 0L
+
+                    while (isActive && shouldKeepListening) {
+                        val read = audioRecord.read(rawChunk, 0, rawChunk.size)
+                        if (read <= 0) {
+                            kotlinx.coroutines.delay(40)
                             break
-                        } else {
-                            candidate.release()
                         }
-                    } catch (e: Throwable) {
-                        Log.w(TAG, "Failed to initialize AudioRecord with source $source: ${e.message}")
-                    }
-                }
 
-                if (audioRecord == null || audioRecord.state != AudioRecord.STATE_INITIALIZED) {
-                    Log.w(TAG, "AudioRecord could not be initialized")
-                    return@launch
-                }
+                        // 1. Полосовой фильтр речи 300 - 3400 Гц
+                        bandpass.process(rawChunk, filteredChunk, read)
 
-                // Активируем системные аппаратные фильтры эхоподавления (AEC) и шумоподавления (NS)
-                effects = HardwareAudioEffects(audioRecord.audioSessionId)
-                audioRecord.startRecording()
-                Log.d(TAG, "DirtyHandsEngine: microphone listening started with hardware audio effects")
+                        // 2. Расчет энергии речевой полосы и сырого сигнала
+                        var speechSumSq = 0.0
+                        var rawSumSq = 0.0
+                        var zeroCrossings = 0
+                        var prevSample = filteredChunk[0].toInt()
 
-                val rawChunk = ShortArray(320) // 20 мс сырой фрейм
-                val filteredChunk = ShortArray(320) // 20 мс отфильтрованный речевой фрейм
-                val bandpass = SpeechBandpassFilter(SAMPLE_RATE)
-                val speechRingBuffer = ShortArray(SAMPLE_RATE * 3) // До 3 сек речи
-                var speechSamplesCount = 0
-                var isSpeechActive = false
-                var silenceFramesCounter = 0
+                        for (i in 0 until read) {
+                            val sv = filteredChunk[i].toDouble()
+                            speechSumSq += sv * sv
+                            val rv = rawChunk[i].toDouble()
+                            rawSumSq += rv * rv
 
-                // Оценка шумовой подложки методом локального минимума (Minimum Statistics)
-                var noiseFloor = 180.0
-                var minRmsSubwindow = Double.MAX_VALUE
-                var subwindowFramesCount = 0
-                var lastRecognitionTimestamp = 0L
-
-                while (isActive) {
-                    val read = audioRecord.read(rawChunk, 0, rawChunk.size)
-                    if (read <= 0) continue
-
-                    // 1. Полосовая цифровая фильтрация 300 - 3400 Гц (выделение речи, подавление саундтрека фильма)
-                    bandpass.process(rawChunk, filteredChunk, read)
-
-                    // 2. Расчет энергии и параметров речевого сигнала
-                    var speechSumSq = 0.0
-                    var rawSumSq = 0.0
-                    var zeroCrossings = 0
-                    var prevSample = filteredChunk[0].toInt()
-
-                    for (i in 0 until read) {
-                        val sv = filteredChunk[i].toDouble()
-                        speechSumSq += sv * sv
-                        val rv = rawChunk[i].toDouble()
-                        rawSumSq += rv * rv
-
-                        val curr = filteredChunk[i].toInt()
-                        if ((curr xor prevSample) < 0) {
-                            zeroCrossings++
+                            val curr = filteredChunk[i].toInt()
+                            if ((curr xor prevSample) < 0) {
+                                zeroCrossings++
+                            }
+                            prevSample = curr
                         }
-                        prevSample = curr
-                    }
 
-                    val speechRms = sqrt(speechSumSq / read)
-                    val rawRms = sqrt(rawSumSq / read)
+                        val speechRms = sqrt(speechSumSq / read)
+                        val rawRms = sqrt(rawSumSq / read)
 
-                    // 3. Отслеживание шума по скользящему минимуму за окно ~0.8 сек (40 фреймов)
-                    if (speechRms < minRmsSubwindow) {
-                        minRmsSubwindow = speechRms
-                    }
-                    subwindowFramesCount++
-                    if (subwindowFramesCount >= 40) {
-                        // Медленное отслеживание истинного шума тишины между звуками фильма
-                        noiseFloor = noiseFloor * 0.85 + minRmsSubwindow * 0.15
-                        noiseFloor = noiseFloor.coerceIn(120.0, 1600.0)
-                        minRmsSubwindow = Double.MAX_VALUE
-                        subwindowFramesCount = 0
-                    }
+                        // 3. Отслеживание минимума шума (Minimum Statistics)
+                        if (speechRms < minRmsSubwindow) {
+                            minRmsSubwindow = speechRms
+                        }
+                        subwindowFramesCount++
+                        if (subwindowFramesCount >= 35) { // Окно ~700 мс
+                            noiseFloor = noiseFloor * 0.85 + minRmsSubwindow * 0.15
+                            noiseFloor = noiseFloor.coerceIn(140.0, 1500.0)
+                            minRmsSubwindow = Double.MAX_VALUE
+                            subwindowFramesCount = 0
+                        }
 
-                    // 4. Частотно-избирательный VAD:
-                    // Проверяем превышение порога в речевой полосе и долю речевой энергии против фонового грохота фильма
-                    val speechThreshold = max(SPEECH_RMS_MIN_THRESHOLD, noiseFloor * 1.75)
-                    val isSpeechBandDominant = speechRms >= (rawRms * 0.38) || rawRms < 450.0
-                    val isCandidateSpeech = speechRms >= speechThreshold &&
-                            isSpeechBandDominant &&
-                            zeroCrossings in 10..155
+                        // 4. Частотный VAD с повышенным порогом и защитой от ложных срабатываний
+                        val speechThreshold = max(SPEECH_RMS_MIN_THRESHOLD, noiseFloor * 1.85)
+                        val isSpeechBandDominant = speechRms >= (rawRms * 0.40) || rawRms < 420.0
+                        val isCandidateSpeech = speechRms >= speechThreshold &&
+                                isSpeechBandDominant &&
+                                zeroCrossings in 12..150
 
-                    if (isCandidateSpeech) {
-                        if (!isSpeechActive) {
-                            isSpeechActive = true
-                            speechSamplesCount = 0
+                        if (isCandidateSpeech) {
+                            if (!isSpeechActive) {
+                                isSpeechActive = true
+                                speechSamplesCount = 0
+                                silenceFramesCounter = 0
+                            }
+
+                            if (speechSamplesCount + read < speechRingBuffer.size) {
+                                System.arraycopy(filteredChunk, 0, speechRingBuffer, speechSamplesCount, read)
+                                speechSamplesCount += read
+                            }
                             silenceFramesCounter = 0
-                        }
 
-                        // Копируем отфильтрованный речевой сигнал в буфер команды
-                        if (speechSamplesCount + read < speechRingBuffer.size) {
-                            System.arraycopy(filteredChunk, 0, speechRingBuffer, speechSamplesCount, read)
-                            speechSamplesCount += read
-                        }
-                        silenceFramesCounter = 0
+                            // Защита от речи фильма: команда не бывает длиннее 1.1 сек
+                            if (speechSamplesCount >= (SAMPLE_RATE * MAX_SPEECH_DURATION_MS) / 1000) {
+                                isSpeechActive = false
+                                speechSamplesCount = 0
+                                silenceFramesCounter = 0
+                            }
+                        } else if (isSpeechActive) {
+                            if (speechSamplesCount + read < speechRingBuffer.size) {
+                                System.arraycopy(filteredChunk, 0, speechRingBuffer, speechSamplesCount, read)
+                                speechSamplesCount += read
+                            }
+                            silenceFramesCounter++
 
-                        // Защита от зависания на звуках фильма: если непрерывный звук длится > 2.0 сек,
-                        // это не изолированная команда, а фрагмент фильма — сбрасываем без блокировки кулдауном
-                        if (speechSamplesCount >= SAMPLE_RATE * 2.0) {
-                            isSpeechActive = false
-                            speechSamplesCount = 0
-                            silenceFramesCounter = 0
-                        }
-                    } else if (isSpeechActive) {
-                        if (speechSamplesCount + read < speechRingBuffer.size) {
-                            System.arraycopy(filteredChunk, 0, speechRingBuffer, speechSamplesCount, read)
-                            speechSamplesCount += read
-                        }
-                        silenceFramesCounter++
+                            // Мгновенная реакция: всего 9 фреймов (~180 мс) тишины после фразы
+                            if (silenceFramesCounter >= SILENCE_TRAILING_FRAMES) {
+                                isSpeechActive = false
+                                val speechDurationMs = (speechSamplesCount * 1000) / SAMPLE_RATE
+                                val now = System.currentTimeMillis()
 
-                        // Речь завершилась паузой
-                        if (silenceFramesCounter >= SILENCE_TRAILING_FRAMES) {
-                            isSpeechActive = false
-                            val speechDurationMs = (speechSamplesCount * 1000) / SAMPLE_RATE
+                                if (speechDurationMs in MIN_SPEECH_DURATION_MS..MAX_SPEECH_DURATION_MS && (now - lastRecognitionTimestamp > 800L)) {
+                                    val speechPcm = ShortArray(speechSamplesCount)
+                                    System.arraycopy(speechRingBuffer, 0, speechPcm, 0, speechSamplesCount)
 
-                            val now = System.currentTimeMillis()
-                            // Краткая изолированная команда ("Пауза", "Играй", "Дальше", "Назад") длится 260..1800 мс
-                            if (speechDurationMs in MIN_SPEECH_DURATION_MS..MAX_SPEECH_DURATION_MS && (now - lastRecognitionTimestamp > 1200L)) {
-                                val speechPcm = ShortArray(speechSamplesCount)
-                                System.arraycopy(speechRingBuffer, 0, speechPcm, 0, speechSamplesCount)
-
-                                val trimmed = trimSilence(speechPcm, speechSamplesCount)
-                                if (trimmed.size >= SAMPLE_RATE * 0.22) {
-                                    val matchedAction = matchVoiceCommand(trimmed)
-                                    if (matchedAction != null) {
-                                        lastRecognitionTimestamp = now
-                                        Log.d(TAG, "Recognized command: ${matchedAction.title} ($matchedAction)")
-                                        withContext(Dispatchers.Main) {
-                                            onCommandRecognized(matchedAction)
-                                            _commandEvents.tryEmit(matchedAction)
+                                    val trimmed = trimSilence(speechPcm, speechSamplesCount)
+                                    if (trimmed.size >= SAMPLE_RATE * 0.20) {
+                                        val matchedAction = matchVoiceCommand(trimmed)
+                                        if (matchedAction != null) {
+                                            lastRecognitionTimestamp = now
+                                            Log.d(TAG, "Recognized command: ${matchedAction.title} ($matchedAction)")
+                                            withContext(Dispatchers.Main) {
+                                                onCommandRecognized(matchedAction)
+                                                _commandEvents.tryEmit(matchedAction)
+                                            }
                                         }
                                     }
                                 }
+                                speechSamplesCount = 0
+                                silenceFramesCounter = 0
                             }
-                            speechSamplesCount = 0
-                            silenceFramesCounter = 0
                         }
                     }
+                } catch (e: SecurityException) {
+                    Log.w(TAG, "Audio permission missing: ${e.message}")
+                    break
+                } catch (e: Exception) {
+                    if (shouldKeepListening && isActive) {
+                        Log.w(TAG, "Microphone stream recovered after: ${e.message}")
+                        kotlinx.coroutines.delay(150)
+                    }
+                } finally {
+                    try { effects?.release() } catch (_: Exception) {}
+                    try {
+                        audioRecord?.stop()
+                        audioRecord?.release()
+                    } catch (_: Exception) {}
                 }
-            } catch (e: SecurityException) {
-                Log.w(TAG, "Recording audio permission missing: ${e.message}")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error in listening loop", e)
-            } finally {
-                _isListening.value = false
-                try {
-                    effects?.release()
-                } catch (_: Exception) {}
-                try {
-                    audioRecord?.stop()
-                    audioRecord?.release()
-                } catch (_: Exception) {}
-                Log.d(TAG, "DirtyHandsEngine: microphone listening stopped")
             }
+            _isListening.value = false
+            Log.d(TAG, "DirtyHandsEngine: microphone listening finished")
         }
     }
 
@@ -821,6 +827,7 @@ object DirtyHandsEngine {
      * Остановка прослушивания микрофона при выходе из плеера или сворачивании.
      */
     fun stopListening() {
+        shouldKeepListening = false
         listeningJob?.cancel()
         listeningJob = null
         _isListening.value = false

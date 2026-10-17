@@ -3402,7 +3402,7 @@ fun DetailScreen(
                         if (curEpisodeIndex > 0) {
                             val prevEp = curEpisodes[curEpisodeIndex - 1]
                             selectedEpisodeId = prevEp.id
-                            startPlayback(translator, curSeason.id, prevEp.id, null, currentPlayingQuality, true)
+                            startPlayback(translator, curSeason.id, prevEp.id, 0L, currentPlayingQuality, true)
                         } else {
                             val sIdx = seasonsList.indexOfFirst { it.id == curSeason.id }
                             if (sIdx > 0) {
@@ -3411,7 +3411,7 @@ fun DetailScreen(
                                 if (lastEp != null) {
                                     selectedSeasonId = prevSeason.id
                                     selectedEpisodeId = lastEp.id
-                                    startPlayback(translator, prevSeason.id, lastEp.id, null, currentPlayingQuality, true)
+                                    startPlayback(translator, prevSeason.id, lastEp.id, 0L, currentPlayingQuality, true)
                                 }
                             }
                         }
@@ -3423,7 +3423,7 @@ fun DetailScreen(
                         if (curEpisodeIndex >= 0 && curEpisodeIndex < curEpisodes.size - 1) {
                             val nextEp = curEpisodes[curEpisodeIndex + 1]
                             selectedEpisodeId = nextEp.id
-                            startPlayback(translator, curSeason.id, nextEp.id, null, currentPlayingQuality, true)
+                            startPlayback(translator, curSeason.id, nextEp.id, 0L, currentPlayingQuality, true)
                         } else {
                             val sIdx = seasonsList.indexOfFirst { it.id == curSeason.id }
                             if (sIdx >= 0 && sIdx < seasonsList.size - 1) {
@@ -3432,7 +3432,7 @@ fun DetailScreen(
                                 if (firstEp != null) {
                                     selectedSeasonId = nextSeason.id
                                     selectedEpisodeId = firstEp.id
-                                    startPlayback(translator, nextSeason.id, firstEp.id, null, currentPlayingQuality, true)
+                                    startPlayback(translator, nextSeason.id, firstEp.id, 0L, currentPlayingQuality, true)
                                 }
                             }
                         }
