@@ -34,6 +34,9 @@ object RezkaDetailJsonEngine {
         root.put("type", detail.type.name)
         root.put("numericPostId", detail.numericPostId)
         root.put("isReleased", detail.isReleased)
+        root.put("defaultCam", detail.defaultCam)
+        root.put("defaultAds", detail.defaultAds)
+        root.put("defaultDirector", detail.defaultDirector)
 
         // RatingInfo
         val rInfo = JSONObject().apply {
@@ -153,6 +156,12 @@ object RezkaDetailJsonEngine {
                 put("isPremium", t.isPremium)
                 put("premiumUrl", t.premiumUrl)
                 put("url", t.url)
+                put("isCam", t.isCam)
+                put("isAds", t.isAds)
+                put("isDirector", t.isDirector)
+                put("cam", t.cam)
+                put("ads", t.ads)
+                put("director", t.director)
             })
         }
         root.put("translators", transArr)
@@ -364,7 +373,13 @@ object RezkaDetailJsonEngine {
                                 flagUrl = obj.optString("flagUrl", ""),
                                 isPremium = obj.optBoolean("isPremium", false),
                                 premiumUrl = obj.optString("premiumUrl", ""),
-                                url = obj.optString("url", "")
+                                url = obj.optString("url", ""),
+                                isCam = obj.optBoolean("isCam", false),
+                                isAds = obj.optBoolean("isAds", false),
+                                isDirector = obj.optBoolean("isDirector", false),
+                                cam = obj.optInt("cam", 0),
+                                ads = obj.optInt("ads", 0),
+                                director = obj.optInt("director", 0)
                             )
                         )
                     }
@@ -439,7 +454,10 @@ object RezkaDetailJsonEngine {
                 translators = organizedTranslators,
                 seasons = seasons,
                 numericPostId = numericPostId,
-                isReleased = isReleased
+                isReleased = isReleased,
+                defaultCam = root.optInt("defaultCam", 0),
+                defaultAds = root.optInt("defaultAds", 0),
+                defaultDirector = root.optInt("defaultDirector", 0)
             )
         } catch (_: Exception) {
             null

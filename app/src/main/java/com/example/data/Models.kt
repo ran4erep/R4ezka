@@ -301,7 +301,10 @@ data class RezkaDetail(
     val translators: List<Translator> = emptyList(),
     val seasons: List<Season> = emptyList(),
     val numericPostId: String = "",
-    val isReleased: Boolean = true
+    val isReleased: Boolean = true,
+    val defaultCam: Int = 0,
+    val defaultAds: Int = 0,
+    val defaultDirector: Int = 0
 ) : Serializable {
     /**
      * Показывает, имеет ли релиз серии/эпизоды:
@@ -350,7 +353,13 @@ data class Translator(
     val flagUrl: String = "",
     val isPremium: Boolean = false,
     val premiumUrl: String = "",
-    val url: String = ""
+    val url: String = "",
+    val isCam: Boolean = false,
+    val isAds: Boolean = false,
+    val isDirector: Boolean = false,
+    val cam: Int = 0,
+    val ads: Int = 0,
+    val director: Int = 0
 ) : Serializable
 
 data class Season(

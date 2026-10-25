@@ -34,9 +34,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.example.data.RezkaDecryptor
 import com.example.data.RezkaDetail
 import com.example.data.RezkaType
 import com.example.data.Season
+import com.example.data.StreamUrl
 import com.example.data.Translator
 import com.example.ui.haptics.HapticEngine
 import com.example.ui.haptics.HapticType
@@ -63,6 +65,9 @@ fun MediaDownloadDialog(
     initialEpisodeId: String?,
     effectiveSeasons: List<Season>,
     defaultQuality: String,
+    initialStreams: List<StreamUrl>? = null,
+    fetchStreams: (suspend (translator: Translator, seasonId: Int, episodeId: String) -> List<StreamUrl>)? = null,
+    fetchEpisodes: (suspend (translator: Translator) -> List<Season>)? = null,
     onDismiss: () -> Unit,
     onDownload: (translator: Translator, seasonId: Int, episodeId: String, quality: String, isOfflineLibrary: Boolean) -> Unit
 ) {
@@ -74,7 +79,11 @@ fun MediaDownloadDialog(
         mutableStateOf(initialTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной"))
     }
 
-    val availableSeasons = effectiveSeasons.ifEmpty { detail.seasons }
+    var dynamicSeasons by remember {
+        mutableStateOf(effectiveSeasons.ifEmpty { detail.seasons })
+    }
+
+    val availableSeasons = dynamicSeasons.ifEmpty { detail.seasons }
 
     var selectedSeasonId by remember {
         mutableIntStateOf(initialSeasonId ?: availableSeasons.firstOrNull()?.id ?: 1)
@@ -91,9 +100,117 @@ fun MediaDownloadDialog(
     val availableEpisodes = currentSeason?.episodes ?: emptyList()
     val currentEpisode = availableEpisodes.find { it.id == selectedEpisodeId } ?: availableEpisodes.firstOrNull()
 
-    val qualityOptions = remember { listOf("1080p", "720p", "480p", "360p") }
+    // Динамическое обновление серий при смене озвучки (если передана функция получения серий)
+    LaunchedEffect(selectedTranslator.id) {
+        if (fetchEpisodes != null && isSeries) {
+            try {
+                val eps = fetchEpisodes(selectedTranslator)
+                if (eps.isNotEmpty()) {
+                    dynamicSeasons = eps
+                    if (eps.none { it.id == selectedSeasonId }) {
+                        selectedSeasonId = eps.first().id
+                        selectedEpisodeId = eps.first().episodes.firstOrNull()?.id ?: "1"
+                    } else {
+                        val seasonObj = eps.find { it.id == selectedSeasonId }
+                        if (seasonObj != null && seasonObj.episodes.none { it.id == selectedEpisodeId }) {
+                            selectedEpisodeId = seasonObj.episodes.firstOrNull()?.id ?: "1"
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    // Локальный кэш потоков в памяти: "translatorId_seasonId_episodeId" -> List<StreamUrl>
+    val streamsCache = remember { mutableMapOf<String, List<StreamUrl>>() }
+
+    // Посев кэша переданными потоками активного видео
+    val initialKey = remember(selectedTranslator.id, selectedSeasonId, selectedEpisodeId) {
+        "${selectedTranslator.id}_${if (isSeries) selectedSeasonId else 0}_${if (isSeries) selectedEpisodeId else ""}"
+    }
+    LaunchedEffect(initialStreams) {
+        if (initialStreams != null && initialStreams.isNotEmpty() && !streamsCache.containsKey(initialKey)) {
+            val remote = initialStreams.filter { !it.url.startsWith("file://") && !it.directMp4Url.startsWith("file://") }
+            if (remote.isNotEmpty()) {
+                streamsCache[initialKey] = remote
+            }
+        }
+    }
+
+    // Список реально доступных качеств для текущего выбранного видео/серии
+    var availableQualities by remember {
+        val initialQualities = initialStreams?.filter {
+            !it.url.startsWith("file://") && !it.directMp4Url.startsWith("file://")
+        }?.map { it.quality }?.distinct()?.filter { it.isNotBlank() }
+        mutableStateOf<List<String>>(initialQualities ?: emptyList())
+    }
+    var isLoadingQualities by remember { mutableStateOf(false) }
+
+    // Асинхронное получение реальных качеств с CDN (с кэшированием в O(1) и отменой предыдущих корутин)
+    LaunchedEffect(selectedTranslator.id, selectedSeasonId, selectedEpisodeId) {
+        val sId = if (isSeries) selectedSeasonId else 0
+        val epId = if (isSeries) selectedEpisodeId else ""
+        val cacheKey = "${selectedTranslator.id}_${sId}_${epId}"
+
+        val cached = streamsCache[cacheKey]
+        if (cached != null && cached.isNotEmpty()) {
+            val qualities = cached.map { it.quality }.distinct().filter { it.isNotBlank() }
+            if (qualities.isNotEmpty()) {
+                availableQualities = qualities
+                isLoadingQualities = false
+                return@LaunchedEffect
+            }
+        }
+
+        if (fetchStreams != null) {
+            isLoadingQualities = true
+            try {
+                val fetched = fetchStreams(selectedTranslator, sId, epId)
+                val remote = fetched.filter { !it.url.startsWith("file://") && !it.directMp4Url.startsWith("file://") }
+                if (remote.isNotEmpty()) {
+                    streamsCache[cacheKey] = remote
+                    val qualities = remote.map { it.quality }.distinct().filter { it.isNotBlank() }
+                    if (qualities.isNotEmpty()) {
+                        availableQualities = qualities
+                    }
+                }
+            } catch (_: Exception) {
+                // В случае сетевого сбоя оставляем ранее доступные качества
+            } finally {
+                isLoadingQualities = false
+            }
+        }
+    }
+
+    // Опции качества: строго реальные потоки, отсортированные по убыванию разрешения (например: 1080p -> 720p -> 480p -> 360p)
+    val qualityOptions = remember(availableQualities, isLoadingQualities) {
+        if (availableQualities.isNotEmpty()) {
+            availableQualities.sortedByDescending { RezkaDecryptor.getQualityWeight(it) }
+        } else if (!isLoadingQualities) {
+            // Безопасный резервный список, если сеть полностью недоступна
+            listOf("1080p", "720p", "480p", "360p")
+        } else {
+            emptyList()
+        }
+    }
+
     var selectedQuality by remember {
-        mutableStateOf(if (defaultQuality in qualityOptions) defaultQuality else "1080p")
+        mutableStateOf(
+            if (availableQualities.isNotEmpty()) {
+                val matching = availableQualities.firstOrNull { it.equals(defaultQuality, ignoreCase = true) }
+                matching ?: availableQualities.first()
+            } else {
+                defaultQuality
+            }
+        )
+    }
+
+    // Автоматическая корректировка выбранного качества при изменении набора доступных
+    LaunchedEffect(qualityOptions) {
+        if (qualityOptions.isNotEmpty() && selectedQuality !in qualityOptions) {
+            val matching = qualityOptions.firstOrNull { it.equals(defaultQuality, ignoreCase = true) }
+            selectedQuality = matching ?: qualityOptions.first()
+        }
     }
 
     var translatorDropdownExpanded by remember { mutableStateOf(false) }
@@ -111,14 +228,22 @@ fun MediaDownloadDialog(
     }
 
     val performDownload: (Boolean) -> Unit = { isOfflineLib ->
-        HapticEngine.get().perform(HapticType.CONFIRM)
-        onDownload(
-            selectedTranslator,
-            if (isSeries) selectedSeasonId else 0,
-            if (isSeries) selectedEpisodeId else "",
-            selectedQuality,
-            isOfflineLib
-        )
+        if (!isLoadingQualities || qualityOptions.isNotEmpty()) {
+            HapticEngine.get().perform(HapticType.CONFIRM)
+            val finalQuality = if (selectedQuality in qualityOptions) {
+                selectedQuality
+            } else {
+                qualityOptions.firstOrNull() ?: defaultQuality
+            }
+            onDownload(
+                selectedTranslator,
+                if (isSeries) selectedSeasonId else 0,
+                if (isSeries) selectedEpisodeId else "",
+                finalQuality,
+                isOfflineLib
+            )
+            onDismiss()
+        }
     }
 
     Dialog(
@@ -641,38 +766,67 @@ fun MediaDownloadDialog(
                                         fontWeight = FontWeight.Medium
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        qualityOptions.forEach { q ->
-                                            val isSelected = q == selectedQuality
-                                            Surface(
-                                                color = if (isSelected) CinemaPrimary.copy(alpha = 0.25f) else CinemaCard,
-                                                shape = RoundedCornerShape(8.dp),
-                                                border = BorderStroke(
-                                                    if (isSelected) 1.5.dp else 1.dp,
-                                                    if (isSelected) CinemaPrimary else CinemaBorder
-                                                ),
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .height(36.dp)
-                                                    .tvFocusableItem(
-                                                        onClick = { selectedQuality = q },
-                                                        shape = RoundedCornerShape(8.dp),
-                                                        scaleFactor = 1.05f
-                                                    )
+                                    if (isLoadingQualities && qualityOptions.isEmpty()) {
+                                        Surface(
+                                            color = CinemaCard,
+                                            shape = RoundedCornerShape(8.dp),
+                                            border = BorderStroke(1.dp, CinemaBorder),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(36.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxSize(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.Center
                                             ) {
-                                                Box(
-                                                    contentAlignment = Alignment.Center,
-                                                    modifier = Modifier.fillMaxSize()
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(16.dp),
+                                                    color = CinemaPrimary,
+                                                    strokeWidth = 2.dp
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = "Определение доступного качества...",
+                                                    color = CinemaTextGray,
+                                                    fontSize = 12.sp
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            qualityOptions.forEach { q ->
+                                                val isSelected = q == selectedQuality
+                                                Surface(
+                                                    color = if (isSelected) CinemaPrimary.copy(alpha = 0.25f) else CinemaCard,
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    border = BorderStroke(
+                                                        if (isSelected) 1.5.dp else 1.dp,
+                                                        if (isSelected) CinemaPrimary else CinemaBorder
+                                                    ),
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .height(36.dp)
+                                                        .tvFocusableItem(
+                                                            onClick = { selectedQuality = q },
+                                                            shape = RoundedCornerShape(8.dp),
+                                                            scaleFactor = 1.05f
+                                                        )
                                                 ) {
-                                                    Text(
-                                                        text = q,
-                                                        color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                                        fontSize = 12.sp,
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                                    )
+                                                    Box(
+                                                        contentAlignment = Alignment.Center,
+                                                        modifier = Modifier.fillMaxSize()
+                                                    ) {
+                                                        Text(
+                                                            text = q,
+                                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -1102,33 +1256,55 @@ fun MediaDownloadDialog(
                                 border = BorderStroke(1.dp, CinemaBorder),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    qualityOptions.forEachIndexed { idx, q ->
-                                        val isSelected = q == selectedQuality
-                                        Box(
-                                            contentAlignment = Alignment.Center,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(44.dp)
-                                                .background(if (isSelected) CinemaPrimary.copy(alpha = 0.18f) else Color.Transparent)
-                                                .clickable {
-                                                    HapticEngine.get().perform(HapticType.SELECTION)
-                                                    selectedQuality = q
-                                                }
-                                        ) {
-                                            Text(
-                                                text = q,
-                                                color = if (isSelected) CinemaPrimary else CinemaTextWhite,
-                                                fontSize = 15.sp,
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                            )
-                                        }
+                                if (isLoadingQualities && qualityOptions.isEmpty()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 18.dp, horizontal = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(18.dp),
+                                            color = CinemaPrimary,
+                                            strokeWidth = 2.dp
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Text(
+                                            text = "Определение доступного качества...",
+                                            color = CinemaTextGray,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+                                } else {
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        qualityOptions.forEachIndexed { idx, q ->
+                                            val isSelected = q == selectedQuality
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(44.dp)
+                                                    .background(if (isSelected) CinemaPrimary.copy(alpha = 0.18f) else Color.Transparent)
+                                                    .clickable {
+                                                        HapticEngine.get().perform(HapticType.SELECTION)
+                                                        selectedQuality = q
+                                                    }
+                                            ) {
+                                                Text(
+                                                    text = q,
+                                                    color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                    fontSize = 15.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                                )
+                                            }
 
-                                        if (idx < qualityOptions.size - 1) {
-                                            HorizontalDivider(
-                                                color = CinemaBorder.copy(alpha = 0.5f),
-                                                thickness = 0.5.dp
-                                            )
+                                            if (idx < qualityOptions.size - 1) {
+                                                HorizontalDivider(
+                                                    color = CinemaBorder.copy(alpha = 0.5f),
+                                                    thickness = 0.5.dp
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -1215,6 +1391,9 @@ fun SeriesDownloadDialog(
     initialEpisodeId: String?,
     effectiveSeasons: List<Season>,
     defaultQuality: String,
+    initialStreams: List<StreamUrl>? = null,
+    fetchStreams: (suspend (translator: Translator, seasonId: Int, episodeId: String) -> List<StreamUrl>)? = null,
+    fetchEpisodes: (suspend (translator: Translator) -> List<Season>)? = null,
     onDismiss: () -> Unit,
     onDownload: (translator: Translator, seasonId: Int, episodeId: String, quality: String, isOfflineLibrary: Boolean) -> Unit
 ) {
@@ -1225,6 +1404,9 @@ fun SeriesDownloadDialog(
         initialEpisodeId = initialEpisodeId,
         effectiveSeasons = effectiveSeasons,
         defaultQuality = defaultQuality,
+        initialStreams = initialStreams,
+        fetchStreams = fetchStreams,
+        fetchEpisodes = fetchEpisodes,
         onDismiss = onDismiss,
         onDownload = onDownload
     )

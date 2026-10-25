@@ -353,7 +353,10 @@ fun DetailScreen(
                         season = if (isSeries) seasonId else 0,
                         episode = if (isSeries) epId else "",
                         forceOnline = true,
-                        itemUrl = effectiveItemUrl
+                        itemUrl = effectiveItemUrl,
+                        cam = trans.cam,
+                        ads = trans.ads,
+                        director = trans.director
                     )
                     // Для скачивания через DownloadManager отбираем только сетевые потоки HTTP/HTTPS
                     val remoteStreams = streams.filter {
@@ -580,7 +583,10 @@ fun DetailScreen(
                     isSeries = isSeries,
                     season = effectiveSeason,
                     episode = effectiveEpisode,
-                    itemUrl = effectiveItemUrl
+                    itemUrl = effectiveItemUrl,
+                    cam = translator.cam,
+                    ads = translator.ads,
+                    director = translator.director
                 )
 
                 isFetchingStreamsForPlay = false
@@ -2793,6 +2799,28 @@ fun DetailScreen(
                     initialEpisodeId = selectedEpisodeId,
                     effectiveSeasons = seasonsToUse,
                     defaultQuality = defaultQuality,
+                    initialStreams = activePlayerStreams,
+                    fetchStreams = { trans, sId, epId ->
+                        val targetId = currentDetail.numericPostId.ifEmpty { item.id }
+                        val effectiveItemUrl = item.url
+                        viewModel.getStreamUrls(
+                            itemId = targetId,
+                            translatorId = trans.id,
+                            isSeries = currentDetail.hasEpisodes,
+                            season = if (currentDetail.hasEpisodes) sId else 0,
+                            episode = if (currentDetail.hasEpisodes) epId else "",
+                            forceOnline = true,
+                            itemUrl = effectiveItemUrl,
+                            cam = trans.cam,
+                            ads = trans.ads,
+                            director = trans.director
+                        )
+                    },
+                    fetchEpisodes = { trans ->
+                        if (currentDetail.hasEpisodes && currentDetail.numericPostId.isNotEmpty()) {
+                            viewModel.getEpisodesForTranslator(currentDetail.numericPostId, trans.id, trans.url)
+                        } else emptyList()
+                    },
                     onDismiss = { showSeriesDownloadDialog = false },
                     onDownload = startMediaDownload
                 )

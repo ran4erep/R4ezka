@@ -1862,6 +1862,10 @@ object RezkaService {
             if (p1080 >= 0) return p1080
             val p720 = streams.indexOfFirst { it.quality.contains("720") }
             if (p720 >= 0) return p720
+            val p480 = streams.indexOfFirst { it.quality.contains("480") }
+            if (p480 >= 0) return p480
+            val p360 = streams.indexOfFirst { it.quality.contains("360") }
+            if (p360 >= 0) return p360
             return 0
         }
 
@@ -1871,6 +1875,10 @@ object RezkaService {
             if (p720 >= 0) return p720
             val p1080 = streams.indexOfFirst { it.quality.contains("1080") }
             if (p1080 >= 0) return p1080
+            val p480 = streams.indexOfFirst { it.quality.contains("480") }
+            if (p480 >= 0) return p480
+            val p360 = streams.indexOfFirst { it.quality.contains("360") }
+            if (p360 >= 0) return p360
             return 0
         }
 
@@ -4435,6 +4443,16 @@ object RezkaService {
                             lastParsedPremiumIconUrl = pagePremIconUrl
                         }
 
+                        // Парсим параметры вызова CDN плеера из HTML (is_cam, is_ads, is_director)
+                        val cdnMoviesJsMatch = Regex(
+                            """(?:sof\.tv\.)?initCDNMoviesEvents\s*\(\s*['"]?(\d+)['"]?\s*,\s*['"]?(\d+)['"]?(?:\s*,\s*['"]?(\d+)['"]?)?(?:\s*,\s*['"]?(\d+)['"]?)?(?:\s*,\s*['"]?(\d+)['"]?)?""",
+                            RegexOption.IGNORE_CASE
+                        ).find(html)
+
+                        val pageCam = cdnMoviesJsMatch?.groupValues?.getOrNull(3)?.toIntOrNull() ?: 0
+                        val pageAds = cdnMoviesJsMatch?.groupValues?.getOrNull(4)?.toIntOrNull() ?: 0
+                        val pageDirector = cdnMoviesJsMatch?.groupValues?.getOrNull(5)?.toIntOrNull() ?: 0
+
                         data class RawTranslatorItem(
                             val id: String,
                             val name: String,
@@ -4442,7 +4460,13 @@ object RezkaService {
                             val flagUrl: String,
                             val isPremium: Boolean,
                             val svgIconUrl: String,
-                            val url: String = ""
+                            val url: String = "",
+                            val isCam: Boolean = false,
+                            val isAds: Boolean = false,
+                            val isDirector: Boolean = false,
+                            val cam: Int = 0,
+                            val ads: Int = 0,
+                            val director: Int = 0
                         )
 
                         val rawTranslators = ArrayList<RawTranslatorItem>()
@@ -4450,6 +4474,19 @@ object RezkaService {
                             val tId = tEl.attr("data-translator_id").ifEmpty { tEl.attr("data-id") }
                             val tName = tEl.ownText().trim().ifEmpty { tEl.text().trim() }
                             val isDefault = tEl.hasClass("active") || tEl.hasClass("current")
+
+                            // Извлекаем параметры релиза для озвучки (CAMRip, реклама, режиссерская версия)
+                            val rawCamAttr = tEl.attr("data-cam").ifEmpty { tEl.attr("data-is_cam") }
+                            val rawAdsAttr = tEl.attr("data-ads").ifEmpty { tEl.attr("data-is_ads") }
+                            val rawDirectorAttr = tEl.attr("data-director").ifEmpty { tEl.attr("data-is_director") }
+
+                            val itemCam = rawCamAttr.toIntOrNull() ?: if (isDefault) pageCam else 0
+                            val itemAds = rawAdsAttr.toIntOrNull() ?: if (isDefault) pageAds else 0
+                            val itemDirector = rawDirectorAttr.toIntOrNull() ?: if (isDefault) pageDirector else 0
+
+                            val isCam = itemCam > 0 || tName.contains("camrip", ignoreCase = true) || tName.contains("ts", ignoreCase = true)
+                            val isAds = itemAds > 0 || tName.contains("реклам", ignoreCase = true)
+                            val isDirector = itemDirector > 0 || tName.contains("режиссер", ignoreCase = true) || tName.contains("director", ignoreCase = true)
 
                             // Проверяем наличие SVG-иконки премиума перед названием озвучки
                             val isPrem = hasPremiumSvgIcon(tEl)
@@ -4489,14 +4526,31 @@ object RezkaService {
                             }
 
                             if (tId.isNotEmpty() && tName.isNotEmpty()) {
-                                rawTranslators.add(RawTranslatorItem(tId, tName, isDefault, flagUrl, isPrem, itemSvgIcon, transPageUrl))
+                                rawTranslators.add(
+                                    RawTranslatorItem(
+                                        id = tId,
+                                        name = tName,
+                                        isDefault = isDefault,
+                                        flagUrl = flagUrl,
+                                        isPremium = isPrem,
+                                        svgIconUrl = itemSvgIcon,
+                                        url = transPageUrl,
+                                        isCam = isCam,
+                                        isAds = isAds,
+                                        isDirector = isDirector,
+                                        cam = itemCam,
+                                        ads = itemAds,
+                                        director = itemDirector
+                                    )
+                                )
                             }
                         }
 
                         // Проверяем, вышел ли фильм/сериал (есть ли плеер)
                         val hasTranslatorsInHtml = rawTranslators.isNotEmpty()
                         val jsEventMatch = if (!hasTranslatorsInHtml) {
-                            Regex("""sof\.tv\.initCDN(?:Movies|Series)Events\s*\(\s*['"]?(\d+)['"]?\s*,\s*['"]?(\d+)['"]?""", RegexOption.IGNORE_CASE).find(html)
+                            cdnMoviesJsMatch
+                                ?: Regex("""sof\.tv\.initCDN(?:Movies|Series)Events\s*\(\s*['"]?(\d+)['"]?\s*,\s*['"]?(\d+)['"]?""", RegexOption.IGNORE_CASE).find(html)
                                 ?: Regex("""initCDN(?:Movies|Series)Events\s*\(\s*['"]?(\d+)['"]?\s*,\s*['"]?(\d+)['"]?""", RegexOption.IGNORE_CASE).find(html)
                                 ?: Regex(""""translator_id"\s*:\s*"?(\d+)"?""", RegexOption.IGNORE_CASE).find(html)
                                 ?: Regex("""data-translator_id=["']?(\d+)["']?""", RegexOption.IGNORE_CASE).find(html)
@@ -4514,12 +4568,18 @@ object RezkaService {
                             rawTranslators.add(
                                 RawTranslatorItem(
                                     id = foundId.ifEmpty { "238" },
-                                    name = "Оригинал / HDRezka",
+                                    name = if (pageCam > 0) "CAMRip / Экранка" else "Оригинал / HDRezka",
                                     isDefault = true,
                                     flagUrl = "",
                                     isPremium = false,
                                     svgIconUrl = "",
-                                    url = normalizedUrl
+                                    url = normalizedUrl,
+                                    isCam = pageCam > 0,
+                                    isAds = pageAds > 0,
+                                    isDirector = pageDirector > 0,
+                                    cam = pageCam,
+                                    ads = pageAds,
+                                    director = pageDirector
                                 )
                             )
                         }
@@ -4547,7 +4607,13 @@ object RezkaService {
                                     flagUrl = item.flagUrl,
                                     isPremium = isPrem,
                                     premiumUrl = premUrl,
-                                    url = item.url
+                                    url = item.url,
+                                    isCam = item.isCam,
+                                    isAds = item.isAds,
+                                    isDirector = item.isDirector,
+                                    cam = item.cam,
+                                    ads = item.ads,
+                                    director = item.director
                                 )
                             )
                         }
@@ -4700,7 +4766,10 @@ object RezkaService {
                             translators = organizedTranslators,
                             seasons = seasons,
                             numericPostId = numericPostId,
-                            isReleased = effectiveIsReleased
+                            isReleased = effectiveIsReleased,
+                            defaultCam = pageCam,
+                            defaultAds = pageAds,
+                            defaultDirector = pageDirector
                         )
                         detailCache.put(cacheKey, detail)
                         return@withContext detail
@@ -5297,7 +5366,10 @@ object RezkaService {
         isSeries: Boolean,
         season: Int = 0,
         episode: String = "",
-        itemUrl: String = ""
+        itemUrl: String = "",
+        cam: Int = 0,
+        ads: Int = 0,
+        director: Int = 0
     ): List<StreamUrl> = withContext(Dispatchers.IO) {
         val numericId = extractNumericId(itemId).ifEmpty { extractNumericId(itemUrl) }
         val cleanTranslatorId = translatorId.trim()
@@ -5312,7 +5384,7 @@ object RezkaService {
             if (episode.isBlank() || episode == "0") "1" else episode.trim()
         } else ""
 
-        val cacheKey = "$numericId-$effectiveTranslatorId-$isEpisodic-$effectiveSeason-$effectiveEpisode-$isExplicitMovie"
+        val cacheKey = "$numericId-$effectiveTranslatorId-$isEpisodic-$effectiveSeason-$effectiveEpisode-$isExplicitMovie-$cam-$ads-$director"
         streamCache.get(cacheKey)?.let { return@withContext it }
 
         // Точка входа CDN HDRezka ВСЕГДА одна: /ajax/get_cdn_series/
@@ -5343,7 +5415,10 @@ object RezkaService {
                 actionParam = "get_stream",
                 customReferer = effectiveReferer,
                 sendPartParam = true,
-                sendEpisodicParams = true
+                sendEpisodicParams = true,
+                isCam = cam,
+                isAds = ads,
+                isDirector = director
             )
             if (resA.streams.isNotEmpty()) {
                 streamCache.put(cacheKey, resA.streams)
@@ -5362,7 +5437,10 @@ object RezkaService {
                 actionParam = "get_movie",
                 customReferer = effectiveReferer,
                 sendPartParam = true,
-                sendEpisodicParams = true
+                sendEpisodicParams = true,
+                isCam = cam,
+                isAds = ads,
+                isDirector = director
             )
             if (resB.streams.isNotEmpty()) {
                 streamCache.put(cacheKey, resB.streams)
@@ -5383,7 +5461,10 @@ object RezkaService {
                     actionParam = "get_stream",
                     customReferer = effectiveReferer,
                     sendPartParam = true,
-                    sendEpisodicParams = true
+                    sendEpisodicParams = true,
+                    isCam = cam,
+                    isAds = ads,
+                    isDirector = director
                 )
                 if (resC.streams.isNotEmpty()) {
                     streamCache.put(cacheKey, resC.streams)
@@ -5403,7 +5484,10 @@ object RezkaService {
                 actionParam = "get_stream",
                 customReferer = effectiveReferer,
                 sendPartParam = true,
-                sendEpisodicParams = true
+                sendEpisodicParams = true,
+                isCam = cam,
+                isAds = ads,
+                isDirector = director
             )
             if (resD.streams.isNotEmpty()) {
                 streamCache.put(cacheKey, resD.streams)
@@ -5422,7 +5506,10 @@ object RezkaService {
                 actionParam = "get_movie",
                 customReferer = effectiveReferer,
                 sendPartParam = false,
-                sendEpisodicParams = false
+                sendEpisodicParams = false,
+                isCam = cam,
+                isAds = ads,
+                isDirector = director
             )
             if (resE.streams.isNotEmpty()) {
                 streamCache.put(cacheKey, resE.streams)
@@ -5443,13 +5530,93 @@ object RezkaService {
                 actionParam = primaryAction,
                 customReferer = effectiveReferer,
                 sendPartParam = isEpisodic,
-                sendEpisodicParams = isEpisodic
+                sendEpisodicParams = isEpisodic,
+                isCam = cam,
+                isAds = ads,
+                isDirector = director
             )
             if (res1.streams.isNotEmpty()) {
                 streamCache.put(cacheKey, res1.streams)
                 return@withContext res1.streams
             }
             lastDiagResult = res1
+
+            // АВТОМАТИЧЕСКИЙ ПОДБОР ФЛАГОВ РЕЛИЗА ДЛЯ ФИЛЬМОВ (CAMRip, TS, со вшитой рекламой или режиссерская версия):
+            // Фильмы, у которых на сайте максимальное разрешение 720p/480p/360p (и нет 1080p),
+            // сервер HDRezka отдает ТОЛЬКО при флаге is_cam=1 или is_ads=1.
+            if (!isEpisodic) {
+                // Попытка 1B: с is_cam = 1 (если изначально было 0)
+                if (cam == 0) {
+                    val resCam = fetchCdnStreamsSingle(
+                        endpoint = endpoint,
+                        numericId = numericId,
+                        translatorId = effectiveTranslatorId,
+                        isSeries = false,
+                        season = 0,
+                        episode = "",
+                        actionParam = "get_movie",
+                        customReferer = effectiveReferer,
+                        sendPartParam = false,
+                        sendEpisodicParams = false,
+                        isCam = 1,
+                        isAds = ads,
+                        isDirector = director
+                    )
+                    if (resCam.streams.isNotEmpty()) {
+                        streamCache.put(cacheKey, resCam.streams)
+                        return@withContext resCam.streams
+                    }
+                    if (resCam.responseBody != null) lastDiagResult = resCam
+                }
+
+                // Попытка 1C: с is_ads = 1 (спонсорская версия)
+                if (ads == 0) {
+                    val resAds = fetchCdnStreamsSingle(
+                        endpoint = endpoint,
+                        numericId = numericId,
+                        translatorId = effectiveTranslatorId,
+                        isSeries = false,
+                        season = 0,
+                        episode = "",
+                        actionParam = "get_movie",
+                        customReferer = effectiveReferer,
+                        sendPartParam = false,
+                        sendEpisodicParams = false,
+                        isCam = if (cam > 0) cam else 1,
+                        isAds = 1,
+                        isDirector = director
+                    )
+                    if (resAds.streams.isNotEmpty()) {
+                        streamCache.put(cacheKey, resAds.streams)
+                        return@withContext resAds.streams
+                    }
+                    if (resAds.responseBody != null) lastDiagResult = resAds
+                }
+
+                // Попытка 1D: с is_director = 1 (режиссерская версия)
+                if (director == 0) {
+                    val resDir = fetchCdnStreamsSingle(
+                        endpoint = endpoint,
+                        numericId = numericId,
+                        translatorId = effectiveTranslatorId,
+                        isSeries = false,
+                        season = 0,
+                        episode = "",
+                        actionParam = "get_movie",
+                        customReferer = effectiveReferer,
+                        sendPartParam = false,
+                        sendEpisodicParams = false,
+                        isCam = cam,
+                        isAds = ads,
+                        isDirector = 1
+                    )
+                    if (resDir.streams.isNotEmpty()) {
+                        streamCache.put(cacheKey, resDir.streams)
+                        return@withContext resDir.streams
+                    }
+                    if (resDir.responseBody != null) lastDiagResult = resDir
+                }
+            }
 
             val altAction = if (isEpisodic) "get_movie" else "get_stream"
             val res2 = fetchCdnStreamsSingle(
@@ -5462,7 +5629,10 @@ object RezkaService {
                 actionParam = altAction,
                 customReferer = effectiveReferer,
                 sendPartParam = (altAction == "get_stream"),
-                sendEpisodicParams = (altAction == "get_stream")
+                sendEpisodicParams = (altAction == "get_stream"),
+                isCam = cam,
+                isAds = ads,
+                isDirector = director
             )
             if (res2.streams.isNotEmpty()) {
                 streamCache.put(cacheKey, res2.streams)
@@ -5476,25 +5646,31 @@ object RezkaService {
         // 2. ФОЛЛБЭК БЕЗ translator_id
         if (effectiveTranslatorId.isNotEmpty()) {
             val actionsToTryNoTrans = if (isMultiSeriesMovie) listOf("get_stream", "get_movie") else (if (isEpisodic) listOf("get_stream", "get_movie") else listOf("get_movie", "get_stream"))
+            val camVariants = if (!isEpisodic && cam == 0) listOf(0, 1) else listOf(cam)
             for (act in actionsToTryNoTrans) {
-                val res3 = fetchCdnStreamsSingle(
-                    endpoint = endpoint,
-                    numericId = numericId,
-                    translatorId = "",
-                    isSeries = isEpisodic,
-                    season = effectiveSeason,
-                    episode = effectiveEpisode,
-                    actionParam = act,
-                    customReferer = effectiveReferer,
-                    sendPartParam = isEpisodic,
-                    sendEpisodicParams = isEpisodic || act == "get_stream"
-                )
-                if (res3.streams.isNotEmpty()) {
-                    streamCache.put(cacheKey, res3.streams)
-                    return@withContext res3.streams
-                }
-                if (res3.responseBody != null) {
-                    lastDiagResult = res3
+                for (tryCam in camVariants) {
+                    val res3 = fetchCdnStreamsSingle(
+                        endpoint = endpoint,
+                        numericId = numericId,
+                        translatorId = "",
+                        isSeries = isEpisodic,
+                        season = effectiveSeason,
+                        episode = effectiveEpisode,
+                        actionParam = act,
+                        customReferer = effectiveReferer,
+                        sendPartParam = isEpisodic,
+                        sendEpisodicParams = isEpisodic || act == "get_stream",
+                        isCam = tryCam,
+                        isAds = ads,
+                        isDirector = director
+                    )
+                    if (res3.streams.isNotEmpty()) {
+                        streamCache.put(cacheKey, res3.streams)
+                        return@withContext res3.streams
+                    }
+                    if (res3.responseBody != null) {
+                        lastDiagResult = res3
+                    }
                 }
             }
         }
@@ -5502,26 +5678,32 @@ object RezkaService {
         // 3. ФОЛЛБЭК НА ДЕФОЛТНЫЕ ОЗВУЧКИ
         if (effectiveTranslatorId.isEmpty()) {
             val defaultTranslators = listOf("238", "1") // 238 - Дубляж, 1 - Оригинал
+            val camVariants = if (!isEpisodic && cam == 0) listOf(0, 1) else listOf(cam)
             for (altTrans in defaultTranslators) {
-                val act = if (isEpisodic) "get_stream" else "get_movie"
-                val res4 = fetchCdnStreamsSingle(
-                    endpoint = endpoint,
-                    numericId = numericId,
-                    translatorId = altTrans,
-                    isSeries = isEpisodic,
-                    season = effectiveSeason,
-                    episode = effectiveEpisode,
-                    actionParam = act,
-                    customReferer = effectiveReferer,
-                    sendPartParam = isEpisodic,
-                    sendEpisodicParams = isEpisodic
-                )
-                if (res4.streams.isNotEmpty()) {
-                    streamCache.put(cacheKey, res4.streams)
-                    return@withContext res4.streams
-                }
-                if (res4.responseBody != null) {
-                    lastDiagResult = res4
+                for (tryCam in camVariants) {
+                    val act = if (isEpisodic) "get_stream" else "get_movie"
+                    val res4 = fetchCdnStreamsSingle(
+                        endpoint = endpoint,
+                        numericId = numericId,
+                        translatorId = altTrans,
+                        isSeries = isEpisodic,
+                        season = effectiveSeason,
+                        episode = effectiveEpisode,
+                        actionParam = act,
+                        customReferer = effectiveReferer,
+                        sendPartParam = isEpisodic,
+                        sendEpisodicParams = isEpisodic,
+                        isCam = tryCam,
+                        isAds = ads,
+                        isDirector = director
+                    )
+                    if (res4.streams.isNotEmpty()) {
+                        streamCache.put(cacheKey, res4.streams)
+                        return@withContext res4.streams
+                    }
+                    if (res4.responseBody != null) {
+                        lastDiagResult = res4
+                    }
                 }
             }
         }
@@ -5536,7 +5718,7 @@ object RezkaService {
                 season = effectiveSeason,
                 episode = effectiveEpisode,
                 endpointUrl = endpoint,
-                requestParams = "id=$numericId, translator_id=$effectiveTranslatorId, isSeries=$isSeries, season=$effectiveSeason, episode=$effectiveEpisode, itemUrl=$itemUrl",
+                requestParams = "id=$numericId, translator_id=$effectiveTranslatorId, isSeries=$isSeries, season=$effectiveSeason, episode=$effectiveEpisode, itemUrl=$itemUrl, cam=$cam, ads=$ads, dir=$director",
                 httpCode = lastDiagResult?.httpCode,
                 responseBody = lastDiagResult?.responseBody,
                 errorMessage = specificReason
@@ -5564,9 +5746,12 @@ object RezkaService {
         actionParam: String,
         customReferer: String? = null,
         sendPartParam: Boolean = true,
-        sendEpisodicParams: Boolean = true
+        sendEpisodicParams: Boolean = true,
+        isCam: Int = 0,
+        isAds: Int = 0,
+        isDirector: Int = 0
     ): CdnFetchResult {
-        val paramSummary = "id=$numericId, translator_id=$translatorId, action=$actionParam, season=$season, episode=$episode, part=$sendPartParam"
+        val paramSummary = "id=$numericId, translator_id=$translatorId, action=$actionParam, season=$season, episode=$episode, part=$sendPartParam, cam=$isCam, ads=$isAds, dir=$isDirector"
         var lastHttpCode: Int? = null
         var lastBody: String? = null
         try {
@@ -5575,9 +5760,9 @@ object RezkaService {
                 .add("id", numericId)
                 .add("action", actionParam)
                 .add("favs", "0")
-                .add("is_cam", "0")
-                .add("is_ads", "0")
-                .add("is_director", "0")
+                .add("is_cam", isCam.toString())
+                .add("is_ads", isAds.toString())
+                .add("is_director", isDirector.toString())
 
             if (translatorId.isNotEmpty() && translatorId != "0") {
                 formBuilder.add("translator_id", translatorId)
