@@ -2429,7 +2429,10 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         season: Int = 0,
         episode: String = "",
         forceOnline: Boolean = false,
-        itemUrl: String = ""
+        itemUrl: String = "",
+        cam: Int = 0,
+        ads: Int = 0,
+        director: Int = 0
     ): List<StreamUrl> {
         val cleanNum = itemId.filter { it.isDigit() }
         val offlineList = repository.getOfflineMediaByItemId(itemId).ifEmpty {
@@ -2477,7 +2480,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
         // 3. Запрос потоков через сеть (для скачивания или онлайн просмотра)
         return try {
-            val onlineStreams = RezkaService.getStreamUrls(itemId, translatorId, isSeries, season, episode, itemUrl)
+            val onlineStreams = RezkaService.getStreamUrls(itemId, translatorId, isSeries, season, episode, itemUrl, cam, ads, director)
             // Если запрос для воспроизведения (не скачивания) и серия уже скачана локально — добавляем локальный файл
             if (!forceOnline && matchingOffline != null) {
                 val resolvedFile = DownloadHelper.resolveOfflineVideoFile(matchingOffline, getApplication())
