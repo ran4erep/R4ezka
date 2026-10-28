@@ -330,11 +330,15 @@ data class RezkaDetail(
         }
 
     /**
-     * Является ли контент многосерийным фильмом (категория MOVIE/ANIME/CARTOON, но с наличием серий/частей).
+     * Является ли контент классическим многосерийным фильмом (категория MOVIE,
+     * разделенный на серии или части без разделения на сезоны).
+     * Аниме-сериалы (ANIME) и мультсериалы (CARTOON) НЕ являются многосерийными фильмами!
      */
     val isMultiSeriesMovie: Boolean
-        get() = (type == RezkaType.MOVIE || type == RezkaType.ANIME || type == RezkaType.CARTOON) &&
+        get() = (type == RezkaType.MOVIE || (id.isNotEmpty() && id.contains("/films/"))) &&
+                type != RezkaType.ANIME && type != RezkaType.CARTOON &&
                 seasons.isNotEmpty() && seasons.any { it.episodes.isNotEmpty() } &&
+                seasons.size <= 1 &&
                 !genres.any { it.contains("сериал", ignoreCase = true) }
 }
 
@@ -472,6 +476,10 @@ data class OfflineMediaEntity(
 
 fun SeriesSubscriptionEntity.isMovie(): Boolean {
     val typeUpper = type.trim().uppercase()
+    if (typeUpper == "ANIME" || typeUpper == "CARTOON") {
+        // Для аниме и мультфильмов: если есть серии/сезоны или подписка оформлена на эпизоды - это сериал
+        return lastKnownSeason <= 0 && lastKnownEpisode <= 0 && !lastEpisodeName.contains("сери", ignoreCase = true)
+    }
     if (typeUpper == "MOVIE") return true
     if (url.contains("/films/")) return true
     if (lastEpisodeName.contains("фильм", ignoreCase = true)) return true
@@ -482,6 +490,7 @@ fun SeriesSubscriptionEntity.isMovie(): Boolean {
 
 fun SeriesSubscriptionEntity.isMultiSeriesMovie(): Boolean {
     val typeUpper = type.trim().uppercase()
+    if (typeUpper == "ANIME" || typeUpper == "CARTOON") return false
     val isMovieType = typeUpper == "MOVIE" || url.contains("/films/") || lastEpisodeName.contains("фильм", ignoreCase = true)
     return isMovieType && (lastKnownEpisode > 1 || lastEpisodeName.contains("сери", ignoreCase = true) || lastEpisodeName.contains("част", ignoreCase = true))
 }

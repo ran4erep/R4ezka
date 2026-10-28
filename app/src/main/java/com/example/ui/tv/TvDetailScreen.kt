@@ -1597,10 +1597,11 @@ fun TvDetailContent(
                             }
                         }
                     } else {
-                        // Сезоны (выпадающий список для ТВ - скрываем для многосерийных фильмов)
+                        // Сезоны (выпадающий список для ТВ - скрываем только для односезонных многосерийных фильмов)
                         val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
+                        val showSeasonSelector = !detail.isMultiSeriesMovie || effectiveSeasons.size > 1
 
-                        if (!detail.isMultiSeriesMovie) {
+                        if (showSeasonSelector) {
                             item {
                                 TvRezkaDropdown(
                                     label = "Сезон",
@@ -1719,7 +1720,12 @@ fun TvDetailContent(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.Center
                                     ) {
-                                        val downloadButtonText = if (detail.isMultiSeriesMovie) "Загрузить фильм" else "Загрузить сериал"
+                                        val downloadButtonText = when {
+                                            detail.isMultiSeriesMovie -> "Загрузить фильм"
+                                            detail.type == RezkaType.ANIME -> "Загрузить сериал"
+                                            detail.type == RezkaType.CARTOON -> "Загрузить мультсериал"
+                                            else -> "Загрузить сериал"
+                                        }
                                         Icon(
                                             imageVector = Icons.Default.Download,
                                             contentDescription = downloadButtonText,
