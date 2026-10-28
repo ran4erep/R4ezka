@@ -4651,26 +4651,43 @@ object RezkaService {
                         }
 
                         var seasons = ArrayList<Season>()
-                        // Парсим серии и сезоны, если есть разметка серий или это сериальный тип
-                        if (hasEpisodesMarkup || type == RezkaType.SERIES) {
+                        // Парсим серии и сезоны, если есть разметка серий или это сериальный тип (включая аниме и мультсериалы)
+                        if (hasEpisodesMarkup || type == RezkaType.SERIES || type == RezkaType.ANIME || type == RezkaType.CARTOON) {
                             val defaultTranslator = translators.find { it.isDefault } ?: translators.firstOrNull()
                             val defaultTranslatorId = defaultTranslator?.id ?: "0"
                             val defaultTranslatorUrl = defaultTranslator?.url.orEmpty().ifEmpty { normalizedUrl }
 
-                            // 1. Сначала парсим серии напрямую из HTML структуры текущей страницы (это быстрее всего и точнее всего для дефолтной озвучки)
+                            // 1. Сначала пробуем спарсить серии напрямую из HTML структуры текущей страницы
                             val parsedFromCurrentPage = parseSeasonsFromDoc(doc, defaultTranslatorId)
-                            if (parsedFromCurrentPage.isNotEmpty()) {
+                            
+                            val rawSeasonTabsCount = doc.select(
+                                ".b-simple_seasons__list .b-simple_season__item, " +
+                                "#simple-seasons-tabs .b-simple_season__item, " +
+                                ".b-simple_seasons__list li, " +
+                                "#simple-seasons-tabs li, " +
+                                ".b-seasons__list li, " +
+                                "li.b-simple_season__item"
+                            ).count { !it.hasAttr("data-episode_id") && !it.hasClass("b-simple_episode__item") }
+
+                            // Если в HTML несколько сезонов, а из статической разметки получили меньше (например, только активный 1 сезон),
+                            // либо если парсинг страницы не дал серий — ОБЯЗАТЕЛЬНО запрашиваем полный список сезонов через AJAX get_episodes!
+                            if (parsedFromCurrentPage.isNotEmpty() && (rawSeasonTabsCount <= 1 || parsedFromCurrentPage.size >= rawSeasonTabsCount)) {
                                 seasons = ArrayList(parsedFromCurrentPage)
                             } else {
-                                // Если в HTML текущей страницы не было серий, пробуем AJAX / getEpisodesForTranslator
+                                // Если в HTML текущей страницы не было всех сезонов/серий, запрашиваем AJAX getEpisodesForTranslator
                                 try {
                                     val fetched = getEpisodesForTranslator(numericPostId, defaultTranslatorId, defaultTranslatorUrl)
                                     if (fetched.isNotEmpty()) {
                                         seasons = ArrayList(fetched)
+                                    } else if (parsedFromCurrentPage.isNotEmpty()) {
+                                        seasons = ArrayList(parsedFromCurrentPage)
                                     }
                                 } catch (e: Exception) {
                                     if (e is kotlinx.coroutines.CancellationException) throw e
                                     Log.w(TAG, "Ошибка получения серий для дефолтной озвучки: ${e.message}")
+                                    if (parsedFromCurrentPage.isNotEmpty()) {
+                                        seasons = ArrayList(parsedFromCurrentPage)
+                                    }
                                 }
                             }
 
@@ -5037,9 +5054,14 @@ object RezkaService {
                 val seasonContainer = doc.selectFirst(
                     "ul.b-simple_episodes__list[data-season_id=$sId], " +
                     "#simple-episodes-tabs[data-season_id=$sId], " +
+                    "#simple-episodes-tabs-$sId, " +
+                    "ul#simple-episodes-tabs-$sId, " +
+                    "[id=simple-episodes-tabs-$sId], " +
+                    "[id=simple-episodes-tabs_$sId], " +
                     "[data-season_id=$sId].b-simple_episodes__list, " +
                     "ul[data-season_id=$sId], " +
-                    "div[data-season_id=$sId]"
+                    "div[data-season_id=$sId], " +
+                    "[data-tab_id=$sId]"
                 )
 
                 val epElements = if (seasonContainer != null) {
@@ -5172,8 +5194,17 @@ object RezkaService {
                         }
                     }
 
+                    val pageSeasonTabsCount = pageDoc.select(
+                        ".b-simple_seasons__list .b-simple_season__item, " +
+                        "#simple-seasons-tabs .b-simple_season__item, " +
+                        ".b-simple_seasons__list li, " +
+                        "#simple-seasons-tabs li, " +
+                        ".b-seasons__list li, " +
+                        "li.b-simple_season__item"
+                    ).count { !it.hasAttr("data-episode_id") && !it.hasClass("b-simple_episode__item") }
+
                     val parsedFromPage = parseSeasonsFromDoc(pageDoc, cleanTranslatorId)
-                    if (parsedFromPage.isNotEmpty()) {
+                    if (parsedFromPage.isNotEmpty() && (pageSeasonTabsCount <= 1 || parsedFromPage.size >= pageSeasonTabsCount)) {
                         synchronized(seasonEpisodesCache) {
                             seasonEpisodesCache.put(cacheKey, parsedFromPage)
                         }
@@ -5242,9 +5273,14 @@ object RezkaService {
                                 val seasonContainer = episodesDoc.selectFirst(
                                     "ul.b-simple_episodes__list[data-season_id=$sId], " +
                                     "#simple-episodes-tabs[data-season_id=$sId], " +
+                                    "#simple-episodes-tabs-$sId, " +
+                                    "ul#simple-episodes-tabs-$sId, " +
+                                    "[id=simple-episodes-tabs-$sId], " +
+                                    "[id=simple-episodes-tabs_$sId], " +
                                     "[data-season_id=$sId].b-simple_episodes__list, " +
                                     "ul[data-season_id=$sId], " +
-                                    "div[data-season_id=$sId]"
+                                    "div[data-season_id=$sId], " +
+                                    "[data-tab_id=$sId]"
                                 )
 
                                 val epElements = if (seasonContainer != null) {

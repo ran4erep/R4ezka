@@ -294,7 +294,17 @@ fun MediaDownloadDialog(
                             )
                             Column {
                                 Text(
-                                    text = if (detail.isMultiSeriesMovie || !isSeries) "Загрузка фильма" else "Загрузка сериала",
+                                    text = when {
+                                        detail.isMultiSeriesMovie -> "Загрузка фильма"
+                                        !isSeries -> when (detail.type) {
+                                            RezkaType.ANIME -> "Загрузка аниме"
+                                            RezkaType.CARTOON -> "Загрузка мультфильма"
+                                            else -> "Загрузка фильма"
+                                        }
+                                        detail.type == RezkaType.ANIME -> "Загрузка сериала"
+                                        detail.type == RezkaType.CARTOON -> "Загрузка мультсериала"
+                                        else -> "Загрузка сериала"
+                                    },
                                     color = CinemaTextWhite,
                                     fontSize = 17.sp,
                                     fontWeight = FontWeight.Bold
@@ -348,7 +358,8 @@ fun MediaDownloadDialog(
                             ) {
                                 // Сезон и Серия в один ряд
                                 if (isSeries && availableSeasons.isNotEmpty()) {
-                                    if (!detail.isMultiSeriesMovie) {
+                                    val showSeasonSelector = !detail.isMultiSeriesMovie || availableSeasons.size > 1
+                                    if (showSeasonSelector) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -868,7 +879,7 @@ fun MediaDownloadDialog(
                                         ) {
                                             Text(
                                                 text = if (isSeries) {
-                                                    if (detail.isMultiSeriesMovie) {
+                                                    if (detail.isMultiSeriesMovie && availableSeasons.size <= 1) {
                                                         currentEpisode?.name.orEmpty()
                                                     } else {
                                                         "${currentSeason?.name.orEmpty()} • ${currentEpisode?.name.orEmpty()}"
@@ -973,9 +984,10 @@ fun MediaDownloadDialog(
                     } else {
                         // Вертикальная компоновка для телефонов
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            // Выбор сезона и серии для сериалов (для многосерийных фильмов скрываем сезон)
+                            // Выбор сезона и серии для сериалов (для односезонных многосерийных фильмов скрываем сезон)
                             if (isSeries && availableSeasons.isNotEmpty()) {
-                                if (!detail.isMultiSeriesMovie) {
+                                val showSeasonSelector = !detail.isMultiSeriesMovie || availableSeasons.size > 1
+                                if (showSeasonSelector) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)

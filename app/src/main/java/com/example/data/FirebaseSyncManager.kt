@@ -399,6 +399,23 @@ object FirebaseSyncManager {
             ?.apply()
     }
 
+    private fun executeAndLog(request: Request, operationName: String): Boolean {
+        return try {
+            httpClient.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val err = resp.body?.string()?.take(300) ?: ""
+                    Log.w(TAG, "[$operationName] Failed with HTTP ${resp.code}: $err")
+                    false
+                } else {
+                    true
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "[$operationName] Network error: ${e.message}")
+            false
+        }
+    }
+
     /**
      * Добавление/обновление избранного в Firebase RTDB
      */
@@ -412,7 +429,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/favorites/$safeId.json")
                     .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
-                httpClient.newCall(request).execute().close()
+                executeAndLog(request, "onFavoriteAdded")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync favorite to Firebase: ${e.message}")
             }
@@ -431,7 +448,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/favorites/$safeId.json")
                     .delete()
                     .build()
-                httpClient.newCall(request).execute().close()
+                executeAndLog(request, "onFavoriteRemoved")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to remove favorite from Firebase: ${e.message}")
             }
@@ -451,7 +468,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/subscriptions/$safeId.json")
                     .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
-                httpClient.newCall(request).execute().close()
+                executeAndLog(request, "onSubscriptionAdded")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync subscription to Firebase: ${e.message}")
             }
@@ -470,7 +487,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/subscriptions/$safeId.json")
                     .delete()
                     .build()
-                httpClient.newCall(request).execute().close()
+                executeAndLog(request, "onSubscriptionRemoved")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to remove subscription from Firebase: ${e.message}")
             }
@@ -502,7 +519,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/subscriptions/$safeId.json")
                     .patch(patchJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
-                httpClient.newCall(request).execute().close()
+                executeAndLog(request, "onSubscriptionProgressUpdated")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to patch subscription progress in Firebase: ${e.message}")
             }
@@ -546,7 +563,7 @@ object FirebaseSyncManager {
                         .url("$DATABASE_URL/users/$key/history/$safeId.json")
                         .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                         .build()
-                    httpClient.newCall(request).execute().close()
+                    executeAndLog(request, "flushProgress_$safeId")
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to flush progress for $safeId: ${e.message}")
                 }
@@ -572,7 +589,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/itemResizeModes/$safeId.json")
                     .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
-                httpClient.newCall(request).execute().close()
+                executeAndLog(request, "onItemResizeModeUpdated")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync item resize mode for $safeId: ${e.message}")
             }
@@ -622,14 +639,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/settings.json")
                     .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
-                httpClient.newCall(request).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        Log.d(TAG, "Settings synced to cloud: mirror=$mirror, quality=$quality, autoNext=$autoNextEpisode, dirtyHands=$dirtyHandsMode, sub=$preferredSubtitleLang, subScale=$subtitleTextScale, resize=$resizeMode, tvMode=$tvMode, cardGridMode=$cardGridMode, defaultType=$defaultCatalogType, defaultSection=$defaultCatalogSection, defaultGenre=$defaultCatalogGenre, defaultCountry=$defaultCatalogCountry")
-                    } else {
-                        val errorBody = try { resp.body?.string() ?: "" } catch (_: Exception) { "" }
-                        Log.w(TAG, "Failed to sync settings to Firebase (HTTP ${resp.code}): $errorBody")
-                    }
-                }
+                executeAndLog(request, "onSettingsUpdated")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync settings to Firebase: ${e.message}")
             }
@@ -651,7 +661,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/voice_commands.json")
                     .patch(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
-                httpClient.newCall(request).execute().close()
+                executeAndLog(request, "onVoiceCommandUpdated")
                 Log.d(TAG, "Uploaded compressed voice command $actionId to cloud (~${compressedBase64.length} chars)")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to upload voice command to Firebase: ${e.message}")
@@ -670,7 +680,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/voice_commands/$actionId.json")
                     .delete()
                     .build()
-                httpClient.newCall(request).execute().close()
+                executeAndLog(request, "onVoiceCommandDeleted")
                 Log.d(TAG, "Deleted voice command $actionId from cloud")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to delete voice command from Firebase: ${e.message}")
@@ -691,7 +701,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/history/$safeId.json")
                     .delete()
                     .build()
-                httpClient.newCall(request).execute().close()
+                executeAndLog(request, "onHistoryDeleted")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to delete history item: ${e.message}")
             }
@@ -729,7 +739,7 @@ object FirebaseSyncManager {
                                 .url("$DATABASE_URL/users/$key/history/$k.json")
                                 .delete()
                                 .build()
-                            httpClient.newCall(delReq).execute().close()
+                            executeAndLog(delReq, "deleteHistory_$k")
                         }
                     }
                 }
@@ -751,7 +761,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/history.json")
                     .delete()
                     .build()
-                httpClient.newCall(request).execute().close()
+                executeAndLog(request, "onAllHistoryCleared")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to clear all history: ${e.message}")
             }
@@ -759,25 +769,33 @@ object FirebaseSyncManager {
     }
 
     /**
-     * Сохранение истории поиска в облако Firebase RTDB
+     * Сохранение истории поиска в облако Firebase RTDB.
+     * Сохраняет структуру объектов { query: String, timestamp: Long } с безопасными ключами,
+     * что строго удовлетворяет правилам безопасности и ускоряет индексацию без лишних аллокаций памяти.
      */
     fun onSearchHistoryUpdated(queries: List<String>) {
         val key = _userKey.value ?: return
         scope.launch {
             try {
-                val jsonArr = org.json.JSONArray()
-                queries.take(15).forEach { query ->
+                val historyObj = JSONObject()
+                val now = System.currentTimeMillis()
+                queries.take(15).forEachIndexed { index, query ->
                     val clean = query.trim()
                     if (clean.isNotEmpty()) {
-                        jsonArr.put(clean)
+                        val itemObj = JSONObject().apply {
+                            put("query", clean)
+                            put("timestamp", now - index * 1000L)
+                        }
+                        val safeId = safeFirebaseKey(clean)
+                        historyObj.put(safeId, itemObj)
                     }
                 }
                 val request = Request.Builder()
                     .url("$DATABASE_URL/users/$key/searchHistory.json")
-                    .put(jsonArr.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .put(historyObj.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
-                httpClient.newCall(request).execute().close()
-                Log.d(TAG, "Search history synced to cloud: ${jsonArr.length()} queries")
+                executeAndLog(request, "onSearchHistoryUpdated")
+                Log.d(TAG, "Search history synced to cloud: ${historyObj.length()} queries")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync search history to Firebase: ${e.message}")
             }
@@ -795,7 +813,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/searchHistory.json")
                     .delete()
                     .build()
-                httpClient.newCall(request).execute().close()
+                executeAndLog(request, "onSearchHistoryCleared")
                 Log.d(TAG, "Search history cleared in cloud")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to clear search history in Firebase: ${e.message}")
@@ -894,7 +912,7 @@ object FirebaseSyncManager {
                         .url("$DATABASE_URL/users/$key/favorites.json")
                         .patch(favUpdateJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                         .build()
-                    httpClient.newCall(patchRequest).execute().close()
+                    executeAndLog(patchRequest, "syncAll_patchFavorites")
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to patch favorites: ${e.message}")
                 }
@@ -969,7 +987,7 @@ object FirebaseSyncManager {
                         .url("$DATABASE_URL/users/$key/history.json")
                         .patch(histUpdateJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                         .build()
-                    httpClient.newCall(patchRequest).execute().close()
+                    executeAndLog(patchRequest, "syncAll_patchHistory")
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to patch history: ${e.message}")
                 }
@@ -996,6 +1014,7 @@ object FirebaseSyncManager {
                         if (remoteMirror.isNotBlank() && remoteMirror != RezkaService.currentMirror.value) {
                             withContext(Dispatchers.Main) {
                                 RezkaService.setMirror(remoteMirror)
+                                Unit
                             }
                         }
                         if (remoteQuality.isNotBlank() && remoteQuality != RezkaService.defaultQuality.value) {
@@ -1132,10 +1151,23 @@ object FirebaseSyncManager {
                             }
                         } else if (searchBody.startsWith("{")) {
                             val obj = JSONObject(searchBody)
-                            val sortedKeys = obj.keys().asSequence().toList().sortedBy { it.toIntOrNull() ?: 0 }
-                            for (k in sortedKeys) {
-                                val q = obj.optString(k)
-                                if (q.isNotBlank()) remoteQueries.add(q)
+                            val listWithTime = mutableListOf<Pair<String, Long>>()
+                            val itKeys = obj.keys()
+                            while (itKeys.hasNext()) {
+                                val k = itKeys.next()
+                                val subObj = obj.optJSONObject(k)
+                                if (subObj != null) {
+                                    val q = subObj.optString("query")
+                                    val ts = subObj.optLong("timestamp", 0L)
+                                    if (q.isNotBlank()) listWithTime.add(q to ts)
+                                } else {
+                                    val q = obj.optString(k)
+                                    if (q.isNotBlank()) listWithTime.add(q to (k.toLongOrNull() ?: 0L))
+                                }
+                            }
+                            listWithTime.sortByDescending { it.second }
+                            for ((q, _) in listWithTime) {
+                                remoteQueries.add(q)
                             }
                         }
                     }
@@ -1212,7 +1244,7 @@ object FirebaseSyncManager {
                             .url("$DATABASE_URL/users/$key/subscriptions.json")
                             .patch(subUpdateJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                             .build()
-                        httpClient.newCall(patchRequest).execute().close()
+                        executeAndLog(patchRequest, "syncAll_patchSubscriptions")
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to patch subscriptions to Firebase: ${e.message}")
                     }
@@ -1243,7 +1275,7 @@ object FirebaseSyncManager {
                         .url("$DATABASE_URL/users/$key/voice_commands.json")
                         .patch(patchJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                         .build()
-                    httpClient.newCall(patchReq).execute().close()
+                    executeAndLog(patchReq, "syncAll_patchVoiceCommands")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync voice commands from Firebase: ${e.message}")
@@ -1270,7 +1302,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/favorites.json")
                     .patch(favJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
-                httpClient.newCall(req).execute().close()
+                executeAndLog(req, "uploadLocalData_favorites")
             }
 
             val localHistory = repository.getAllHistoryList()
@@ -1284,7 +1316,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/history.json")
                     .patch(histJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
-                httpClient.newCall(req).execute().close()
+                executeAndLog(req, "uploadLocalData_history")
             }
 
             // Выгружаем историю поиска в облако
@@ -1305,7 +1337,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/subscriptions.json")
                     .patch(subJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
-                httpClient.newCall(req).execute().close()
+                executeAndLog(req, "uploadLocalData_subscriptions")
             }
 
             // Выгружаем голосовые команды в облако со сжатием ZLIB
@@ -1319,7 +1351,7 @@ object FirebaseSyncManager {
                     .url("$DATABASE_URL/users/$key/voice_commands.json")
                     .patch(voiceJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
-                httpClient.newCall(req).execute().close()
+                executeAndLog(req, "uploadLocalData_voiceCommands")
             }
 
             // Выгружаем настройки в облако
@@ -1355,6 +1387,7 @@ object FirebaseSyncManager {
             put("lastKnownEpisode", sub.lastKnownEpisode)
             put("lastEpisodeName", sub.lastEpisodeName)
             put("subscribedAt", sub.subscribedAt)
+            put("timestamp", sub.subscribedAt)
             put("lastCheckedAt", sub.lastCheckedAt)
             put("hasUnseenUpdate", sub.hasUnseenUpdate)
             put("lastNotifiedSeason", sub.lastNotifiedSeason)
@@ -1368,6 +1401,11 @@ object FirebaseSyncManager {
         val itemType = try { RezkaType.valueOf(typeStr) } catch (_: Exception) { RezkaType.SERIES }
         val id = json.optString("id", "")
         val adjustedUrl = RezkaService.adjustUrlToCurrentMirror(rawUrl, itemType, id)
+        val subAt = if (json.has("subscribedAt")) {
+            json.optLong("subscribedAt", System.currentTimeMillis())
+        } else {
+            json.optLong("timestamp", System.currentTimeMillis())
+        }
         return SeriesSubscriptionEntity(
             id = id,
             title = json.optString("title", ""),
@@ -1379,7 +1417,7 @@ object FirebaseSyncManager {
             lastKnownSeason = json.optInt("lastKnownSeason", 1),
             lastKnownEpisode = json.optInt("lastKnownEpisode", 1),
             lastEpisodeName = json.optString("lastEpisodeName", ""),
-            subscribedAt = json.optLong("subscribedAt", System.currentTimeMillis()),
+            subscribedAt = subAt,
             lastCheckedAt = json.optLong("lastCheckedAt", System.currentTimeMillis()),
             hasUnseenUpdate = json.optBoolean("hasUnseenUpdate", false),
             lastNotifiedSeason = json.optInt("lastNotifiedSeason", 0),
@@ -1413,14 +1451,15 @@ object FirebaseSyncManager {
             put("imageUrl", h.imageUrl)
             put("subtitle", h.subtitle)
             put("url", h.url)
-            val transIdNum = h.translatorId.toIntOrNull()
-            if (transIdNum != null) {
-                put("translatorId", transIdNum)
+            if (h.translatorId.isNotBlank()) {
+                put("translatorId", h.translatorId)
             }
             put("translatorName", h.translatorName)
             put("season", h.season)
             put("episode", h.episode)
+            put("progress", h.progressMs)
             put("progressMs", h.progressMs)
+            put("duration", h.durationMs)
             put("durationMs", h.durationMs)
             put("totalEpisodes", h.totalEpisodes)
             put("episodeIndex", h.episodeIndex)
@@ -1437,7 +1476,23 @@ object FirebaseSyncManager {
         val itemId = json.optString("itemId", "")
         val adjustedUrl = RezkaService.adjustUrlToCurrentMirror(rawUrl, itemType, itemId)
         val rawId = json.optString("id", "").ifEmpty { fallbackKey }
-        val finalId = if (rawId.isNotEmpty()) rawId else "${itemId}_${season}_${json.optString("episode", "")}"
+        val epStr = if (json.has("episode")) json.opt("episode")?.toString() ?: "" else ""
+        val finalId = if (rawId.isNotEmpty()) rawId else "${itemId}_${season}_${epStr}"
+
+        val progress = if (json.has("progressMs")) {
+            json.optLong("progressMs", 0L)
+        } else {
+            json.optLong("progress", 0L)
+        }
+
+        val duration = if (json.has("durationMs")) {
+            json.optLong("durationMs", 0L)
+        } else {
+            json.optLong("duration", 0L)
+        }
+
+        val transId = if (json.has("translatorId")) json.opt("translatorId")?.toString() ?: "" else ""
+
         return WatchHistoryEntity(
             id = finalId,
             itemId = itemId,
@@ -1445,12 +1500,12 @@ object FirebaseSyncManager {
             imageUrl = json.optString("imageUrl", ""),
             subtitle = json.optString("subtitle", ""),
             url = adjustedUrl,
-            translatorId = json.optString("translatorId", ""),
+            translatorId = transId,
             translatorName = json.optString("translatorName", ""),
             season = season,
-            episode = json.optString("episode", ""),
-            progressMs = json.optLong("progressMs", 0L),
-            durationMs = json.optLong("durationMs", 0L),
+            episode = epStr,
+            progressMs = progress,
+            durationMs = duration,
             totalEpisodes = json.optInt("totalEpisodes", 0),
             episodeIndex = json.optInt("episodeIndex", 0),
             totalSeasons = json.optInt("totalSeasons", 0),

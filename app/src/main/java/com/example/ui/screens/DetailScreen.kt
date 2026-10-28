@@ -303,7 +303,8 @@ fun DetailScreen(
                 if (!detail.isReleased) {
                     idx++
                 } else {
-                    idx += 2 // Seasons selector + Episodes header
+                    val showSeasonSelector = !detail.isMultiSeriesMovie || effectiveSeasons.size > 1
+                    idx += if (showSeasonSelector) 2 else 1 // Seasons selector (if shown) + Episodes header
                     val curSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.firstOrNull()
                     val chunkCount = ((curSeason?.episodes?.size ?: 0) + 1) / 2
                     idx += chunkCount
@@ -1092,9 +1093,10 @@ fun DetailScreen(
                                         // 0: Backdrop
                                         // 1: Poster & Meta
                                         // +1: Translators (если не пусто)
-                                        // +1: Seasons Dropdown
+                                        // +1: Seasons Dropdown (если отображается)
                                         // +1: Episodes Header (заголовок, трейлер, расписание, скачать)
-                                        val baseSeriesRowIndex = 2 + (if (detail.translators.isNotEmpty()) 1 else 0) + 2
+                                        val showSeasonSelector = !detail.isMultiSeriesMovie || effectiveSeasons.size > 1
+                                        val baseSeriesRowIndex = 2 + (if (detail.translators.isNotEmpty()) 1 else 0) + (if (showSeasonSelector) 2 else 1)
                                         val targetItemIndex = baseSeriesRowIndex + targetRowIndex
 
                                         val viewportHeight = lazyListState.layoutInfo.viewportSize.height
@@ -1848,9 +1850,10 @@ fun DetailScreen(
                                 }
                             }
                         } else {
-                            // Seasons Dropdown Selector (не показываем для многосерийных фильмов, так как у них нет сезонов, только серии)
+                            // Seasons Dropdown Selector (не показываем для односезонных многосерийных фильмов, так как у них нет сезонов, только серии)
                             val currentSeason = effectiveSeasons.find { it.id == selectedSeasonId } ?: effectiveSeasons.first()
-                            if (!detail.isMultiSeriesMovie) {
+                            val showSeasonSelector = !detail.isMultiSeriesMovie || effectiveSeasons.size > 1
+                            if (showSeasonSelector) {
                                 item(key = "series_seasons_dropdown") {
                                     Column(
                                         modifier = Modifier
@@ -1939,7 +1942,7 @@ fun DetailScreen(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(top = if (detail.isMultiSeriesMovie) 14.dp else 20.dp, start = 16.dp, end = 16.dp)
+                                        .padding(top = if (!showSeasonSelector) 14.dp else 20.dp, start = 16.dp, end = 16.dp)
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -2030,7 +2033,12 @@ fun DetailScreen(
 
                                     // Кнопка Загрузить сериал / Загрузить фильм (отображается только если сериал/фильм уже вышел)
                                     if (detail.isReleased) {
-                                        val downloadButtonText = if (detail.isMultiSeriesMovie) "Загрузить фильм" else "Загрузить сериал"
+                                        val downloadButtonText = when {
+                                            detail.isMultiSeriesMovie -> "Загрузить фильм"
+                                            detail.type == RezkaType.ANIME -> "Загрузить сериал"
+                                            detail.type == RezkaType.CARTOON -> "Загрузить мультсериал"
+                                            else -> "Загрузить сериал"
+                                        }
                                         Spacer(modifier = Modifier.height(10.dp))
                                         Surface(
                                             color = CinemaCard,
