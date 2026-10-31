@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -227,6 +228,20 @@ fun MediaDownloadDialog(
         initialDialogRequester.requestFocusSafe()
     }
 
+    // Состояние подтверждения действия без закрытия окна
+    var downloadSuccessAction by remember { mutableStateOf<Boolean?>(null) }
+
+    LaunchedEffect(downloadSuccessAction) {
+        if (downloadSuccessAction != null) {
+            delay(2200)
+            downloadSuccessAction = null
+        }
+    }
+
+    LaunchedEffect(selectedSeasonId, selectedEpisodeId, selectedTranslator.id, selectedQuality) {
+        downloadSuccessAction = null
+    }
+
     val performDownload: (Boolean) -> Unit = { isOfflineLib ->
         if (!isLoadingQualities || qualityOptions.isNotEmpty()) {
             HapticEngine.get().perform(HapticType.CONFIRM)
@@ -242,7 +257,7 @@ fun MediaDownloadDialog(
                 finalQuality,
                 isOfflineLib
             )
-            onDismiss()
+            downloadSuccessAction = isOfflineLib
         }
     }
 
@@ -909,10 +924,11 @@ fun MediaDownloadDialog(
                                 }
 
                                 // Кнопка 1: "В оффлайн библиотеку"
+                                val isTvOfflineSuccess = downloadSuccessAction == true
                                 Surface(
-                                    color = CinemaCard,
+                                    color = if (isTvOfflineSuccess) CinemaGreen.copy(alpha = 0.2f) else CinemaCard,
                                     shape = RoundedCornerShape(8.dp),
-                                    border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.7f)),
+                                    border = BorderStroke(1.dp, if (isTvOfflineSuccess) CinemaGreen else CinemaPrimary.copy(alpha = 0.7f)),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(42.dp)
@@ -929,15 +945,15 @@ fun MediaDownloadDialog(
                                         horizontalArrangement = Arrangement.Center
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.CloudOff,
+                                            imageVector = if (isTvOfflineSuccess) Icons.Default.Check else Icons.Default.CloudOff,
                                             contentDescription = null,
-                                            tint = CinemaPrimary,
+                                            tint = if (isTvOfflineSuccess) CinemaGreen else CinemaPrimary,
                                             modifier = Modifier.size(16.dp)
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = "В оффлайн библиотеку",
-                                            color = CinemaTextWhite,
+                                            text = if (isTvOfflineSuccess) "Добавлено в библиотеку!" else "В оффлайн библиотеку",
+                                            color = if (isTvOfflineSuccess) CinemaGreen else CinemaTextWhite,
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.SemiBold
                                         )
@@ -945,10 +961,11 @@ fun MediaDownloadDialog(
                                 }
 
                                 // Кнопка 2: "Обычное скачивание"
+                                val isTvRegularSuccess = downloadSuccessAction == false
                                 Surface(
-                                    color = CinemaCard,
+                                    color = if (isTvRegularSuccess) CinemaGreen.copy(alpha = 0.2f) else CinemaCard,
                                     shape = RoundedCornerShape(8.dp),
-                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+                                    border = BorderStroke(1.dp, if (isTvRegularSuccess) CinemaGreen else Color.White.copy(alpha = 0.15f)),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(40.dp)
@@ -965,17 +982,17 @@ fun MediaDownloadDialog(
                                         horizontalArrangement = Arrangement.Center
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.Download,
+                                            imageVector = if (isTvRegularSuccess) Icons.Default.Check else Icons.Default.Download,
                                             contentDescription = null,
-                                            tint = CinemaPrimary,
+                                            tint = if (isTvRegularSuccess) CinemaGreen else CinemaPrimary,
                                             modifier = Modifier.size(16.dp)
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = "Обычное скачивание",
-                                            color = CinemaTextWhite,
+                                            text = if (isTvRegularSuccess) "Загрузка запущена!" else "Обычное скачивание",
+                                            color = if (isTvRegularSuccess) CinemaGreen else CinemaTextWhite,
                                             fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium
+                                            fontWeight = if (isTvRegularSuccess) FontWeight.SemiBold else FontWeight.Medium
                                         )
                                     }
                                 }
@@ -1325,14 +1342,19 @@ fun MediaDownloadDialog(
                             Spacer(modifier = Modifier.height(4.dp))
 
                             // Кнопка: В оффлайн библиотеку
+                            val isMobileOfflineSuccess = downloadSuccessAction == true
                             Surface(
-                                color = CinemaCard,
+                                color = if (isMobileOfflineSuccess) CinemaGreen.copy(alpha = 0.2f) else CinemaCard,
                                 shape = RoundedCornerShape(10.dp),
-                                border = BorderStroke(1.dp, CinemaPrimary),
+                                border = BorderStroke(1.dp, if (isMobileOfflineSuccess) CinemaGreen else CinemaPrimary),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(44.dp)
-                                    .clickable { performDownload(true) }
+                                    .tvFocusableItem(
+                                        onClick = { performDownload(true) },
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.02f
+                                    )
                                     .testTag("download_offline_library_button")
                             ) {
                                 Row(
@@ -1341,15 +1363,15 @@ fun MediaDownloadDialog(
                                     horizontalArrangement = Arrangement.Center
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.CloudOff,
+                                        imageVector = if (isMobileOfflineSuccess) Icons.Default.Check else Icons.Default.CloudOff,
                                         contentDescription = null,
-                                        tint = CinemaPrimary,
+                                        tint = if (isMobileOfflineSuccess) CinemaGreen else CinemaPrimary,
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "В оффлайн библиотеку",
-                                        color = CinemaTextWhite,
+                                        text = if (isMobileOfflineSuccess) "Добавлено в библиотеку!" else "В оффлайн библиотеку",
+                                        color = if (isMobileOfflineSuccess) CinemaGreen else CinemaTextWhite,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -1357,14 +1379,19 @@ fun MediaDownloadDialog(
                             }
 
                             // Кнопка: Обычное скачивание
+                            val isMobileRegularSuccess = downloadSuccessAction == false
                             Surface(
-                                color = CinemaCard,
+                                color = if (isMobileRegularSuccess) CinemaGreen.copy(alpha = 0.2f) else CinemaCard,
                                 shape = RoundedCornerShape(10.dp),
-                                border = BorderStroke(1.dp, CinemaBorder),
+                                border = BorderStroke(1.dp, if (isMobileRegularSuccess) CinemaGreen else CinemaBorder),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(44.dp)
-                                    .clickable { performDownload(false) }
+                                    .tvFocusableItem(
+                                        onClick = { performDownload(false) },
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleFactor = 1.02f
+                                    )
                                     .testTag("download_regular_button")
                             ) {
                                 Row(
@@ -1373,17 +1400,17 @@ fun MediaDownloadDialog(
                                     horizontalArrangement = Arrangement.Center
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.Download,
+                                        imageVector = if (isMobileRegularSuccess) Icons.Default.Check else Icons.Default.Download,
                                         contentDescription = null,
-                                        tint = CinemaPrimary,
+                                        tint = if (isMobileRegularSuccess) CinemaGreen else CinemaPrimary,
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Обычное скачивание",
-                                        color = CinemaTextWhite,
+                                        text = if (isMobileRegularSuccess) "Загрузка запущена!" else "Обычное скачивание",
+                                        color = if (isMobileRegularSuccess) CinemaGreen else CinemaTextWhite,
                                         fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium
+                                        fontWeight = if (isMobileRegularSuccess) FontWeight.SemiBold else FontWeight.Medium
                                     )
                                 }
                             }
