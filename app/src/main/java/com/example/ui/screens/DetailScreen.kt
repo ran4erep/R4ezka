@@ -334,70 +334,76 @@ fun DetailScreen(
     var showScheduleCalendarDialog by remember { mutableStateOf(false) }
     var showSeriesDownloadDialog by remember { mutableStateOf(false) }
     var showPosterModal by remember { mutableStateOf(false) }
-    var isDownloadExecuting by remember { mutableStateOf(false) }
+    val activeDownloadRequests = remember { mutableStateListOf<String>() }
     var isActorsExpanded by remember { mutableStateOf(false) }
 
     val startMediaDownload: (Translator, Int, String, String, Boolean) -> Unit = { trans, seasonId, epId, quality, isOfflineLibrary ->
         val currentDetail = (detailState as? DetailState.Success)?.detail
-        if (currentDetail != null && !isDownloadExecuting) {
-            isDownloadExecuting = true
-            Toast.makeText(context, "Получение ссылки...", Toast.LENGTH_SHORT).show()
-            scope.launch {
-                try {
-                    val isSeries = currentDetail.hasEpisodes
-                    val targetId = currentDetail.numericPostId.ifEmpty { item.id }
-                    val effectiveItemUrl = item.url
-                    val streams = viewModel.getStreamUrls(
-                        itemId = targetId,
-                        translatorId = trans.id,
-                        isSeries = isSeries,
-                        season = if (isSeries) seasonId else 0,
-                        episode = if (isSeries) epId else "",
-                        forceOnline = true,
-                        itemUrl = effectiveItemUrl,
-                        cam = trans.cam,
-                        ads = trans.ads,
-                        director = trans.director
-                    )
-                    // Для скачивания через DownloadManager отбираем только сетевые потоки HTTP/HTTPS
-                    val remoteStreams = streams.filter {
-                        !it.url.startsWith("file://") && !it.directMp4Url.startsWith("file://")
-                    }
-                    if (remoteStreams.isNotEmpty()) {
-                        val chosenIdx = RezkaService.findBestQualityIndex(remoteStreams, quality)
-                        val stream = remoteStreams.getOrNull(chosenIdx) ?: remoteStreams.first()
-                        val downloadUrl = stream.directMp4Url.ifEmpty { stream.url }
-                        if (downloadUrl.startsWith("file://") || downloadUrl.startsWith("content://")) {
-                            Toast.makeText(context, "Ошибка: не удалось получить сетевой адрес потока", Toast.LENGTH_SHORT).show()
-                        } else if (isOfflineLibrary) {
-                            DownloadHelper.downloadToOfflineLibrary(
-                                context = context,
-                                detail = currentDetail,
-                                seasonId = if (isSeries) seasonId else 0,
-                                episodeId = if (isSeries) epId else "",
-                                translator = trans,
-                                quality = stream.quality,
-                                streamUrl = downloadUrl,
-                                repository = viewModel.repository
-                            )
-                        } else {
-                            val subtitleText = if (isSeries) "Сезон $seasonId, Серия $epId" else ""
-                            DownloadHelper.downloadStream(
-                                context = context,
-                                title = currentDetail.title,
-                                subtitle = subtitleText,
-                                quality = stream.quality,
-                                translatorName = trans.name,
-                                streamUrl = downloadUrl
-                            )
+        if (currentDetail != null) {
+            val isSeries = currentDetail.hasEpisodes
+            val targetId = currentDetail.numericPostId.ifEmpty { item.id }
+            val requestKey = "${targetId}_${trans.id}_${if (isSeries) seasonId else 0}_${if (isSeries) epId else ""}_${quality}_${isOfflineLibrary}"
+            if (activeDownloadRequests.contains(requestKey)) {
+                Toast.makeText(context, "Эта загрузка уже выполняется...", Toast.LENGTH_SHORT).show()
+            } else {
+                activeDownloadRequests.add(requestKey)
+                val epLabel = if (isSeries) "Серия $epId" else currentDetail.title
+                Toast.makeText(context, "Получение ссылки ($epLabel)...", Toast.LENGTH_SHORT).show()
+                scope.launch {
+                    try {
+                        val effectiveItemUrl = item.url
+                        val streams = viewModel.getStreamUrls(
+                            itemId = targetId,
+                            translatorId = trans.id,
+                            isSeries = isSeries,
+                            season = if (isSeries) seasonId else 0,
+                            episode = if (isSeries) epId else "",
+                            forceOnline = true,
+                            itemUrl = effectiveItemUrl,
+                            cam = trans.cam,
+                            ads = trans.ads,
+                            director = trans.director
+                        )
+                        // Для скачивания через DownloadManager отбираем только сетевые потоки HTTP/HTTPS
+                        val remoteStreams = streams.filter {
+                            !it.url.startsWith("file://") && !it.directMp4Url.startsWith("file://")
                         }
-                    } else {
-                        Toast.makeText(context, "Не удалось получить ссылку на файл", Toast.LENGTH_SHORT).show()
+                        if (remoteStreams.isNotEmpty()) {
+                            val chosenIdx = RezkaService.findBestQualityIndex(remoteStreams, quality)
+                            val stream = remoteStreams.getOrNull(chosenIdx) ?: remoteStreams.first()
+                            val downloadUrl = stream.directMp4Url.ifEmpty { stream.url }
+                            if (downloadUrl.startsWith("file://") || downloadUrl.startsWith("content://")) {
+                                Toast.makeText(context, "Ошибка: не удалось получить сетевой адрес потока", Toast.LENGTH_SHORT).show()
+                            } else if (isOfflineLibrary) {
+                                DownloadHelper.downloadToOfflineLibrary(
+                                    context = context,
+                                    detail = currentDetail,
+                                    seasonId = if (isSeries) seasonId else 0,
+                                    episodeId = if (isSeries) epId else "",
+                                    translator = trans,
+                                    quality = stream.quality,
+                                    streamUrl = downloadUrl,
+                                    repository = viewModel.repository
+                                )
+                            } else {
+                                val subtitleText = if (isSeries) "Сезон $seasonId, Серия $epId" else ""
+                                DownloadHelper.downloadStream(
+                                    context = context,
+                                    title = currentDetail.title,
+                                    subtitle = subtitleText,
+                                    quality = stream.quality,
+                                    translatorName = trans.name,
+                                    streamUrl = downloadUrl
+                                )
+                            }
+                        } else {
+                            Toast.makeText(context, "Не удалось получить ссылку для $epLabel", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Ошибка при получении видеопотока $epLabel", Toast.LENGTH_SHORT).show()
+                    } finally {
+                        activeDownloadRequests.remove(requestKey)
                     }
-                } catch (e: Exception) {
-                    Toast.makeText(context, "Ошибка при получении видеопотока", Toast.LENGTH_SHORT).show()
-                } finally {
-                    isDownloadExecuting = false
                 }
             }
         }
