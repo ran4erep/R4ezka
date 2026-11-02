@@ -1767,11 +1767,19 @@ fun TvDetailContent(
                                              val isLastEpisodeRow = rowIndex == chunks.lastIndex
                                             val hasNoComments = displayComments.isEmpty()
                                             Surface(
-                                                color = if (isSelected) CinemaPrimary.copy(alpha = 0.2f) else CinemaDark,
+                                                color = when {
+                                                    regionBlocked -> CinemaDark.copy(alpha = 0.3f)
+                                                    isSelected -> CinemaPrimary.copy(alpha = 0.2f)
+                                                    else -> CinemaDark
+                                                },
                                                 shape = RoundedCornerShape(8.dp),
                                                 border = BorderStroke(
                                                     1.dp,
-                                                    if (isSelected) CinemaPrimary else Color.White.copy(alpha = 0.12f)
+                                                    when {
+                                                        regionBlocked -> Color.White.copy(alpha = 0.06f)
+                                                        isSelected -> CinemaPrimary
+                                                        else -> Color.White.copy(alpha = 0.12f)
+                                                    }
                                                 ),
                                                 modifier = Modifier
                                                     .weight(1f)
@@ -1827,14 +1835,18 @@ fun TvDetailContent(
                                                 ) {
                                                     Text(
                                                         text = ep.name,
-                                                        color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                        color = when {
+                                                            regionBlocked -> CinemaTextWhite.copy(alpha = 0.4f)
+                                                            isSelected -> CinemaPrimary
+                                                            else -> CinemaTextWhite
+                                                        },
                                                         fontSize = 12.sp,
                                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis,
                                                         modifier = Modifier.weight(1f)
                                                     )
-                                                    if (isSelected) {
+                                                    if (isSelected && !regionBlocked) {
                                                         Spacer(modifier = Modifier.width(6.dp))
                                                         Icon(
                                                             imageVector = Icons.Default.PlayArrow,

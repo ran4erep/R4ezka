@@ -2131,8 +2131,13 @@ fun DetailScreen(
                             ) {
                                 rowEpisodes.forEach { ep ->
                                     val isSelected = selectedEpisodeId == ep.id
+                                    val epDisabled = regionBlocked
                                     val bgAnimate by animateColorAsState(
-                                        targetValue = if (isSelected) CinemaPrimary.copy(alpha = 0.18f) else CinemaDark,
+                                        targetValue = when {
+                                            epDisabled -> CinemaDark.copy(alpha = 0.35f)
+                                            isSelected -> CinemaPrimary.copy(alpha = 0.18f)
+                                            else -> CinemaDark
+                                        },
                                         animationSpec = tween(200)
                                     )
 
@@ -2142,7 +2147,7 @@ fun DetailScreen(
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(bgAnimate)
                                             .then(
-                                                if (isSelected) {
+                                                if (isSelected && !epDisabled) {
                                                     Modifier.border(
                                                         BorderStroke(1.5.dp, CinemaPrimary.copy(alpha = 0.75f)),
                                                         RoundedCornerShape(8.dp)
@@ -2151,7 +2156,7 @@ fun DetailScreen(
                                             )
                                             .clickable {
                                                 selectedEpisodeId = ep.id
-                                                if (!regionBlocked) {
+                                                if (!epDisabled) {
                                                     val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
                                                     startPlayback(translator, currentSeason.id, ep.id)
                                                 }
@@ -2166,14 +2171,18 @@ fun DetailScreen(
                                         ) {
                                             Text(
                                                 text = ep.name,
-                                                color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                color = when {
+                                                    epDisabled -> CinemaTextWhite.copy(alpha = 0.4f)
+                                                    isSelected -> CinemaPrimary
+                                                    else -> CinemaTextWhite
+                                                },
                                                 fontSize = 12.sp,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                                 modifier = Modifier.weight(1f)
                                             )
-                                            if (isSelected) {
+                                            if (isSelected && !epDisabled) {
                                                 Icon(
                                                     imageVector = Icons.Default.PlayArrow,
                                                     contentDescription = null,
@@ -4144,7 +4153,7 @@ fun RegionBlockNotice(modifier: Modifier = Modifier) {
             modifier = Modifier.size(36.dp)
         )
         Text(
-            text = "К сожалению, это видео не доступно в вашем регионе.\nВключите VPN и попробуйте ещё раз.",
+            text = "К сожалению, это видео не доступно в вашем регионе. Включите VPN и попробуйте ещё раз.",
             color = CinemaTextWhite,
             fontSize = 13.sp,
             lineHeight = 18.sp,
