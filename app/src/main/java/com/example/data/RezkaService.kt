@@ -1943,14 +1943,15 @@ object RezkaService {
     }
 
     /**
-     * Оптимизированный ультрабыстрый HTTP-клиент для аудита зеркал (Fail-Fast).
-     * Таймауты ровно 500 миллисекунд на подключение и чтение: если зеркало не отвечает мгновенно,
-     * оно считается недоступным у пользователя.
+     * HTTP-клиент для аудита зеркал.
+     * Таймауты не должны быть слишком агрессивными: зеркала закрыты Anubis (PoW + повторный запрос),
+     * а при VPN добавляется сетевой оверхед. 500 мс гарантированно режут рабочие зеркала,
+     * поэтому 6 с на подключение и 12 с на чтение — разумный компромисс между скоростью и правдивостью.
      */
     val auditHttpClient by lazy {
         client.newBuilder()
-            .connectTimeout(500, TimeUnit.MILLISECONDS)
-            .readTimeout(500, TimeUnit.MILLISECONDS)
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(12, TimeUnit.SECONDS)
             .build()
     }
 
@@ -2275,55 +2276,65 @@ object RezkaService {
                 val actionsToTry = if (isSeries) listOf("get_stream", "get_movie") else listOf("get_movie", "get_stream")
                 var resolvedStreams: List<StreamUrl> = emptyList()
 
-                for (act in actionsToTry) {
-                    if (!isActive) break
-                    val formBuilder = FormBody.Builder()
-                        .add("id", numericId)
-                        .add("action", act)
-                        .add("favs", "0")
-                        .add("is_cam", "0")
-                        .add("is_ads", "0")
-                        .add("is_director", "0")
+                // Пробуем найденного переводчика, затем типовые фоллбэки (Дубляж 238, Оригинал 1),
+                // чтобы парсинг страницы без списка озвучек не приводил к ложному «зеркало не работает».
+                val transIds = buildList {
+                    if (translatorId.isNotEmpty() && translatorId != "0") add(translatorId)
+                    add("238")
+                    add("1")
+                }.distinct()
 
-                    if (translatorId.isNotEmpty() && translatorId != "0") {
-                        formBuilder.add("translator_id", translatorId)
-                    }
-                    if (act == "get_stream" || isSeries) {
-                        formBuilder.add("season", "1")
-                        formBuilder.add("episode", "1")
-                    }
+                transLoop@ for (transId in transIds) {
+                    for (act in actionsToTry) {
+                        if (!isActive) break@transLoop
+                        val formBuilder = FormBody.Builder()
+                            .add("id", numericId)
+                            .add("action", act)
+                            .add("favs", "0")
+                            .add("is_cam", "0")
+                            .add("is_ads", "0")
+                            .add("is_director", "0")
 
-                    val cdnReq = Request.Builder()
-                        .url("$endpoint?t=${System.currentTimeMillis()}")
-                        .post(formBuilder.build())
-                        .header("User-Agent", USER_AGENT)
-                        .header("X-Requested-With", "XMLHttpRequest")
-                        .header("Referer", candidateUrl)
-                        .header("Origin", normalized)
-                        .header("Accept", "application/json, text/javascript, */*; q=0.01")
-                        .build()
-
-                    val cdnBody = auditHttpClient.newCall(cdnReq).executeCancellable().use { resp ->
-                        if (resp.isSuccessful) resp.body?.string().orEmpty() else null
-                    }
-
-                    if (!cdnBody.isNullOrBlank()) {
-                        var rawUrl = ""
-                        try {
-                            val json = JSONObject(cdnBody)
-                            rawUrl = json.optString("url", "")
-                        } catch (_: Exception) {
-                            val urlMatch = Regex(""""url"\s*:\s*"([^"]+)"""").find(cdnBody)
-                            if (urlMatch != null) rawUrl = urlMatch.groupValues[1]
+                        if (transId != "0") {
+                            formBuilder.add("translator_id", transId)
+                        }
+                        if (act == "get_stream" || isSeries) {
+                            formBuilder.add("season", "1")
+                            formBuilder.add("episode", "1")
                         }
 
-                        if (rawUrl.isNotEmpty() && rawUrl != "false" && rawUrl != "null") {
-                            val cleanEncrypted = unescapeRaw(rawUrl).replace("\\/", "/")
-                            val decrypted = RezkaDecryptor.decrypt(cleanEncrypted)
-                            val streams = RezkaDecryptor.parseStreams(decrypted)
-                            if (streams.isNotEmpty()) {
-                                resolvedStreams = streams
-                                break
+                        val cdnReq = Request.Builder()
+                            .url("$endpoint?t=${System.currentTimeMillis()}")
+                            .post(formBuilder.build())
+                            .header("User-Agent", USER_AGENT)
+                            .header("X-Requested-With", "XMLHttpRequest")
+                            .header("Referer", candidateUrl)
+                            .header("Origin", normalized)
+                            .header("Accept", "application/json, text/javascript, */*; q=0.01")
+                            .build()
+
+                        val cdnBody = auditHttpClient.newCall(cdnReq).executeCancellable().use { resp ->
+                            if (resp.isSuccessful) resp.body?.string().orEmpty() else null
+                        }
+
+                        if (!cdnBody.isNullOrBlank()) {
+                            var rawUrl = ""
+                            try {
+                                val json = JSONObject(cdnBody)
+                                rawUrl = json.optString("url", "")
+                            } catch (_: Exception) {
+                                val urlMatch = Regex(""""url"\s*:\s*"([^"]+)"""").find(cdnBody)
+                                if (urlMatch != null) rawUrl = urlMatch.groupValues[1]
+                            }
+
+                            if (rawUrl.isNotEmpty() && rawUrl != "false" && rawUrl != "null") {
+                                val cleanEncrypted = unescapeRaw(rawUrl).replace("\\/", "/")
+                                val decrypted = RezkaDecryptor.decrypt(cleanEncrypted)
+                                val streams = RezkaDecryptor.parseStreams(decrypted)
+                                if (streams.isNotEmpty()) {
+                                    resolvedStreams = streams
+                                    break@transLoop
+                                }
                             }
                         }
                     }
