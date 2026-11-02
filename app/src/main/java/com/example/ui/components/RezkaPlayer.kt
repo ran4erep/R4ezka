@@ -1185,6 +1185,18 @@ fun RezkaPlayer(
         }
     }
 
+    // Удерживаем фокус D-Pad строго на корневом контейнере плеера, чтобы клавиши пульта
+    // не «проваливались» на страницу фильма позади и не нажимали её элементы.
+    // Фокус перезапрашивается при любом изменении состояния интерфейса плеера.
+    LaunchedEffect(showControls, activePlayerMenu, isScreenLocked, showAutoNextCountdown, playerErrorMessage, isRemoteActive) {
+        if (!isFloating && !isInPipMode && playerErrorMessage == null && activePlayerMenu == PlayerMenuType.NONE) {
+            delay(40)
+            try {
+                playerFocusRequester.requestFocus()
+            } catch (_: Exception) {}
+        }
+    }
+
     LaunchedEffect(isSeries) {
         selectedCenterIndex = if (isSeries) 1 else 0
     }
@@ -1198,6 +1210,46 @@ fun RezkaPlayer(
     var gestureDismissJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var gestureCurrentSide by remember { mutableStateOf(SeekSide.NONE) }
     var gestureAccumulatedSec by remember { mutableIntStateOf(0) }
+
+    // Единый наблюдатель за сбросом индикатора перемотки пульта.
+    // ВАЖНО: предыдущий сброс отменяется при каждом новом нажатии, поэтому при зажатой
+    // кнопке счётчик плавно растёт (+10, +20, ...) и не «дёргается» и не застревает на +10.
+    var tvSeekResetJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    val doTvSeekRight: () -> Unit = {
+        val cur = exoPlayer.currentPosition
+        val dur = exoPlayer.duration.coerceAtLeast(0L)
+        val target = (cur + 10_000L).coerceAtMost(dur)
+        exoPlayer.seekTo(target)
+        currentPosition = target
+        activeSeekSide = SeekSide.RIGHT
+        accumulatedSeekSeconds += 10
+        showControls = true
+        controlsInteractionKey++
+        tvSeekResetJob?.cancel()
+        tvSeekResetJob = scope.launch {
+            delay(850)
+            activeSeekSide = SeekSide.NONE
+            accumulatedSeekSeconds = 0
+        }
+    }
+
+    val doTvSeekLeft: () -> Unit = {
+        val cur = exoPlayer.currentPosition
+        val target = (cur - 10_000L).coerceAtLeast(0L)
+        exoPlayer.seekTo(target)
+        currentPosition = target
+        activeSeekSide = SeekSide.LEFT
+        accumulatedSeekSeconds += 10
+        showControls = true
+        controlsInteractionKey++
+        tvSeekResetJob?.cancel()
+        tvSeekResetJob = scope.launch {
+            delay(850)
+            activeSeekSide = SeekSide.NONE
+            accumulatedSeekSeconds = 0
+        }
+    }
 
     LaunchedEffect(showControls, shouldShowPause, controlsInteractionKey, isScreenLocked, activePlayerMenu) {
         if (showControls && shouldShowPause && playerErrorMessage == null && !isScreenLocked && activePlayerMenu == PlayerMenuType.NONE) {
@@ -1633,6 +1685,17 @@ fun RezkaPlayer(
                         return@onKeyEvent true
                     }
 
+                    // Во время первоначальной буферизации (плавающие «черепки») активной является
+                    // ТОЛЬКО кнопка «Назад». Запрещаем перемотку, паузу и любую навигацию по меню:
+                    // исключаем случайные нажатия пульта и утечку фокуса на страницу фильма позади.
+                    if ((isLoading || !hasInitialPlayStarted) && playerErrorMessage == null) {
+                        if (keyCode == android.view.KeyEvent.KEYCODE_BACK) {
+                            onBack()
+                            return@onKeyEvent true
+                        }
+                        return@onKeyEvent true
+                    }
+
                     // Handle navigation inside anchored context menus (Quality, Speed, Translator, Subtitles)
                     if (activePlayerMenu != PlayerMenuType.NONE) {
                         val availableSpeeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
@@ -1737,7 +1800,7 @@ fun RezkaPlayer(
                             android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
                                 activePlayerMenu = PlayerMenuType.NONE
                                 currentFocusArea = PlayerFocusArea.BOTTOM
-                                return@onKeyEvent false
+                                return@onKeyEvent true
                             }
                             else -> return@onKeyEvent false
                         }
@@ -1828,20 +1891,7 @@ fun RezkaPlayer(
                                     if (isSeries && hasNextEpisode && onNextEpisode != null) {
                                         onNextEpisode.invoke()
                                     } else {
-                                        val cur = exoPlayer.currentPosition
-                                        val dur = exoPlayer.duration.coerceAtLeast(0L)
-                                        val target = (cur + 10000L).coerceAtMost(dur)
-                                        exoPlayer.seekTo(target)
-                                        currentPosition = target
-                                        activeSeekSide = SeekSide.RIGHT
-                                        accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
-                                        showControls = true
-                                        controlsInteractionKey++
-                                        scope.launch {
-                                            delay(900)
-                                            activeSeekSide = SeekSide.NONE
-                                            accumulatedSeekSeconds = 0
-                                        }
+                                        doTvSeekRight()
                                     }
                                     true
                                 }
@@ -1849,154 +1899,50 @@ fun RezkaPlayer(
                                     if (isSeries && hasPreviousEpisode && onPreviousEpisode != null) {
                                         onPreviousEpisode.invoke()
                                     } else {
-                                        val cur = exoPlayer.currentPosition
-                                        val target = (cur - 10000L).coerceAtLeast(0L)
-                                        exoPlayer.seekTo(target)
-                                        currentPosition = target
-                                        activeSeekSide = SeekSide.LEFT
-                                        accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
-                                        showControls = true
-                                        controlsInteractionKey++
-                                        scope.launch {
-                                            delay(900)
-                                            activeSeekSide = SeekSide.NONE
-                                            accumulatedSeekSeconds = 0
-                                        }
+                                        doTvSeekLeft()
                                     }
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
                                     if (!showControls) {
-                                        val cur = exoPlayer.currentPosition
-                                        val dur = exoPlayer.duration.coerceAtLeast(0L)
-                                        val target = (cur + 10000L).coerceAtMost(dur)
-                                        exoPlayer.seekTo(target)
-                                        currentPosition = target
-                                        activeSeekSide = SeekSide.RIGHT
-                                        accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
-                                        showControls = true
-                                        controlsInteractionKey++
-                                        scope.launch {
-                                            delay(900)
-                                            activeSeekSide = SeekSide.NONE
-                                            accumulatedSeekSeconds = 0
-                                        }
+                                        doTvSeekRight()
                                     } else {
                                         controlsInteractionKey++
                                         if (isSeries) {
                                             if (selectedCenterIndex < 2) {
                                                 selectedCenterIndex++
                                             } else {
-                                                val cur = exoPlayer.currentPosition
-                                                val dur = exoPlayer.duration.coerceAtLeast(0L)
-                                                val target = (cur + 10000L).coerceAtMost(dur)
-                                                exoPlayer.seekTo(target)
-                                                currentPosition = target
-                                                activeSeekSide = SeekSide.RIGHT
-                                                accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
-                                                scope.launch {
-                                                    delay(900)
-                                                    activeSeekSide = SeekSide.NONE
-                                                    accumulatedSeekSeconds = 0
-                                                }
+                                                doTvSeekRight()
                                             }
                                         } else {
-                                            val cur = exoPlayer.currentPosition
-                                            val dur = exoPlayer.duration.coerceAtLeast(0L)
-                                            val target = (cur + 10000L).coerceAtMost(dur)
-                                            exoPlayer.seekTo(target)
-                                            currentPosition = target
-                                            activeSeekSide = SeekSide.RIGHT
-                                            accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
-                                            scope.launch {
-                                                delay(900)
-                                                activeSeekSide = SeekSide.NONE
-                                                accumulatedSeekSeconds = 0
-                                            }
+                                            doTvSeekRight()
                                         }
                                     }
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
                                     if (!showControls) {
-                                        val cur = exoPlayer.currentPosition
-                                        val target = (cur - 10000L).coerceAtLeast(0L)
-                                        exoPlayer.seekTo(target)
-                                        currentPosition = target
-                                        activeSeekSide = SeekSide.LEFT
-                                        accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
-                                        showControls = true
-                                        controlsInteractionKey++
-                                        scope.launch {
-                                            delay(900)
-                                            activeSeekSide = SeekSide.NONE
-                                            accumulatedSeekSeconds = 0
-                                        }
+                                        doTvSeekLeft()
                                     } else {
                                         controlsInteractionKey++
                                         if (isSeries) {
                                             if (selectedCenterIndex > 0) {
                                                 selectedCenterIndex--
                                             } else {
-                                                val cur = exoPlayer.currentPosition
-                                                val target = (cur - 10000L).coerceAtLeast(0L)
-                                                exoPlayer.seekTo(target)
-                                                currentPosition = target
-                                                activeSeekSide = SeekSide.LEFT
-                                                accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
-                                                scope.launch {
-                                                    delay(900)
-                                                    activeSeekSide = SeekSide.NONE
-                                                    accumulatedSeekSeconds = 0
-                                                }
+                                                doTvSeekLeft()
                                             }
                                         } else {
-                                            val cur = exoPlayer.currentPosition
-                                            val target = (cur - 10000L).coerceAtLeast(0L)
-                                            exoPlayer.seekTo(target)
-                                            currentPosition = target
-                                            activeSeekSide = SeekSide.LEFT
-                                            accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
-                                            scope.launch {
-                                                delay(900)
-                                                activeSeekSide = SeekSide.NONE
-                                                accumulatedSeekSeconds = 0
-                                            }
+                                            doTvSeekLeft()
                                         }
                                     }
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                                    val cur = exoPlayer.currentPosition
-                                    val dur = exoPlayer.duration.coerceAtLeast(0L)
-                                    val target = (cur + 10000L).coerceAtMost(dur)
-                                    exoPlayer.seekTo(target)
-                                    currentPosition = target
-                                    activeSeekSide = SeekSide.RIGHT
-                                    accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
-                                    showControls = true
-                                    controlsInteractionKey++
-                                    scope.launch {
-                                        delay(900)
-                                        activeSeekSide = SeekSide.NONE
-                                        accumulatedSeekSeconds = 0
-                                    }
+                                    doTvSeekRight()
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                                    val cur = exoPlayer.currentPosition
-                                    val target = (cur - 10000L).coerceAtLeast(0L)
-                                    exoPlayer.seekTo(target)
-                                    currentPosition = target
-                                    activeSeekSide = SeekSide.LEFT
-                                    accumulatedSeekSeconds = (accumulatedSeekSeconds + 10).coerceAtMost(180)
-                                    showControls = true
-                                    controlsInteractionKey++
-                                    scope.launch {
-                                        delay(900)
-                                        activeSeekSide = SeekSide.NONE
-                                        accumulatedSeekSeconds = 0
-                                    }
+                                    doTvSeekLeft()
                                     true
                                 }
                                 android.view.KeyEvent.KEYCODE_DPAD_UP -> {
@@ -2019,7 +1965,9 @@ fun RezkaPlayer(
                                     onBack()
                                     true
                                 }
-                                else -> false
+                                // Поглощаем остальные клавиши пульта, чтобы они не «проваливались»
+                                // на страницу фильма позади плеера.
+                                else -> true
                             }
                         }
 
@@ -2085,7 +2033,7 @@ fun RezkaPlayer(
                                     onBack()
                                     true
                                 }
-                                else -> false
+                                else -> true
                             }
                         }
 
@@ -2174,7 +2122,7 @@ fun RezkaPlayer(
                                     onBack()
                                     true
                                 }
-                                else -> false
+                                else -> true
                             }
                         }
                     }
@@ -2275,7 +2223,7 @@ fun RezkaPlayer(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(isScreenLocked, playbackSpeed) {
+                    .pointerInput(isScreenLocked, playbackSpeed, isLoading, hasInitialPlayStarted) {
                         if (isScreenLocked) {
                             detectTapGestures(
                                 onTap = {
@@ -2285,6 +2233,12 @@ fun RezkaPlayer(
                             )
                         } else {
                             awaitEachGesture {
+                                // Во время первоначальной буферизации касания полностью игнорируются:
+                                // контролы (PiP / блокировка экрана / перемотка) не должны появляться.
+                                if (isLoading || !hasInitialPlayStarted) {
+                                    awaitFirstDown(requireUnconsumed = false)
+                                    return@awaitEachGesture
+                                }
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 val startX = down.position.x
                                 val startY = down.position.y
