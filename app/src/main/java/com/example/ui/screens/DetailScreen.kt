@@ -154,6 +154,7 @@ fun DetailScreen(
     val context = LocalContext.current
     val lazyListState = rememberSavedLazyListState("detail_${item.id}", viewModel)
     val detailState by viewModel.detailState.collectAsState()
+    val regionBlocked by viewModel.regionBlocked.collectAsState()
     val favorites by viewModel.favorites.collectAsState()
     val defaultQuality by viewModel.defaultQuality.collectAsState()
     val selectedPlayer by viewModel.selectedPlayer.collectAsState()
@@ -1066,6 +1067,7 @@ fun DetailScreen(
                         },
                         onNavigateToThematic = { name, url -> onNavigateToThematic(name, url) },
                         isPlayerOpen = isPlayerOpen,
+                        regionBlocked = regionBlocked,
                         scrollState = lazyListState,
                         fromHistory = fromHistory,
                         viewModel = viewModel
@@ -2057,7 +2059,10 @@ fun DetailScreen(
                                     }
 
                                     // Кнопка Загрузить сериал / Загрузить фильм (отображается только если сериал/фильм уже вышел)
-                                    if (detail.isReleased) {
+                                    if (detail.isReleased && regionBlocked) {
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        RegionBlockNotice()
+                                    } else if (detail.isReleased) {
                                         val downloadButtonText = when {
                                             detail.isMultiSeriesMovie -> "Загрузить фильм"
                                             detail.type == RezkaType.ANIME -> "Загрузить сериал"
@@ -2146,8 +2151,10 @@ fun DetailScreen(
                                             )
                                             .clickable {
                                                 selectedEpisodeId = ep.id
-                                                val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
-                                                startPlayback(translator, currentSeason.id, ep.id)
+                                                if (!regionBlocked) {
+                                                    val translator = selectedTranslator ?: detail.translators.firstOrNull() ?: Translator("0", "Основной")
+                                                    startPlayback(translator, currentSeason.id, ep.id)
+                                                }
                                             }
                                             .padding(horizontal = 12.dp, vertical = 14.dp),
                                         contentAlignment = Alignment.CenterStart
@@ -2195,12 +2202,17 @@ fun DetailScreen(
                                     .padding(horizontal = 16.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
+                                if (regionBlocked && detail.isReleased) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    RegionBlockNotice()
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    if (detail.isReleased) {
+                                    if (detail.isReleased && !regionBlocked) {
                                         Button(
                                             onClick = {
                                                 HapticEngine.get().perform(HapticType.SOFT_CLICK)
@@ -2225,7 +2237,7 @@ fun DetailScreen(
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text("СМОТРЕТЬ", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                         }
-                                    } else {
+                                    } else if (!detail.isReleased) {
                                         Button(
                                             onClick = {},
                                             enabled = false,
@@ -2299,7 +2311,7 @@ fun DetailScreen(
                                 }
 
                                 // Кнопка Загрузить фильм (под кнопками "Смотреть" и "Трейлер" - только если фильм уже вышел)
-                                if (detail.isReleased) {
+                                if (detail.isReleased && !regionBlocked) {
                                     Surface(
                                         color = CinemaCard,
                                         shape = RoundedCornerShape(10.dp),
@@ -4106,6 +4118,47 @@ fun CommentUserAvatar(
                 fontSize = 14.sp
             )
         }
+    }
+}
+
+/**
+ * Плашка региональной блокировки: Земля с крестиком и пояснением.
+ * Показывается вместо кнопок «Смотреть» и «Скачать», если сервер
+ * вернул {"success":true,"url":false} (лицензионный гео-блок).
+ */
+@Composable
+fun RegionBlockNotice(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(CinemaCard.copy(alpha = 0.6f))
+            .border(1.dp, CinemaPrimary.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box(contentAlignment = Alignment.TopEnd) {
+            Icon(
+                imageVector = Icons.Default.Public,
+                contentDescription = null,
+                tint = CinemaTextWhite.copy(alpha = 0.9f),
+                modifier = Modifier.size(36.dp)
+            )
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = null,
+                tint = Color(0xFFFF5252),
+                modifier = Modifier.size(16.dp)
+            )
+        }
+        Text(
+            text = "К сожалению, это видео не доступно в вашем регионе.\nВключите VPN и попробуйте ещё раз.",
+            color = CinemaTextWhite,
+            fontSize = 13.sp,
+            lineHeight = 18.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
     }
 }
 
