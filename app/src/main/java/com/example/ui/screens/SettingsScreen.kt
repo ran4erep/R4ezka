@@ -45,7 +45,6 @@ import com.example.ui.haptics.HapticEngine
 import com.example.ui.haptics.HapticType
 import com.example.ui.haptics.bounceOverscroll
 import com.example.ui.haptics.hapticClickable
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -3763,34 +3762,6 @@ fun SettingsScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
-                // Отпечаток устройства (составной ID)
-                val deviceFingerprint = remember { FirebaseSyncManager.currentDeviceId }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = stringResource(R.string.device_fingerprint_label),
-                        fontSize = 12.sp,
-                        color = CinemaTextGray,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = deviceFingerprint,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = CinemaPrimary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
                 // Карточка поддержки Buy Me a Coffee
                 Card(
                     shape = RoundedCornerShape(14.dp),
@@ -3912,6 +3883,21 @@ fun SettingsScreen(
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = CinemaPrimary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Отпечаток устройства — просто белым текстом внизу, отдельно от доната
+                val deviceFingerprint = remember { FirebaseSyncManager.currentDeviceId }
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "${stringResource(R.string.device_fingerprint_label)} $deviceFingerprint",
+                        fontSize = 11.sp,
+                        color = CinemaTextWhite
                     )
                 }
             }

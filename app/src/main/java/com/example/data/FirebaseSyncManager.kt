@@ -791,26 +791,33 @@ object FirebaseSyncManager {
                     else -> firstTokenDeviceId(root) ?: deviceId
                 }
 
-                val patch = JSONObject()
+                val body = JSONObject()
                 for ((field, value) in rawValues) {
-                    patch.put(field, upsertToken(root.optString(field, ""), value))
+                    body.put(field, upsertToken(root.optString(field, ""), value))
                 }
                 if (existingFirst != null) {
-                    patch.put("firstDeviceId", firstRaw)
+                    body.put("firstDeviceId", firstRaw)
                 } else {
-                    patch.put("firstDeviceId", "deviceId=$firstId")
+                    body.put("firstDeviceId", "deviceId=$firstId")
                 }
-                patch.put("updatedAt", System.currentTimeMillis())
+                body.put("updatedAt", System.currentTimeMillis())
+                val bodyStr = body.toString()
+                val url = "$DATABASE_URL/users/$key/settings.json"
 
-                written = executeAndLog(
-                    Request.Builder().url("$DATABASE_URL/users/$key/settings.json")
-                        .patch(patch.toString().toRequestBody(JSON_MEDIA_TYPE))
-                        .build(),
-                    "writeDeviceSettings"
-                )
-                Log.i(TAG, "writeDeviceSettings: first=$firstId fields=${rawValues.size} written=$written")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to write device settings: ${e.message}")
+                // Сначала PATCH (частичное обновление), при неудаче — полная замена PUT
+                val patchReq = Request.Builder().url(url)
+                    .patch(bodyStr.toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                written = executeAndLog(patchReq, "writeDeviceSettings_patch")
+
+                if (!written) {
+                    val putReq = Request.Builder().url(url)
+                        .put(bodyStr.toRequestBody(JSON_MEDIA_TYPE))
+                        .build()
+                    written = executeAndLog(putReq, "writeDeviceSettings_put")
+                }
+            } catch (_: Exception) {
+                // молча: неудача записи настроек не должна ронять синхронизацию
             }
         }
         return written
@@ -1157,6 +1164,7 @@ object FirebaseSyncManager {
             }
 
             // 1. Синхронизация Избранного
+            try {
             val favReq = Request.Builder().url("$DATABASE_URL/users/$key/favorites.json").get().build()
             val favResp = httpClient.newCall(favReq).execute()
             val remoteFavorites = mutableListOf<FavoriteEntity>()
@@ -1203,7 +1211,12 @@ object FirebaseSyncManager {
                 }
             }
 
+            } catch (_: Exception) {
+                // продолжаем, чтобы сбой избранного не блокировал синхронизацию настроек
+            }
+
             // 2. Синхронизация Истории просмотров (серии, сезоны, секунды прогресса)
+            try {
             val histReq = Request.Builder().url("$DATABASE_URL/users/$key/history.json").get().build()
             val histResp = httpClient.newCall(histReq).execute()
             val remoteHistory = mutableListOf<WatchHistoryEntity>()
@@ -1276,6 +1289,10 @@ object FirebaseSyncManager {
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to patch history: ${e.message}")
                 }
+            }
+
+            } catch (_: Exception) {
+                // продолжаем, чтобы сбой истории не блокировал синхронизацию настроек
             }
 
             // 3. Синхронизация Настроек — раздельно по устройствам ВНУТРИ значений полей:
