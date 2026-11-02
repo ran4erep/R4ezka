@@ -185,6 +185,7 @@ fun RezkaPlayer(
     onPreviousEpisode: (() -> Unit)? = null,
     onNextEpisode: (() -> Unit)? = null,
     isTvMode: Boolean = false,
+    externalFocusRequester: FocusRequester? = null,
     onBack: () -> Unit,
     onProgressUpdate: (positionMs: Long, durationMs: Long) -> Unit,
     modifier: Modifier = Modifier
@@ -266,7 +267,10 @@ fun RezkaPlayer(
     var isInPipMode by remember { mutableStateOf(compActivity?.isInPictureInPictureMode == true) }
 
     val scope = rememberCoroutineScope()
-    val playerFocusRequester = remember { FocusRequester() }
+
+    // Если вызывающая сторона (страница фильма) передала свой держатель фокуса —
+    // используем его: так страница сможет возвращать фокус в плеер, когда плеер открыт.
+    val playerFocusRequester = externalFocusRequester ?: remember { FocusRequester() }
 
     DisposableEffect(compActivity) {
         if (compActivity == null) return@DisposableEffect onDispose {}
@@ -1185,20 +1189,6 @@ fun RezkaPlayer(
         }
     }
 
-    // Удерживаем фокус D-Pad строго на корневом контейнере плеера, чтобы клавиши пульта
-    // не «проваливались» на страницу фильма позади и не нажимали её элементы.
-    // Перезапрос фокуса выполняется ТОЛЬКО при дискретных переходах интерфейса
-    // (закрытие меню, снятие блокировки, исчезновение ошибки, оверлей следующей серии),
-    // а не при каждом изменении контролов — это исключает конфликт с доставкой клавиш на ТВ.
-    LaunchedEffect(activePlayerMenu, isScreenLocked, playerErrorMessage, showAutoNextCountdown) {
-        if (!isFloating && !isInPipMode && playerErrorMessage == null && activePlayerMenu == PlayerMenuType.NONE) {
-            delay(40)
-            try {
-                playerFocusRequester.requestFocus()
-            } catch (_: Exception) {}
-        }
-    }
-
     LaunchedEffect(isSeries) {
         selectedCenterIndex = if (isSeries) 1 else 0
     }
@@ -1218,7 +1208,9 @@ fun RezkaPlayer(
     // кнопке счётчик плавно растёт (+10, +20, ...) и не «дёргается» и не застревает на +10.
     var tvSeekResetJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
-    val doTvSeekRight: () -> Unit = {
+    val doTvSeekRight: () -> Unit = seekRight@{
+        // Во время первоначальной буферизации перемотка пульта запрещена
+        if (isLoading || !hasInitialPlayStarted) return@seekRight
         val cur = exoPlayer.currentPosition
         val dur = exoPlayer.duration.coerceAtLeast(0L)
         val target = (cur + 10_000L).coerceAtMost(dur)
@@ -1236,7 +1228,9 @@ fun RezkaPlayer(
         }
     }
 
-    val doTvSeekLeft: () -> Unit = {
+    val doTvSeekLeft: () -> Unit = seekLeft@{
+        // Во время первоначальной буферизации перемотка пульта запрещена
+        if (isLoading || !hasInitialPlayStarted) return@seekLeft
         val cur = exoPlayer.currentPosition
         val target = (cur - 10_000L).coerceAtLeast(0L)
         exoPlayer.seekTo(target)
@@ -1585,26 +1579,6 @@ fun RezkaPlayer(
                 .background(Color.Black)
                 .focusRequester(playerFocusRequester)
                 .focusable()
-                .onPreviewKeyEvent { keyEvent ->
-                    // Гарантированная обработка «Назад» (и «Esc» на пультах, где Назад = Esc)
-                    // на самом верхнем уровне: работает независимо от активной зоны фокуса.
-                    if (keyEvent.type == KeyEventType.KeyDown) {
-                        val kc = keyEvent.nativeKeyEvent.keyCode
-                        if (kc == android.view.KeyEvent.KEYCODE_BACK || kc == android.view.KeyEvent.KEYCODE_ESCAPE) {
-                            if (!isScreenLocked) {
-                                if (activePlayerMenu != PlayerMenuType.NONE) {
-                                    activePlayerMenu = PlayerMenuType.NONE
-                                    currentFocusArea = PlayerFocusArea.BOTTOM
-                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
-                                } else {
-                                    onBack()
-                                }
-                                return@onPreviewKeyEvent true
-                            }
-                        }
-                    }
-                    false
-                }
                 .onKeyEvent { keyEvent ->
                     if (keyEvent.type != KeyEventType.KeyDown) return@onKeyEvent false
 
@@ -1707,19 +1681,6 @@ fun RezkaPlayer(
                         return@onKeyEvent true
                     }
 
-                    // Во время первоначальной буферизации (плавающие «черепки») активной является
-                    // ТОЛЬКО кнопка «Назад». Запрещаем перемотку, паузу и любую навигацию по меню:
-                    // исключаем случайные нажатия пульта и утечку фокуса на страницу фильма позади.
-                    if ((isLoading || !hasInitialPlayStarted) && playerErrorMessage == null) {
-                        if (keyCode == android.view.KeyEvent.KEYCODE_BACK ||
-                            keyCode == android.view.KeyEvent.KEYCODE_ESCAPE
-                        ) {
-                            onBack()
-                            return@onKeyEvent true
-                        }
-                        return@onKeyEvent true
-                    }
-
                     // Handle navigation inside anchored context menus (Quality, Speed, Translator, Subtitles)
                     if (activePlayerMenu != PlayerMenuType.NONE) {
                         val availableSpeeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
@@ -1814,8 +1775,7 @@ fun RezkaPlayer(
                                 currentFocusArea = PlayerFocusArea.BOTTOM
                                 return@onKeyEvent true
                             }
-                            android.view.KeyEvent.KEYCODE_BACK,
-                            android.view.KeyEvent.KEYCODE_ESCAPE -> {
+                            android.view.KeyEvent.KEYCODE_BACK -> {
                                 activePlayerMenu = PlayerMenuType.NONE
                                 currentFocusArea = PlayerFocusArea.BOTTOM
                                 HapticEngine.get().perform(HapticType.GENTLE_TICK)
@@ -1825,7 +1785,7 @@ fun RezkaPlayer(
                             android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
                                 activePlayerMenu = PlayerMenuType.NONE
                                 currentFocusArea = PlayerFocusArea.BOTTOM
-                                return@onKeyEvent true
+                                return@onKeyEvent false
                             }
                             else -> return@onKeyEvent false
                         }
@@ -1986,14 +1946,11 @@ fun RezkaPlayer(
                                     controlsInteractionKey++
                                     true
                                 }
-                                android.view.KeyEvent.KEYCODE_BACK,
-                                android.view.KeyEvent.KEYCODE_ESCAPE -> {
+                                android.view.KeyEvent.KEYCODE_BACK -> {
                                     onBack()
                                     true
                                 }
-                                // Поглощаем остальные клавиши пульта, чтобы они не «проваливались»
-                                // на страницу фильма позади плеера.
-                                else -> true
+                                else -> false
                             }
                         }
 
@@ -2048,8 +2005,7 @@ fun RezkaPlayer(
                                     }
                                     true
                                 }
-                                android.view.KeyEvent.KEYCODE_BACK,
-                                android.view.KeyEvent.KEYCODE_ESCAPE -> {
+                                android.view.KeyEvent.KEYCODE_BACK -> {
                                     try {
                                         val pos = exoPlayer.currentPosition
                                         val dur = exoPlayer.duration
@@ -2060,7 +2016,7 @@ fun RezkaPlayer(
                                     onBack()
                                     true
                                 }
-                                else -> true
+                                else -> false
                             }
                         }
 
@@ -2138,8 +2094,7 @@ fun RezkaPlayer(
                                     }
                                     true
                                 }
-                                android.view.KeyEvent.KEYCODE_BACK,
-                                android.view.KeyEvent.KEYCODE_ESCAPE -> {
+                                android.view.KeyEvent.KEYCODE_BACK -> {
                                     try {
                                         val pos = exoPlayer.currentPosition
                                         val dur = exoPlayer.duration
@@ -2150,7 +2105,7 @@ fun RezkaPlayer(
                                     onBack()
                                     true
                                 }
-                                else -> true
+                                else -> false
                             }
                         }
                     }

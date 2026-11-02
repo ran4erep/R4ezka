@@ -225,6 +225,10 @@ fun DetailScreen(
 
     // Player Trigger States
     var isPlayerOpen by remember { mutableStateOf(false) }
+
+    // Фокус-держатель плеера: пока плеер открыт, страница фильма не должна получать
+    // события пульта (фокус всегда возвращается в плеер, а не «проваливается» вниз).
+    val playerFocusHolder = remember { FocusRequester() }
     var activePlayerStreams by remember { mutableStateOf<List<StreamUrl>?>(null) }
     var initialQualityIndex by remember { mutableIntStateOf(0) }
     var currentPlayingQuality by remember { mutableStateOf<String?>(null) }
@@ -689,7 +693,22 @@ fun DetailScreen(
             .fillMaxSize()
             .background(CinemaBlack)
     ) {
-        when (val state = displayState) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    if (isPlayerOpen) {
+                        // Плеер открыт: перехватываем все клавиши пульта, адресованные странице
+                        // фильма, и возвращаем фокус плееру. Это гарантирует, что под плеером
+                        // нельзя ничего выбрать и что клавиши не «проваливаются» под него.
+                        Modifier.onPreviewKeyEvent {
+                            try { playerFocusHolder.requestFocus() } catch (_: Exception) {}
+                            true
+                        }
+                    } else Modifier
+                )
+        ) {
+            when (val state = displayState) {
             is DetailState.Loading -> {
                 Box(
                     modifier = Modifier.fillMaxSize()
@@ -3290,6 +3309,7 @@ fun DetailScreen(
                 }
             }
         }
+        }
 
         // Schedule Calendar Dialog
         if (showScheduleCalendarDialog) {
@@ -3381,6 +3401,7 @@ fun DetailScreen(
                 streams = streams,
                 isLoading = isDecryptingStreams,
                 isTvMode = isTvMode,
+                externalFocusRequester = playerFocusHolder,
                 translators = availableTranslators,
                 currentTranslator = selectedTranslator ?: availableTranslators.firstOrNull() ?: currentDetail?.translators?.firstOrNull(),
                 onSelectTranslatorWithQuality = { newTrans, currentPosMs, currentQuality ->
