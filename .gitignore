@@ -16,3 +16,6 @@
 local.properties
 .env
 debug.keystore
+
+# Диагностические логи getLog.sh
+rezka_logs/
