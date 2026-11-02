@@ -6,6 +6,7 @@
     <string name="support_project_icon_desc">Buy Me a Coffee</string>
     <string name="support_project_open_desc">Открыть страницу поддержки</string>
     <string name="error_cannot_open_link">Не удалось открыть браузер</string>
+    <string name="device_fingerprint_label">Отпечаток устройства:</string>
     <string name="developer_label">Разработчик:</string>
     <string name="developer_name">ran4erep</string>
 </resources>
