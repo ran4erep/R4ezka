@@ -1512,8 +1512,6 @@ object FirebaseSyncManager {
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync voice commands from Firebase: ${e.message}")
             }
-
-            Log.d(TAG, "Sync complete: ${remoteFavorites.size} favorites, ${remoteHistory.size} history items")
         } catch (e: Exception) {
             Log.e(TAG, "Error during syncAll: ${e.message}", e)
         } finally {
