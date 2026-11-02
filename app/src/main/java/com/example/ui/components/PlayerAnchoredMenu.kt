@@ -392,6 +392,16 @@ fun TranslatorMenuPopup(
 }
 
 /**
+ * Варианты размера шрифта субтитров (общие для отрисовки меню и навигации пульта).
+ */
+internal val SubtitleSizeOptions: List<Pair<String, Float>> = listOf(
+    "Мелкий" to 0.042f,
+    "Обычный" to 0.053f,
+    "Крупный" to 0.068f,
+    "Макс" to 0.082f
+)
+
+/**
  * Меню выбора субтитров над кнопкой субтитров с быстрым переключением размера шрифта (с вертикальной прокруткой).
  */
 @Composable
@@ -401,6 +411,7 @@ fun SubtitlesMenuPopup(
     availableSubtitles: List<SubtitleTrack>,
     subtitleTextScale: Float,
     remoteFocusedIndex: Int,
+    sizeRemoteFocusedIndex: Int = -1,
     onSelectOff: () -> Unit,
     onSelectTrack: (SubtitleTrack) -> Unit,
     onSelectScale: (Float) -> Unit,
@@ -478,17 +489,12 @@ fun SubtitlesMenuPopup(
                     .padding(horizontal = 4.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                val sizeOptions = listOf(
-                    "Мелкий" to 0.042f,
-                    "Обычный" to 0.053f,
-                    "Крупный" to 0.068f,
-                    "Макс" to 0.082f
-                )
-                sizeOptions.forEach { (label, scale) ->
+                SubtitleSizeOptions.forEachIndexed { index, (label, scale) ->
                     val isChosen = abs(subtitleTextScale - scale) < 0.005f
+                    val isRemoteFocused = sizeRemoteFocusedIndex == index
                     Surface(
-                        color = if (isChosen) CinemaPrimary.copy(alpha = 0.35f) else CinemaSurface,
-                        border = if (isChosen) BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.6f)) else null,
+                        color = if (isChosen || isRemoteFocused) CinemaPrimary.copy(alpha = 0.35f) else CinemaSurface,
+                        border = if (isChosen || isRemoteFocused) BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.6f)) else null,
                         shape = RoundedCornerShape(6.dp),
                         modifier = Modifier
                             .weight(1f)
