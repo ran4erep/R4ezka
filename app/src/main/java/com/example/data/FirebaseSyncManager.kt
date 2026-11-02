@@ -724,7 +724,18 @@ object FirebaseSyncManager {
                 .url("$DATABASE_URL/users/$key/settings.json")
                 .patch(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                 .build()
-            executeAndLog(request, "seedDeviceSettings")
+            if (executeAndLog(request, "seedDeviceSettings")) {
+                // Проверяем, что новый формат реально записался в базу
+                try {
+                    val verResp = httpClient.newCall(
+                        Request.Builder().url("$DATABASE_URL/users/$key/settings.json").get().build()
+                    ).execute()
+                    if (verResp.isSuccessful) {
+                        val v = verResp.body?.string()?.trim().orEmpty()
+                        Log.i(TAG, "seedDeviceSettings verify: containsTokens=${v.contains("AndroidId=")}, body=${v.take(160)}")
+                    }
+                } catch (_: Exception) {}
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to seed device settings: ${e.message}")
         }
