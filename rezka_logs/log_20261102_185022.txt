@@ -1,0 +1,249 @@
+==============================================================
+ getLog.sh — диагностика региональной блокировки Rezka
+ Дата запуска: 2026-11-02 18:50:22 EET
+ Зеркало: https://rezka-tv.org
+ Тайтл:   https://rezka-tv.org/series/thriller/9332-zakrytaya-shkola-2011.html
+ Каталог логов: /data/data/com.termux/files/home/storage/downloads/R4ezka/rezka_logs/
+ Сводный лог:   /data/data/com.termux/files/home/storage/downloads/R4ezka/rezka_logs/log_20261102_185022.txt
+--------------------------------------------------------------
+ НАПОМИНАНИЕ:
+  • БЕЗ VPN  -> bash getLog.sh
+  • С VPN    -> bash getLog.sh https://hdrezka-home.tv
+==============================================================
+
+curl: curl 8.23.0 (aarch64-unknown-linux-android) libcurl/8.23.0 OpenSSL/3.6.5 zlib/1.3.2 libssh2/1.11.1 nghttp2/1.70.0 ngtcp2/1.25.0 nghttp3/1.18.0
+python3: Python 3.14.8
+
+===== [1] Внешний IP и геолокация =====
+IP: 188.163.110.60
+Гео (ipinfo.io):
+{
+  "ip": "188.163.110.60",
+  "hostname": "188-163-110-60.broadband.kyivstar.net",
+  "city": "Dnipro",
+  "region": "Dnipropetrovsk",
+  "country": "UA",
+  "loc": "48.4666,35.0407",
+  "org": "AS15895 \"Kyivstar\" PJSC",
+  "postal": "49000",
+  "timezone": "Europe/Kyiv",
+  "readme": "https://ipinfo.io/missingauth"
+}
+
+===== [2] DNS-резолв зеркала =====
+Хост: rezka-tv.org
+--- системный резолв ---
+179.43.154.137
+--- DoH (dns.google) — как приложение ---
+   DoH: 179.43.154.137
+
+===== [3] Доступность зеркала (HEAD) =====
+HTTP/1.1 200 OK
+Server: nginx
+Date: Mon, 02 Nov 2026 16:50:23 GMT
+Content-Type: text/html; charset=utf-8
+Connection: keep-alive
+Cache-Control: no-store
+Content-Encoding: gzip
+Set-Cookie: techaro.lol-anubis-auth-d82da6a5=; Path=/; Expires=Mon, 02 Nov 2026 16:49:23 GMT; Max-Age=0; Secure; SameSite=Lax
+Set-Cookie: techaro.lol-anubis-cookie-verification-d82da6a5=01a19d2b-4dcc-7d1b-8111-0756a834e3b8; Path=/; Expires=Mon, 02 Nov 2026 17:20:23 GMT; Secure; SameSite=Lax
+Strict-Transport-Security: max-age=15768000; includeSubDomains; preload
+
+
+===== [4] Страница тайтла =====
+HTTP: 200 | text/html; charset=utf-8 | 4237 B | ip: 179.43.154.137 | 1.1 | 0.266291s | final: https://rezka-tv.org/series/thriller/9332-zakrytaya-shkola-2011.html
+    -> обнаружен Anubis-челлендж, решаем PoW...
+pass-challenge HTTP: 302
+HTTP: 200 | text/html; charset=UTF-8 | 38325 B | ip: 179.43.154.137 | 1.1 | 0.470948s | final: https://rezka-tv.org/series/thriller/9332-zakrytaya-shkola-2011.html
+--- первые 400 символов тела ---
+<!DOCTYPE html><!--[if lt IE 7 ]> <html class="ie6"> <![endif]--><!--[if IE 7 ]> <html class="ie7"> <![endif]--><!--[if IE 8 ]> <html class="ie8"> <![endif]--><!--[if IE 9 ]> <html class="ie9"> <![endif]--><!--[if (gt IE 9)|!(IE)]><!--> <html xmlns="http://www.w3.org/1999/xhtml" xmlns:og="http://ogp.me/ns#" xmlns:fb="http://ogp.me/ns/fb#" dir="ltr" lang="ru"> <!--<![endif]--><head><title>Смот�
+--- признаки ---
+--- распарсено со страницы ---
+  post_id: 9332
+  тип: сериал
+  сезоны в разметке: [1, 2, 3, 4]
+  переводчики:
+    id=110 | (из initCDN) | default
+
+
+//////////////////////////////////////////////////////////////
+// 5. Опрос CDN AJAX (/ajax/get_cdn_series/)
+//////////////////////////////////////////////////////////////
+
+===== [CDN] episodes_tr110 =====
+HTTP: 200 | text/html; charset=utf-8 | 1162 B | ip: 179.43.154.137 | 1.1 | 0.334788s | final: https://rezka-tv.org/ajax/get_cdn_series/?t=1793638225
+--- тело (первые 600 символов) ---
+{"success":true,"message":"","premium_content":0,"seasons":"\u003Cli class=\"b-simple_season__item active\" data-tab_id=\"1\"\u003E\u0421\u0435\u0437\u043e\u043d 1\u003C\/li\u003E\u003Cli class=\"b-simple_season__item\" data-tab_id=\"2\"\u003E\u0421\u0435\u0437\u043e\u043d 2\u003C\/li\u003E\u003Cli class=\"b-simple_season__item\" data-tab_id=\"3\"\u003E\u0421\u0435\u0437\u043e\u043d 3\u003C\/li\u003E\u003Cli class=\"b-simple_season__item\" data-tab_id=\"4\"\u003E\u0421\u0435\u0437\u043e\u043d 4\u003C\/li\u003E","episodes":"\u003Cul id=\"simple-episodes-list-1\" class=\"b-simple_episodes__list 
+--- ключевые поля ---
+  success: True
+  message: 
+  url присутствует: False
+  url (первые 160): False
+  subtitle/subtitles: False
+
+===== [CDN] stream_tr110_s1_e1 =====
+HTTP: 200 | text/html; charset=utf-8 | 111 B | ip: 179.43.154.137 | 1.1 | 0.342391s | final: https://rezka-tv.org/ajax/get_cdn_series/?t=1793638226
+--- тело (первые 600 символов) ---
+{"success":true,"message":"","premium_content":0,"url":false,"quality":false,"subtitle":false,"subtitle_lns":false,"subtitle_def":false,"thumbnails":false}
+--- ключевые поля ---
+  success: True
+  message: 
+  url присутствует: False
+  url (первые 160): False
+  subtitle/subtitles: False
+  расшифровка не дала потоков (url:false/пусто?)
+
+===== [CDN] stream_tr110_s2_e1 =====
+HTTP: 200 | text/html; charset=utf-8 | 111 B | ip: 179.43.154.137 | 1.1 | 0.313542s | final: https://rezka-tv.org/ajax/get_cdn_series/?t=1793638227
+--- тело (первые 600 символов) ---
+{"success":true,"message":"","premium_content":0,"url":false,"quality":false,"subtitle":false,"subtitle_lns":false,"subtitle_def":false,"thumbnails":false}
+--- ключевые поля ---
+  success: True
+  message: 
+  url присутствует: False
+  url (первые 160): False
+  subtitle/subtitles: False
+  расшифровка не дала потоков (url:false/пусто?)
+
+===== [CDN] stream_tr110_s3_e1 =====
+HTTP: 200 | text/html; charset=utf-8 | 111 B | ip: 179.43.154.137 | 1.1 | 0.375709s | final: https://rezka-tv.org/ajax/get_cdn_series/?t=1793638229
+--- тело (первые 600 символов) ---
+{"success":true,"message":"","premium_content":0,"url":false,"quality":false,"subtitle":false,"subtitle_lns":false,"subtitle_def":false,"thumbnails":false}
+--- ключевые поля ---
+  success: True
+  message: 
+  url присутствует: False
+  url (первые 160): False
+  subtitle/subtitles: False
+  расшифровка не дала потоков (url:false/пусто?)
+
+===== [CDN] movie_tr0 =====
+HTTP: 200 | text/html; charset=utf-8 | 161 B | ip: 179.43.154.137 | 1.1 | 0.351365s | final: https://rezka-tv.org/ajax/get_cdn_series/?t=1793638230
+--- тело (первые 600 символов) ---
+{"success":false,"message":"\u0412\u0440\u0435\u043c\u044f \u0441\u0435\u0441\u0441\u0438\u0438 \u0438\u0441\u0442\u0435\u043a\u043b\u043e. \u041f\u043e\u0436\u0430\u043b\u0443\u0439\u0441\u0442\u0430, \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0443 \u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u043f\u043e\u043f\u044b\u0442\u043a\u0443"}
+--- ключевые поля ---
+  success: False
+  message: Время сессии истекло. Пожалуйста, обновите страницу и повторите попытку
+  url присутствует: False
+  url (первые 160): None
+  subtitle/subtitles: False
+  расшифровка не дала потоков (url:false/пусто?)
+
+===== [CDN] stream_noTr_s1_e1 =====
+HTTP: 200 | text/html; charset=utf-8 | 161 B | ip: 179.43.154.137 | 1.1 | 0.351227s | final: https://rezka-tv.org/ajax/get_cdn_series/?t=1793638231
+--- тело (первые 600 символов) ---
+{"success":false,"message":"\u0412\u0440\u0435\u043c\u044f \u0441\u0435\u0441\u0441\u0438\u0438 \u0438\u0441\u0442\u0435\u043a\u043b\u043e. \u041f\u043e\u0436\u0430\u043b\u0443\u0439\u0441\u0442\u0430, \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0443 \u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u043f\u043e\u043f\u044b\u0442\u043a\u0443"}
+--- ключевые поля ---
+  success: False
+  message: Время сессии истекло. Пожалуйста, обновите страницу и повторите попытку
+  url присутствует: False
+  url (первые 160): None
+  subtitle/subtitles: False
+  расшифровка не дала потоков (url:false/пусто?)
+
+===== [6] Подробные заголовки первого CDN-ответа =====
+HTTP/1.1 200 OK
+Server: nginx
+Date: Mon, 02 Nov 2026 16:50:31 GMT
+Content-Type: text/html; charset=utf-8
+Content-Length: 161
+Connection: keep-alive
+Cache-Control: no-store, no-cache, must-revalidate
+Content-Encoding: gzip
+Expires: Thu, 19 Nov 1981 08:52:00 GMT
+Pragma: no-cache
+Set-Cookie: dle_user_id=deleted; expires=Thu, 01-Jan-1970 00:00:01 GMT; Max-Age=0; path=/; domain=.rezka-tv.org; HttpOnly
+Set-Cookie: dle_password=deleted; expires=Thu, 01-Jan-1970 00:00:01 GMT; Max-Age=0; path=/; domain=.rezka-tv.org; HttpOnly
+Set-Cookie: dle_hash=deleted; expires=Thu, 01-Jan-1970 00:00:01 GMT; Max-Age=0; path=/; domain=.rezka-tv.org; HttpOnly
+Vary: Accept-Encoding
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+X-Powered-By: Express
+Strict-Transport-Security: max-age=15768000; includeSubDomains; preload
+
+
+==============================================================
+ ГОТОВО. Файлы собраны в каталоге: /data/data/com.termux/files/home/storage/downloads/R4ezka/rezka_logs/
+ Сводный лог: /data/data/com.termux/files/home/storage/downloads/R4ezka/rezka_logs/log_20261102_185022.txt
+drwxrwx---. 2 root everybody   8192 Nov  2 18:50 .
+drwxrwx---. 7 root everybody   3488 Nov  2 18:42 ..
+-rw-rw----. 1 root everybody    214 Nov  2 18:42 cdn_episodes_tr0_20261102_184219.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:42 cdn_episodes_tr0_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody  30847 Nov  2 18:47 cdn_episodes_tr110_20261102_184636.json
+-rw-rw----. 1 root everybody  28038 Nov  2 18:50 cdn_episodes_tr110_20261102_185022.json
+-rw-rw----. 1 root everybody    842 Nov  2 18:47 cdn_episodes_tr110_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody    833 Nov  2 18:50 cdn_episodes_tr110_headers_20261102_185022.txt
+-rw-rw----. 1 root everybody    406 Nov  2 18:43 cdn_movie_tr0_20261102_184219.json
+-rw-rw----. 1 root everybody    406 Nov  2 18:47 cdn_movie_tr0_20261102_184636.json
+-rw-rw----. 1 root everybody    406 Nov  2 18:50 cdn_movie_tr0_20261102_185022.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:43 cdn_movie_tr0_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody    841 Nov  2 18:47 cdn_movie_tr0_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody    832 Nov  2 18:50 cdn_movie_tr0_headers_20261102_185022.txt
+-rw-rw----. 1 root everybody    406 Nov  2 18:43 cdn_stream_noTr_s1_e1_20261102_184219.json
+-rw-rw----. 1 root everybody    406 Nov  2 18:47 cdn_stream_noTr_s1_e1_20261102_184636.json
+-rw-rw----. 1 root everybody    406 Nov  2 18:50 cdn_stream_noTr_s1_e1_20261102_185022.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:43 cdn_stream_noTr_s1_e1_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody    841 Nov  2 18:47 cdn_stream_noTr_s1_e1_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody    832 Nov  2 18:50 cdn_stream_noTr_s1_e1_headers_20261102_185022.txt
+-rw-rw----. 1 root everybody    406 Nov  2 18:42 cdn_stream_tr0_s1_e1_20261102_184219.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:42 cdn_stream_tr0_s1_e1_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody    406 Nov  2 18:42 cdn_stream_tr0_s2_e1_20261102_184219.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:42 cdn_stream_tr0_s2_e1_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody    406 Nov  2 18:42 cdn_stream_tr0_s3_e1_20261102_184219.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:42 cdn_stream_tr0_s3_e1_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody   3009 Nov  2 18:47 cdn_stream_tr110_s1_e1_20261102_184636.json
+-rw-rw----. 1 root everybody    155 Nov  2 18:50 cdn_stream_tr110_s1_e1_20261102_185022.json
+-rw-rw----. 1 root everybody    836 Nov  2 18:47 cdn_stream_tr110_s1_e1_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody    832 Nov  2 18:50 cdn_stream_tr110_s1_e1_headers_20261102_185022.txt
+-rw-rw----. 1 root everybody   3009 Nov  2 18:47 cdn_stream_tr110_s2_e1_20261102_184636.json
+-rw-rw----. 1 root everybody    155 Nov  2 18:50 cdn_stream_tr110_s2_e1_20261102_185022.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:47 cdn_stream_tr110_s2_e1_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody    832 Nov  2 18:50 cdn_stream_tr110_s2_e1_headers_20261102_185022.txt
+-rw-rw----. 1 root everybody   3009 Nov  2 18:47 cdn_stream_tr110_s3_e1_20261102_184636.json
+-rw-rw----. 1 root everybody    155 Nov  2 18:50 cdn_stream_tr110_s3_e1_20261102_185022.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:47 cdn_stream_tr110_s3_e1_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody    832 Nov  2 18:50 cdn_stream_tr110_s3_e1_headers_20261102_185022.txt
+-rw-rw----. 1 root everybody   1038 Nov  2 18:43 cookies_20261102_184219.txt
+-rw-rw----. 1 root everybody   1038 Nov  2 18:47 cookies_20261102_184636.txt
+-rw-rw----. 1 root everybody   1023 Nov  2 18:50 cookies_20261102_185022.txt
+-rw-rw----. 1 root everybody    197 Nov  2 18:42 doh_20261102_184219.json
+-rw-rw----. 1 root everybody    197 Nov  2 18:46 doh_20261102_184636.json
+-rw-rw----. 1 root everybody    191 Nov  2 18:50 doh_20261102_185022.json
+-rw-rw----. 1 root everybody    253 Nov  2 18:42 geo_ipinfo_20261102_184219.json
+-rw-rw----. 1 root everybody    253 Nov  2 18:46 geo_ipinfo_20261102_184636.json
+-rw-rw----. 1 root everybody    313 Nov  2 18:50 geo_ipinfo_20261102_185022.json
+-rw-rw----. 1 root everybody  13035 Nov  2 18:43 log_20261102_184219.txt
+-rw-rw----. 1 root everybody  19990 Nov  2 18:47 log_20261102_184636.txt
+-rw-rw----. 1 root everybody   9670 Nov  2 18:50 log_20261102_185022.txt
+-rw-rw----. 1 root everybody 240480 Nov  2 18:42 page_20261102_184219.html
+-rw-rw----. 1 root everybody 240480 Nov  2 18:46 page_20261102_184636.html
+-rw-rw----. 1 root everybody 234848 Nov  2 18:50 page_20261102_185022.html
+-rw-rw----. 1 root everybody   1261 Nov  2 18:42 page_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody   1261 Nov  2 18:46 page_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody   1243 Nov  2 18:50 page_headers_20261102_185022.txt
+-rw-rw----. 1 root everybody     83 Nov  2 18:42 page_meta_20261102_184219.json
+-rw-rw----. 1 root everybody    174 Nov  2 18:46 page_meta_20261102_184636.json
+-rw-rw----. 1 root everybody    174 Nov  2 18:50 page_meta_20261102_185022.json
+-rw-rw----. 1 root everybody    548 Nov  2 18:47 probe_episodes_tr110_360p_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:42 streams_episodes_tr0_20261102_184219.txt
+-rw-rw----. 1 root everybody    263 Nov  2 18:47 streams_episodes_tr110_20261102_184636.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:43 streams_movie_tr0_20261102_184219.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:47 streams_movie_tr0_20261102_184636.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:50 streams_movie_tr0_20261102_185022.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:43 streams_stream_noTr_s1_e1_20261102_184219.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:47 streams_stream_noTr_s1_e1_20261102_184636.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:50 streams_stream_noTr_s1_e1_20261102_185022.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:42 streams_stream_tr0_s1_e1_20261102_184219.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:42 streams_stream_tr0_s2_e1_20261102_184219.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:43 streams_stream_tr0_s3_e1_20261102_184219.txt
+-rw-rw----. 1 root everybody    263 Nov  2 18:47 streams_stream_tr110_s1_e1_20261102_184636.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:50 streams_stream_tr110_s1_e1_20261102_185022.txt
+-rw-rw----. 1 root everybody    263 Nov  2 18:47 streams_stream_tr110_s2_e1_20261102_184636.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:50 streams_stream_tr110_s2_e1_20261102_185022.txt
+-rw-rw----. 1 root everybody    263 Nov  2 18:47 streams_stream_tr110_s3_e1_20261102_184636.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:50 streams_stream_tr110_s3_e1_20261102_185022.txt
+
+Для сравнения запусти второй прогон:
+  С VPN: bash getLog.sh https://hdrezka-home.tv
+
+Done

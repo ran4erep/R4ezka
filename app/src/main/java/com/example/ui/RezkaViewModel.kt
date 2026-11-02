@@ -380,6 +380,10 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val _detailState = MutableStateFlow<DetailState>(DetailState.Idle)
     val detailState: StateFlow<DetailState> = _detailState.asStateFlow()
 
+    // True, если видео для текущего тайтла недоступно из-за региональной блокировки
+    private val _regionBlocked = MutableStateFlow(false)
+    val regionBlocked: StateFlow<Boolean> = _regionBlocked.asStateFlow()
+
     private val _commentsState = MutableStateFlow(MovieCommentsState())
     val commentsState: StateFlow<MovieCommentsState> = _commentsState.asStateFlow()
     private var commentsJob: Job? = null
@@ -1402,6 +1406,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     fun loadDetail(url: String, fallbackItem: RezkaItem? = null) {
         commitSearchQuery()
         _detailState.value = DetailState.Loading
+        _regionBlocked.value = false
         _commentsState.value = MovieCommentsState(isLoading = true)
         commentsPageCache.clear()
         viewModelScope.launch {
@@ -1483,6 +1488,24 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 hasMore = initialHasMore,
                 numericPostId = detail.numericPostId
             )
+
+            // Проверяем региональную доступность (один лёгкий AJAX-запрос к CDN)
+            if (NetworkMonitor.isOnline.value && detail.isReleased && detail.numericPostId.isNotEmpty()) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    try {
+                        val defTrans = detail.translators.find { it.isDefault } ?: detail.translators.firstOrNull()
+                        val probe = RezkaService.probeRegionAvailability(
+                            itemId = detail.numericPostId,
+                            type = detail.type,
+                            translatorId = defTrans?.id.orEmpty(),
+                            itemUrl = url
+                        )
+                        if (probe == RezkaService.RegionProbeResult.REGION_BLOCKED) {
+                            _regionBlocked.value = true
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
 
             if (repository.isFavorite(detail.id)) {
                 val currentFav = favorites.value.find { it.id == detail.id }
@@ -1685,6 +1708,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearDetail() {
         _detailState.value = DetailState.Idle
+        _regionBlocked.value = false
         _commentsState.value = MovieCommentsState()
         commentsPageCache.clear()
         commentsJob?.cancel()

@@ -1,0 +1,252 @@
+==============================================================
+ getLog.sh — диагностика региональной блокировки Rezka
+ Дата запуска: 2026-11-02 18:46:36 EET
+ Зеркало: https://hdrezka-home.tv
+ Тайтл:   https://hdrezka-home.tv/series/thriller/9332-zakrytaya-shkola-2011.html
+ Каталог логов: /data/data/com.termux/files/home/storage/downloads/R4ezka/rezka_logs/
+ Сводный лог:   /data/data/com.termux/files/home/storage/downloads/R4ezka/rezka_logs/log_20261102_184636.txt
+--------------------------------------------------------------
+ НАПОМИНАНИЕ:
+  • БЕЗ VPN  -> bash getLog.sh
+  • С VPN    -> bash getLog.sh https://hdrezka-home.tv
+==============================================================
+
+curl: curl 8.23.0 (aarch64-unknown-linux-android) libcurl/8.23.0 OpenSSL/3.6.5 zlib/1.3.2 libssh2/1.11.1 nghttp2/1.70.0 ngtcp2/1.25.0 nghttp3/1.18.0
+python3: Python 3.14.8
+
+===== [1] Внешний IP и геолокация =====
+IP: 217.138.209.25
+Гео (ipinfo.io):
+{
+  "ip": "217.138.209.25",
+  "city": "Ursynów",
+  "region": "Mazovia",
+  "country": "PL",
+  "loc": "52.1552,21.0068",
+  "org": "AS9009 M247 Europe SRL",
+  "postal": "02-822",
+  "timezone": "Europe/Warsaw",
+  "readme": "https://ipinfo.io/missingauth"
+}
+
+===== [2] DNS-резолв зеркала =====
+Хост: hdrezka-home.tv
+--- системный резолв ---
+179.43.190.136
+--- DoH (dns.google) — как приложение ---
+   DoH: 179.43.190.136
+
+===== [3] Доступность зеркала (HEAD) =====
+HTTP/1.1 200 OK
+Server: nginx
+Date: Mon, 02 Nov 2026 16:46:46 GMT
+Content-Type: text/html; charset=utf-8
+Connection: keep-alive
+Cache-Control: no-store
+Content-Encoding: gzip
+Set-Cookie: techaro.lol-anubis-auth-d82da6a5=; Path=/; Expires=Mon, 02 Nov 2026 16:45:46 GMT; Max-Age=0; Secure; SameSite=Lax
+Set-Cookie: techaro.lol-anubis-cookie-verification-d82da6a5=01a19d27-ffa1-7705-9ab6-9d4d909c135e; Path=/; Expires=Mon, 02 Nov 2026 17:16:46 GMT; Secure; SameSite=Lax
+Strict-Transport-Security: max-age=15768000; includeSubDomains; preload
+
+
+===== [4] Страница тайтла =====
+HTTP: 200 | text/html; charset=utf-8 | 4236 B | ip: 179.43.190.136 | 1.1 | 2.895689s | final: https://hdrezka-home.tv/series/thriller/9332-zakrytaya-shkola-2011.html
+    -> обнаружен Anubis-челлендж, решаем PoW...
+pass-challenge HTTP: 302
+HTTP: 200 | text/html; charset=UTF-8 | 41399 B | ip: 179.43.190.136 | 1.1 | 4.246879s | final: https://hdrezka-home.tv/series/thriller/9332-zakrytaya-shkola-2011.html
+--- первые 400 символов тела ---
+<!DOCTYPE html><!--[if lt IE 7 ]> <html class="ie6"> <![endif]--><!--[if IE 7 ]> <html class="ie7"> <![endif]--><!--[if IE 8 ]> <html class="ie8"> <![endif]--><!--[if IE 9 ]> <html class="ie9"> <![endif]--><!--[if (gt IE 9)|!(IE)]><!--> <html xmlns="http://www.w3.org/1999/xhtml" xmlns:og="http://ogp.me/ns#" xmlns:fb="http://ogp.me/ns/fb#" dir="ltr" lang="ru"> <!--<![endif]--><head><title>Смот�
+--- признаки ---
+--- распарсено со страницы ---
+  post_id: 9332
+  тип: сериал
+  сезоны в разметке: [1, 2, 3, 4]
+  переводчики:
+    id=110 | (из initCDN) | default
+
+
+//////////////////////////////////////////////////////////////
+// 5. Опрос CDN AJAX (/ajax/get_cdn_series/)
+//////////////////////////////////////////////////////////////
+
+===== [CDN] episodes_tr110 =====
+HTTP: 200 | text/html; charset=utf-8 | 1713 B | ip: 179.43.190.136 | 1.1 | 3.013792s | final: https://hdrezka-home.tv/ajax/get_cdn_series/?t=1793638018
+--- тело (первые 600 символов) ---
+{"success":true,"message":"","premium_content":0,"seasons":"\u003Cli class=\"b-simple_season__item active\" data-tab_id=\"1\"\u003E\u0421\u0435\u0437\u043e\u043d 1\u003C\/li\u003E\u003Cli class=\"b-simple_season__item\" data-tab_id=\"2\"\u003E\u0421\u0435\u0437\u043e\u043d 2\u003C\/li\u003E\u003Cli class=\"b-simple_season__item\" data-tab_id=\"3\"\u003E\u0421\u0435\u0437\u043e\u043d 3\u003C\/li\u003E\u003Cli class=\"b-simple_season__item\" data-tab_id=\"4\"\u003E\u0421\u0435\u0437\u043e\u043d 4\u003C\/li\u003E","episodes":"\u003Cul id=\"simple-episodes-list-1\" class=\"b-simple_episodes__list 
+--- ключевые поля ---
+  success: True
+  message: 
+  url присутствует: True
+  url (первые 160): [360p]https://stream.voidboost.one/7f60fd9c98a678f4740968470d30c58e:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b
+  subtitle/subtitles: False
+  расшифрованные потоки:
+    360p	https://stream.voidboost.one/7f60fd9c98a678f4740968470d30c58e:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRnNSbkNUV2NtN3RwckZ3Q3hHQzJtWm5haHJXZzlMSnRSWjh1cHNmUDlXYlU9/2/9/6/4/0/4/8xtcs.mp4:hls:manifest.m3u8
+curl: (28) Connection timed out after 15001 milliseconds
+    [360p] HTTP: 302 | text/html; charset=utf-8 | 0 B | ip: 176.58.38.21 | final: https://fiber.stream.voidboost.one/7f60fd9c98a678f4740968470d30c58e:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRnNSbkNUV2NtN3RwckZ3Q3hHQzJtWm5haHJXZzlMSnRSWjh1cHNmUDlXYlU9/2/9/6/4/0/4/8xtcs.mp4:hls:manifest.m3u8
+    [360p] сетевой сбой при опросе (соединение сброшено/закрыто)
+    заголовки:
+      HTTP/1.1 302 Found
+      Server: nginx/1.18.0
+      Date: Mon, 02 Nov 2026 16:47:04 GMT
+      Content-Type: text/html; charset=utf-8
+      Content-Length: 0
+      Connection: keep-alive
+      Access-Control-Allow-Origin: *
+      Access-Control-Expose-Headers: Content-Length, Content-Range
+      Location: https://fiber.stream.voidboost.one/7f60fd9c98a678f4740968470d30c58e:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRnNSbkNUV2NtN3RwckZ3Q3hHQzJtWm5haHJXZzlMSnRSWjh1cHNmUDlXYlU9/2/9/6/4/0/4/8xtcs.mp4:hls:manifest.m3u8
+      X-Routing: sh
+      
+    маркеры (регион/блокировка):
+grep: /data/data/com.termux/files/home/storage/downloads/R4ezka/rezka_logs/probe_episodes_tr110_360p_body_20261102_184636.bin: No such file or directory
+    первые 400 символов тела:
+head: cannot open '/data/data/com.termux/files/home/storage/downloads/R4ezka/rezka_logs/probe_episodes_tr110_360p_body_20261102_184636.bin' for reading: No such file or directory
+
+
+===== [CDN] stream_tr110_s1_e1 =====
+HTTP: 200 | text/html; charset=utf-8 | 676 B | ip: 179.43.190.136 | 1.1 | 3.123070s | final: https://hdrezka-home.tv/ajax/get_cdn_series/?t=1793638040
+--- тело (первые 600 символов) ---
+{"success":true,"message":"","premium_content":0,"url":"[360p]https:\/\/stream.voidboost.one\/c67e0f952ee092df3d6cac195b5821de:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRmVBbG8rT2NsMUFnVnBPZXJzcjUxYTkwWjZZeThVU29ZTFpHOHNFYzFrdms9\/2\/9\/6\/4\/0\/4\/8xtcs.mp4:hls:manifest.m3u8 or https:\/\/stream.voidboost.one\/c67e0f952ee092df3d6cac195b5821de:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRmVBbG8rT2NsMUFnVnBPZXJzcjUxYTkwWjZZeThVU29ZTFpHOHNFYzFrdms9\/2\/9\/6\/4\/0\/4\/8xtcs.mp4,[480p]https:\/\/s
+--- ключевые поля ---
+  success: True
+  message: 
+  url присутствует: True
+  url (первые 160): [360p]https://stream.voidboost.one/c67e0f952ee092df3d6cac195b5821de:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b
+  subtitle/subtitles: False
+  расшифрованные потоки:
+    360p	https://stream.voidboost.one/c67e0f952ee092df3d6cac195b5821de:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRmVBbG8rT2NsMUFnVnBPZXJzcjUxYTkwWjZZeThVU29ZTFpHOHNFYzFrdms9/2/9/6/4/0/4/8xtcs.mp4:hls:manifest.m3u8
+    [360p] пропускаем опрос (хост уже проверен): https://stream.voidboost.one/c67e0f952ee092df3d6cac195b5821de:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRmVBbG8rT2NsMUFnVnBPZXJzcjUxYTkwWjZZeThVU29ZTFpHOHNFYzFrdms9/2/9/6/4/0/4/8xtcs.mp4:hls:manifest.m3u8
+
+===== [CDN] stream_tr110_s2_e1 =====
+HTTP: 200 | text/html; charset=utf-8 | 672 B | ip: 179.43.190.136 | 1.1 | 3.332973s | final: https://hdrezka-home.tv/ajax/get_cdn_series/?t=1793638044
+--- тело (первые 600 символов) ---
+{"success":true,"message":"","premium_content":0,"url":"[360p]https:\/\/stream.voidboost.one\/4586e8915fea2d8c6c8e29a1156ff515:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRkRUdFQ3Y0IwalpvMjdVelQ1c2RQSlJhbkdHY05tMW96bnNpTTV1K3JyN1U9\/2\/9\/6\/4\/1\/2\/2nhoi.mp4:hls:manifest.m3u8 or https:\/\/stream.voidboost.one\/4586e8915fea2d8c6c8e29a1156ff515:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRkRUdFQ3Y0IwalpvMjdVelQ1c2RQSlJhbkdHY05tMW96bnNpTTV1K3JyN1U9\/2\/9\/6\/4\/1\/2\/2nhoi.mp4,[480p]https:\/\/s
+--- ключевые поля ---
+  success: True
+  message: 
+  url присутствует: True
+  url (первые 160): [360p]https://stream.voidboost.one/4586e8915fea2d8c6c8e29a1156ff515:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b
+  subtitle/subtitles: False
+  расшифрованные потоки:
+    360p	https://stream.voidboost.one/4586e8915fea2d8c6c8e29a1156ff515:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRkRUdFQ3Y0IwalpvMjdVelQ1c2RQSlJhbkdHY05tMW96bnNpTTV1K3JyN1U9/2/9/6/4/1/2/2nhoi.mp4:hls:manifest.m3u8
+    [360p] пропускаем опрос (хост уже проверен): https://stream.voidboost.one/4586e8915fea2d8c6c8e29a1156ff515:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRkRUdFQ3Y0IwalpvMjdVelQ1c2RQSlJhbkdHY05tMW96bnNpTTV1K3JyN1U9/2/9/6/4/1/2/2nhoi.mp4:hls:manifest.m3u8
+
+===== [CDN] stream_tr110_s3_e1 =====
+HTTP: 200 | text/html; charset=utf-8 | 673 B | ip: 179.43.190.136 | 1.1 | 3.467007s | final: https://hdrezka-home.tv/ajax/get_cdn_series/?t=1793638049
+--- тело (первые 600 символов) ---
+{"success":true,"message":"","premium_content":0,"url":"[360p]https:\/\/stream.voidboost.one\/4cee3b4a1e77050bd212c6aee3b537eb:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRjVUcmdtNVl3Z05JTllrNTl4K1cyNHNVcE91Y0JncDhSVytHQkxmd1J0RjA9\/5\/8\/3\/7\/8\/5\/cg4kh.mp4:hls:manifest.m3u8 or https:\/\/stream.voidboost.one\/4cee3b4a1e77050bd212c6aee3b537eb:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRjVUcmdtNVl3Z05JTllrNTl4K1cyNHNVcE91Y0JncDhSVytHQkxmd1J0RjA9\/5\/8\/3\/7\/8\/5\/cg4kh.mp4,[480p]https:\/\/s
+--- ключевые поля ---
+  success: True
+  message: 
+  url присутствует: True
+  url (первые 160): [360p]https://stream.voidboost.one/4cee3b4a1e77050bd212c6aee3b537eb:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b
+  subtitle/subtitles: False
+  расшифрованные потоки:
+    360p	https://stream.voidboost.one/4cee3b4a1e77050bd212c6aee3b537eb:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRjVUcmdtNVl3Z05JTllrNTl4K1cyNHNVcE91Y0JncDhSVytHQkxmd1J0RjA9/5/8/3/7/8/5/cg4kh.mp4:hls:manifest.m3u8
+    [360p] пропускаем опрос (хост уже проверен): https://stream.voidboost.one/4cee3b4a1e77050bd212c6aee3b537eb:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRjVUcmdtNVl3Z05JTllrNTl4K1cyNHNVcE91Y0JncDhSVytHQkxmd1J0RjA9/5/8/3/7/8/5/cg4kh.mp4:hls:manifest.m3u8
+
+===== [CDN] movie_tr0 =====
+HTTP: 200 | text/html; charset=utf-8 | 161 B | ip: 179.43.190.136 | 1.1 | 3.087764s | final: https://hdrezka-home.tv/ajax/get_cdn_series/?t=1793638053
+--- тело (первые 600 символов) ---
+{"success":false,"message":"\u0412\u0440\u0435\u043c\u044f \u0441\u0435\u0441\u0441\u0438\u0438 \u0438\u0441\u0442\u0435\u043a\u043b\u043e. \u041f\u043e\u0436\u0430\u043b\u0443\u0439\u0441\u0442\u0430, \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0443 \u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u043f\u043e\u043f\u044b\u0442\u043a\u0443"}
+--- ключевые поля ---
+  success: False
+  message: Время сессии истекло. Пожалуйста, обновите страницу и повторите попытку
+  url присутствует: False
+  url (первые 160): None
+  subtitle/subtitles: False
+  расшифровка не дала потоков (url:false/пусто?)
+
+===== [CDN] stream_noTr_s1_e1 =====
+HTTP: 200 | text/html; charset=utf-8 | 161 B | ip: 179.43.190.136 | 1.1 | 2.766093s | final: https://hdrezka-home.tv/ajax/get_cdn_series/?t=1793638057
+--- тело (первые 600 символов) ---
+{"success":false,"message":"\u0412\u0440\u0435\u043c\u044f \u0441\u0435\u0441\u0441\u0438\u0438 \u0438\u0441\u0442\u0435\u043a\u043b\u043e. \u041f\u043e\u0436\u0430\u043b\u0443\u0439\u0441\u0442\u0430, \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0443 \u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u043f\u043e\u043f\u044b\u0442\u043a\u0443"}
+--- ключевые поля ---
+  success: False
+  message: Время сессии истекло. Пожалуйста, обновите страницу и повторите попытку
+  url присутствует: False
+  url (первые 160): None
+  subtitle/subtitles: False
+  расшифровка не дала потоков (url:false/пусто?)
+
+===== [6] Подробные заголовки первого CDN-ответа =====
+HTTP/1.1 200 OK
+Server: nginx
+Date: Mon, 02 Nov 2026 16:47:39 GMT
+Content-Type: text/html; charset=utf-8
+Content-Length: 161
+Connection: keep-alive
+Cache-Control: no-store, no-cache, must-revalidate
+Content-Encoding: gzip
+Expires: Thu, 19 Nov 1981 08:52:00 GMT
+Pragma: no-cache
+Set-Cookie: dle_user_id=deleted; expires=Thu, 01-Jan-1970 00:00:01 GMT; Max-Age=0; path=/; domain=.hdrezka-home.tv; HttpOnly
+Set-Cookie: dle_password=deleted; expires=Thu, 01-Jan-1970 00:00:01 GMT; Max-Age=0; path=/; domain=.hdrezka-home.tv; HttpOnly
+Set-Cookie: dle_hash=deleted; expires=Thu, 01-Jan-1970 00:00:01 GMT; Max-Age=0; path=/; domain=.hdrezka-home.tv; HttpOnly
+Vary: Accept-Encoding
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+X-Powered-By: Express
+Strict-Transport-Security: max-age=15768000; includeSubDomains; preload
+
+
+==============================================================
+ ГОТОВО. Файлы собраны в каталоге: /data/data/com.termux/files/home/storage/downloads/R4ezka/rezka_logs/
+ Сводный лог: /data/data/com.termux/files/home/storage/downloads/R4ezka/rezka_logs/log_20261102_184636.txt
+drwxrwx---. 2 root everybody   8192 Nov  2 18:47 .
+drwxrwx---. 7 root everybody   3488 Nov  2 18:42 ..
+-rw-rw----. 1 root everybody    214 Nov  2 18:42 cdn_episodes_tr0_20261102_184219.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:42 cdn_episodes_tr0_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody  30847 Nov  2 18:47 cdn_episodes_tr110_20261102_184636.json
+-rw-rw----. 1 root everybody    842 Nov  2 18:47 cdn_episodes_tr110_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody    406 Nov  2 18:43 cdn_movie_tr0_20261102_184219.json
+-rw-rw----. 1 root everybody    406 Nov  2 18:47 cdn_movie_tr0_20261102_184636.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:43 cdn_movie_tr0_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody    841 Nov  2 18:47 cdn_movie_tr0_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody    406 Nov  2 18:43 cdn_stream_noTr_s1_e1_20261102_184219.json
+-rw-rw----. 1 root everybody    406 Nov  2 18:47 cdn_stream_noTr_s1_e1_20261102_184636.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:43 cdn_stream_noTr_s1_e1_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody    841 Nov  2 18:47 cdn_stream_noTr_s1_e1_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody    406 Nov  2 18:42 cdn_stream_tr0_s1_e1_20261102_184219.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:42 cdn_stream_tr0_s1_e1_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody    406 Nov  2 18:42 cdn_stream_tr0_s2_e1_20261102_184219.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:42 cdn_stream_tr0_s2_e1_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody    406 Nov  2 18:42 cdn_stream_tr0_s3_e1_20261102_184219.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:42 cdn_stream_tr0_s3_e1_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody   3009 Nov  2 18:47 cdn_stream_tr110_s1_e1_20261102_184636.json
+-rw-rw----. 1 root everybody    836 Nov  2 18:47 cdn_stream_tr110_s1_e1_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody   3009 Nov  2 18:47 cdn_stream_tr110_s2_e1_20261102_184636.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:47 cdn_stream_tr110_s2_e1_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody   3009 Nov  2 18:47 cdn_stream_tr110_s3_e1_20261102_184636.json
+-rw-rw----. 1 root everybody    841 Nov  2 18:47 cdn_stream_tr110_s3_e1_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody   1038 Nov  2 18:43 cookies_20261102_184219.txt
+-rw-rw----. 1 root everybody   1038 Nov  2 18:47 cookies_20261102_184636.txt
+-rw-rw----. 1 root everybody    197 Nov  2 18:42 doh_20261102_184219.json
+-rw-rw----. 1 root everybody    197 Nov  2 18:46 doh_20261102_184636.json
+-rw-rw----. 1 root everybody    253 Nov  2 18:42 geo_ipinfo_20261102_184219.json
+-rw-rw----. 1 root everybody    253 Nov  2 18:46 geo_ipinfo_20261102_184636.json
+-rw-rw----. 1 root everybody  13035 Nov  2 18:43 log_20261102_184219.txt
+-rw-rw----. 1 root everybody  15216 Nov  2 18:47 log_20261102_184636.txt
+-rw-rw----. 1 root everybody 240480 Nov  2 18:42 page_20261102_184219.html
+-rw-rw----. 1 root everybody 240480 Nov  2 18:46 page_20261102_184636.html
+-rw-rw----. 1 root everybody   1261 Nov  2 18:42 page_headers_20261102_184219.txt
+-rw-rw----. 1 root everybody   1261 Nov  2 18:46 page_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody     83 Nov  2 18:42 page_meta_20261102_184219.json
+-rw-rw----. 1 root everybody    174 Nov  2 18:46 page_meta_20261102_184636.json
+-rw-rw----. 1 root everybody    548 Nov  2 18:47 probe_episodes_tr110_360p_headers_20261102_184636.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:42 streams_episodes_tr0_20261102_184219.txt
+-rw-rw----. 1 root everybody    263 Nov  2 18:47 streams_episodes_tr110_20261102_184636.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:43 streams_movie_tr0_20261102_184219.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:47 streams_movie_tr0_20261102_184636.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:43 streams_stream_noTr_s1_e1_20261102_184219.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:47 streams_stream_noTr_s1_e1_20261102_184636.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:42 streams_stream_tr0_s1_e1_20261102_184219.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:42 streams_stream_tr0_s2_e1_20261102_184219.txt
+-rw-rw----. 1 root everybody      0 Nov  2 18:43 streams_stream_tr0_s3_e1_20261102_184219.txt
+-rw-rw----. 1 root everybody    263 Nov  2 18:47 streams_stream_tr110_s1_e1_20261102_184636.txt
+-rw-rw----. 1 root everybody    263 Nov  2 18:47 streams_stream_tr110_s2_e1_20261102_184636.txt
+-rw-rw----. 1 root everybody    263 Nov  2 18:47 streams_stream_tr110_s3_e1_20261102_184636.txt
+
+Для сравнения запусти второй прогон:
+  С VPN: bash getLog.sh https://hdrezka-home.tv
+
+Done

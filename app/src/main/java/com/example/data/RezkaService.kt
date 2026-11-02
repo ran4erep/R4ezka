@@ -5944,6 +5944,98 @@ object RezkaService {
         }
     }
 
+    // ---------- Региональная доступность ----------
+
+    /**
+     * Результат проверки доступности видео в текущем регионе.
+     */
+    enum class RegionProbeResult {
+        AVAILABLE,        // сервер выдал ссылку на поток
+        REGION_BLOCKED,   // сервер вернул success:true, но url:false (лицензионный гео-блок)
+        UNAVAILABLE,      // другой ответ сервера (премиум/ошибка/нет тайтла)
+        ERROR             // сетевой сбой
+    }
+
+    private val regionProbeCache = ConcurrentHashMap<String, RegionProbeResult>()
+
+    /**
+     * Лёгкий пробник: один AJAX-запрос к CDN для дефолтной озвучки.
+     * Если сервер отвечает {"success":true,"url":false} — видео в текущем регионе недоступно.
+     */
+    suspend fun probeRegionAvailability(
+        itemId: String,
+        type: RezkaType,
+        translatorId: String = "",
+        itemUrl: String = ""
+    ): RegionProbeResult = withContext(Dispatchers.IO) {
+        val numericId = extractNumericId(itemId).ifEmpty { extractNumericId(itemUrl) }
+        if (numericId.isEmpty()) return@withContext RegionProbeResult.UNAVAILABLE
+
+        val cleanTrans = translatorId.trim().ifEmpty { "0" }
+        val isSeries = type == RezkaType.SERIES || type == RezkaType.ANIME || type == RezkaType.CARTOON
+        val action = if (isSeries) "get_stream" else "get_movie"
+        val cacheKey = "$currentBaseUrl|$numericId|$cleanTrans|$action"
+        regionProbeCache[cacheKey]?.let { return@withContext it }
+
+        val endpoint = "$currentBaseUrl/ajax/get_cdn_series/?t=${System.currentTimeMillis()}"
+        val referer = when {
+            itemUrl.isNotBlank() -> adjustUrlToCurrentMirror(itemUrl)
+            isSeries -> "$currentBaseUrl/series/$numericId.html"
+            else -> "$currentBaseUrl/films/$numericId.html"
+        }
+        val form = FormBody.Builder()
+            .add("id", numericId)
+            .add("action", action)
+            .add("favs", "0")
+            .add("is_cam", "0")
+            .add("is_ads", "0")
+            .add("is_director", "0")
+        if (cleanTrans != "0") form.add("translator_id", cleanTrans)
+        if (isSeries) {
+            form.add("season", "1")
+            form.add("episode", "1")
+            form.add("part", "1")
+        }
+
+        val request = Request.Builder()
+            .url(endpoint)
+            .post(form.build())
+            .header("User-Agent", USER_AGENT)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .header("Referer", referer)
+            .header("Origin", currentBaseUrl)
+            .header("Accept", "application/json, text/javascript, */*; q=0.01")
+            .build()
+
+        val result = try {
+            client.newCall(request).execute().use { resp ->
+                val body = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) {
+                    RegionProbeResult.ERROR
+                } else {
+                    try {
+                        val json = JSONObject(body)
+                        val success = json.optBoolean("success", false)
+                        val u = json.opt("url")
+                        val hasUrl = u != null && u != false && u != JSONObject.NULL &&
+                            u.toString().isNotBlank() && u.toString() !in setOf("false", "null")
+                        when {
+                            success && hasUrl -> RegionProbeResult.AVAILABLE
+                            success -> RegionProbeResult.REGION_BLOCKED
+                            else -> RegionProbeResult.UNAVAILABLE
+                        }
+                    } catch (_: Exception) {
+                        RegionProbeResult.ERROR
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            RegionProbeResult.ERROR
+        }
+        regionProbeCache[cacheKey] = result
+        result
+    }
+
     /**
      * Очищает возрастное ограничение от подсказок и пояснений, оставляя только краткий возраст с сайта.
      */

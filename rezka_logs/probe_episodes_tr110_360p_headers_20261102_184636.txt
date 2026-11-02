@@ -1,0 +1,11 @@
+HTTP/1.1 302 Found
+Server: nginx/1.18.0
+Date: Mon, 02 Nov 2026 16:47:04 GMT
+Content-Type: text/html; charset=utf-8
+Content-Length: 0
+Connection: keep-alive
+Access-Control-Allow-Origin: *
+Access-Control-Expose-Headers: Content-Length, Content-Range
+Location: https://fiber.stream.voidboost.one/7f60fd9c98a678f4740968470d30c58e:2026110315:V1ZaR0lGZnpZRkVFNVVPUXVlVWpNZC94eUJaOFJyYnFPVWxvLzZHM2s3ODFISkFnNGVsU1JncjJYRkt4b3ZLRnNSbkNUV2NtN3RwckZ3Q3hHQzJtWm5haHJXZzlMSnRSWjh1cHNmUDlXYlU9/2/9/6/4/0/4/8xtcs.mp4:hls:manifest.m3u8
+X-Routing: sh
+

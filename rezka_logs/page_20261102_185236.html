@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Вход на HDrezka</title>
+    <style>
+        :root {
+          --purple-1: #c82dde;
+          --purple-2: #c42fdc;
+          --purple-3: #6f4ec9;
+          --teal-1: #4a86ad;
+          --teal-2: #3a92a6;
+          --brand-gradient: linear-gradient(90deg, #c82dde 0%, #3a92a6 100%);
+          --brand-gradient-diag: linear-gradient(135deg, #c82dde 0%, #3a92a6 100%);
+
+          --ink: #202124;
+          --text-body: #34343b;
+          --muted: #6c6c6c;
+          --muted-2: #a9a9a9;
+          --placeholder: #5e5e5e;
+          --border: #cdcdcd;
+          --border-strong: #b7b7b7;
+          --surface: #ffffff;
+
+          --link: #3a92a6;
+          --link-hover: #2c7488;
+          --danger: #e0445c;
+          --danger-bg: #fdeced;
+          --success: #2fb380;
+
+          --radius-lg: 24px;
+          --radius-md: 14px;
+          --radius-sm: 8px;
+
+          --shadow-card: 0 40px 80px -30px rgba(20, 8, 40, 0.55), 0 14px 30px -12px rgba(20, 8, 40, 0.35);
+          --shadow-btn: 0 14px 26px -10px rgba(120, 40, 190, 0.55);
+          --shadow-btn-hover: 0 18px 34px -10px rgba(120, 40, 190, 0.65);
+
+          --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+          --ease-flip: cubic-bezier(0.65, 0, 0.35, 1);
+
+          color-scheme: light;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after {
+            animation-duration: 0.001ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.001ms !important;
+            scroll-behavior: auto !important;
+          }
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+          margin: 0;
+          min-height: 100vh;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          color: #202124;
+          color: var(--ink);
+          -webkit-font-smoothing: antialiased;
+          text-rendering: optimizeLegibility;
+          background: radial-gradient(120% 190% at 49.56% 0%, #c42fdc 0%, #3d90a7 100%);
+          overflow-x: hidden;
+        }
+
+        img { max-width: 100%; display: block; }
+
+        .page {
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          padding: 40px 20px 28px;
+        }
+
+        .brand {
+          display: inline-flex;
+          align-items: center;
+          padding: 8px 0 36px;
+          animation: fade-drop 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+          animation: fade-drop 0.6s var(--ease-out) both;
+        }
+
+        .brand img {
+          width: 132px;
+          height: auto;
+        }
+
+        .page-main {
+          width: 100%;
+          flex: 1 0 auto;
+          display: flex;
+          align-items: flex-start;
+          justify-content: center;
+        }
+
+        .footer {
+          width: 100%;
+          max-width: 640px;
+          flex-shrink: 0;
+          margin-top: 32px;
+          padding: 12px 12px 4px;
+          text-align: center;
+          font-size: 12.5px;
+          line-height: 1.7;
+          color: rgba(255, 255, 255, 0.58);
+          animation: fade-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+          animation: fade-in 0.8s var(--ease-out) 0.15s both;
+        }
+
+        .footer a {
+          color: rgba(255, 255, 255, 0.82);
+          text-decoration: underline;
+          text-underline-offset: 2px;
+        }
+
+        .footer a:hover { color: #fff; }
+
+        .card {
+          width: 100%;
+          max-width: 460px;
+          border-radius: 24px;
+          border-radius: var(--radius-lg);
+          box-shadow: 0 40px 80px -30px rgba(20, 8, 40, 0.55), 0 14px 30px -12px rgba(20, 8, 40, 0.35);
+          box-shadow: var(--shadow-card);
+          animation: card-in 0.55s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+          animation: card-in 0.55s var(--ease-out) 0.05s both;
+        }
+
+        .card.is-shaking {
+          animation: shake 0.4s ease;
+        }
+
+        .card-face {
+          background: #ffffff;
+          background: var(--surface);
+          border-radius: 24px;
+          border-radius: var(--radius-lg);
+          padding: 52px 44px 36px;
+        }
+
+        @media (max-width: 520px) {
+          .card-face { padding: 40px 26px 30px; }
+        }
+
+        h1.title {
+          margin: 0 0 10px;
+          font-size: 27px;
+          font-weight: 700;
+          letter-spacing: -0.01em;
+          color: #202124;
+          color: var(--ink);
+          text-align: center;
+        }
+
+        .subtitle {
+          margin: 0 0 30px;
+          font-size: 15px;
+          line-height: 1.55;
+          color: #6c6c6c;
+          color: var(--muted);
+          text-align: center;
+        }
+
+        .field {
+          position: relative;
+          margin-bottom: 16px;
+        }
+
+        .input {
+          width: 100%;
+          height: 56px;
+          padding: 0 20px;
+          font-size: 16px;
+          font-family: inherit;
+          color: #202124;
+          color: var(--ink);
+          background: #ffffff;
+          background: var(--surface);
+          border: 1.5px solid #cdcdcd;
+          border: 1.5px solid var(--border);
+          border-radius: 14px;
+          border-radius: var(--radius-md);
+          outline: none;
+          transition: border-color 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+          transition: border-color 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out);
+        }
+
+        .input::placeholder { color: #5e5e5e; color: var(--placeholder); }
+
+        .input:hover { border-color: #b7b7b7; border-color: var(--border-strong); }
+
+        .input:focus {
+          border-color: #3a92a6;
+          border-color: var(--teal-2);
+          box-shadow: 0 0 0 4px rgba(63, 142, 167, 0.14);
+        }
+
+        .field--password .input { padding-right: 52px; }
+
+        .field.is-invalid .input {
+          border-color: #e0445c;
+          border-color: var(--danger);
+        }
+
+        .field.is-invalid .input:focus {
+          box-shadow: 0 0 0 4px rgba(224, 68, 92, 0.14);
+        }
+
+        .field.is-valid .input {
+          border-color: #2fb380;
+          border-color: var(--success);
+        }
+
+        .field-error {
+          margin: 7px 2px 0;
+          font-size: 13px;
+          color: #e0445c;
+          color: var(--danger);
+          min-height: 0;
+          max-height: 0;
+          overflow: hidden;
+          opacity: 0;
+          transition: max-height 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease, margin 0.25s ease;
+          transition: max-height 0.25s var(--ease-out), opacity 0.2s ease, margin 0.25s ease;
+        }
+
+        .field.is-invalid .field-error {
+          max-height: 40px;
+          opacity: 1;
+          margin-top: 7px;
+        }
+
+        .field-error a {
+          color: inherit;
+        }
+        .field-error a:hover {
+          text-decoration: underline;
+        }
+
+        .eye-toggle {
+          position: absolute;
+          top: 0;
+          right: 4px;
+          width: 44px;
+          height: 56px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: none;
+          border: none;
+          padding: 0;
+          cursor: pointer;
+          color: #7a7a7a;
+          transition: color 0.15s ease;
+        }
+
+        .eye-toggle:hover { color: #202124; color: var(--ink); }
+
+        .eye-toggle svg {
+          position: absolute;
+          width: 22px;
+          height: 22px;
+          transition: opacity 0.15s ease, transform 0.15s ease;
+        }
+
+        .eye-toggle .icon-eye-off { opacity: 0; transform: scale(0.85); }
+
+        .eye-toggle[aria-pressed="true"] .icon-eye { opacity: 0; transform: scale(0.85); }
+        .eye-toggle[aria-pressed="true"] .icon-eye-off { opacity: 1; transform: scale(1); }
+
+        .btn {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 100%;
+          height: 56px;
+          margin-top: 10px;
+          border: none;
+          border-radius: 14px;
+          border-radius: var(--radius-md);
+          font-family: inherit;
+          font-size: 16.5px;
+          font-weight: 700;
+          cursor: pointer;
+          overflow: hidden;
+          -webkit-tap-highlight-color: transparent;
+        }
+
+        .btn-primary {
+          color: #fff;
+          background: linear-gradient(90deg, #c82dde 0%, #3a92a6 100%);
+          background: var(--brand-gradient);
+          background-size: 130% 130%;
+          background-position: 0% 50%;
+          border-radius: 15px;
+          box-shadow: 0 14px 26px -10px rgba(120, 40, 190, 0.55);
+          box-shadow: var(--shadow-btn);
+          transition: box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), background-position 0.4s ease;
+          transition: box-shadow 0.2s var(--ease-out), transform 0.15s var(--ease-out), background-position 0.4s ease;
+        }
+
+        .btn-primary:hover {
+          box-shadow: 0 18px 34px -10px rgba(120, 40, 190, 0.65);
+          box-shadow: var(--shadow-btn-hover);
+          background-position: 100% 50%;
+        }
+
+        .btn-primary:active { transform: scale(0.98); }
+
+        .btn-primary:disabled {
+          cursor: not-allowed;
+          opacity: 0.55;
+          box-shadow: none;
+          transform: none;
+        }
+
+        .btn-label,
+        .btn-spinner,
+        .btn-success {
+          display: inline-flex;
+          align-items: center;
+          gap: 9px;
+          transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+
+        .btn-spinner,
+        .btn-success {
+          position: absolute;
+          inset: 0;
+          align-items: center;
+          justify-content: center;
+          opacity: 0;
+          transform: translateY(4px);
+        }
+
+        .btn-spinner svg { animation: spin 0.8s linear infinite; }
+
+        .btn.is-loading .btn-label { opacity: 0; transform: translateY(-4px); }
+        .btn.is-loading .btn-spinner { opacity: 1; transform: translateY(0); }
+        .btn.is-loading { cursor: progress; }
+
+        .btn.is-success .btn-label,
+        .btn.is-success .btn-spinner { opacity: 0; }
+        .btn.is-success .btn-success { opacity: 1; transform: translateY(0); }
+        .btn.is-success { background: linear-gradient(90deg, #2fb380, #3f8ea7); }
+
+        .form-footer {
+          margin: 22px 0 0;
+          font-size: 14px;
+          color: #6c6c6c;
+          color: var(--muted);
+          text-align: center;
+          line-height: 1.6;
+        }
+
+        .link {
+          color: #3a92a6;
+          color: var(--link);
+          text-decoration: none;
+          font-weight: 600;
+          transition: color 0.15s ease;
+        }
+
+        .link:hover { color: #2c7488; color: var(--link-hover); text-decoration: underline; }
+
+        @keyframes fade-drop {
+          from { opacity: 0; transform: translateY(-10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes fade-in {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        @keyframes card-in {
+          from { opacity: 0; transform: translateY(18px) scale(0.98); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+
+        @keyframes shake {
+          10%, 90% { transform: translateX(-1px); }
+          20%, 80% { transform: translateX(2px); }
+          30%, 50%, 70% { transform: translateX(-5px); }
+          40%, 60% { transform: translateX(5px); }
+        }
+
+    </style>
+</head>
+<body>
+<div class="page">
+
+  <a class="brand" href="/" aria-label="HDrezka">
+    <img src="https://statichdrezka.ac/i/premium-logo.png" alt="HDrezka" width="264" height="88">
+  </a>
+
+  <main class="page-main">
+    <div class="card">
+      <div class="card-face card-face--front">
+        <h1 class="title">Вход</h1>
+        <p class="subtitle">Заполните поля ниже, чтобы войти</p>
+
+        <form id="loginForm" action="/ajax/login/" novalidate>
+          <div class="field" data-field="email">
+            <input class="input" type="email" id="login_name" name="login_name" placeholder="Ваш Email" autocomplete="email" required>
+            <p class="field-error" role="alert"></p>
+          </div>
+
+          <div class="field field--password" data-field="password">
+            <input class="input" type="password" id="login_password" name="login_password" placeholder="Пароль" autocomplete="current-password" minlength="8" required>
+            <button type="button" class="eye-toggle" aria-label="Показать пароль" aria-pressed="false">
+              <svg class="icon-eye" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M2 12C3.6 7.6 7.4 5 12 5s8.4 2.6 10 7c-1.6 4.4-5.4 7-10 7s-8.4-2.6-10-7Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/>
+              </svg>
+              <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M2 12C3.6 7.6 7.4 5 12 5s8.4 2.6 10 7c-1.6 4.4-5.4 7-10 7s-8.4-2.6-10-7Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/>
+                <path d="M3.5 20.5 20.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <p class="field-error" role="alert"></p>
+          </div>
+
+          <input type="hidden" name="login_not_save" id="login_not_save" value="0">
+
+          <button type="submit" class="btn btn-primary" id="loginSubmit">
+            <span class="btn-label">Войти</span>
+            <span class="btn-spinner" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="10" cy="10" r="8" stroke="rgba(255,255,255,0.35)" stroke-width="2.4"/>
+                <path d="M18 10a8 8 0 0 0-8-8" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="btn-success" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4 10.5l4 4 8-9" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Вход выполнен
+            </span>
+          </button>
+
+          <p class="form-footer"><a href="/registration/" class="link">Создать аккаунт</a> или <a href="/lost/" class="link">восстановить пароль</a></p>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    ТОО "DNX-ART", БИН 241040038955<br />
+    010000, Республика Казахстан, г. Астана,<br />
+    район Байконыр, улица Альмухана Сембинова, здание 15<br />
+    &copy; HDrezka
+  </footer>
+
+</div>
+<script>
+(function () {
+  "use strict";
+
+  function upTo(node, cls) {
+    var el = node;
+    while (el && el !== document) {
+      if (el.nodeType === 1 && (" " + el.className + " ").indexOf(" " + cls + " ") !== -1) return el;
+      el = el.parentNode;
+    }
+    return null;
+  }
+
+  function ajaxPost(url, data, callback) {
+    var xhr;
+
+    if (window.XMLHttpRequest) {
+      xhr = new XMLHttpRequest();
+    } else {
+      xhr = new ActiveXObject("Microsoft.XMLHTTP");
+    }
+
+    xhr.open("POST", url, true);
+
+    xhr.setRequestHeader(
+      "Content-Type",
+      "application/x-www-form-urlencoded; charset=UTF-8"
+    );
+
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        callback(null, xhr.responseText);
+      } else {
+        callback(xhr.status || 0, xhr.responseText);
+      }
+    };
+
+    xhr.send(data);
+  }
+
+  function qs(sel, ctx) { return (ctx || document).querySelector(sel); }
+  function qsa(sel, ctx) { return Array.prototype.slice.call((ctx || document).querySelectorAll(sel)); }
+
+  function initEyeToggles() {
+    qsa(".eye-toggle").forEach(function (btn) {
+      var field = upTo(btn, "field");
+      var input = field ? qs(".input", field) : null;
+      if (!input) return;
+      btn.setAttribute("aria-pressed", "false");
+      btn.addEventListener("click", function () {
+        var show = input.type === "password";
+        input.type = show ? "text" : "password";
+        btn.setAttribute("aria-pressed", show ? "true" : "false");
+        btn.setAttribute("aria-label", show ? "Скрыть пароль" : "Показать пароль");
+        input.focus({ preventScroll: true });
+      });
+    });
+  }
+
+  function setFieldError(field, message) {
+    field.classList.remove("is-valid");
+    field.classList.add("is-invalid");
+    var err = qs(".field-error", field);
+    if (err) err.textContent = message || "";
+  }
+
+  function setFieldErrorHTML(field, html) {
+    field.classList.remove("is-valid");
+    field.classList.add("is-invalid");
+    var err = qs(".field-error", field);
+    if (err) err.innerHTML = html || "";
+  }
+
+  function clearFieldError(field, markValid) {
+    field.classList.remove("is-invalid");
+    if (markValid) field.classList.add("is-valid");
+    var err = qs(".field-error", field);
+    if (err) err.textContent = "";
+  }
+
+  var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/;
+
+  function validateEmailField(field) {
+    var input = qs(".input", field);
+    var value = input.value.trim();
+    if (!value) {
+      setFieldError(field, "Введите email");
+      return false;
+    }
+    if (!EMAIL_RE.test(value)) {
+      setFieldError(field, "Неверный формат email. Например, name@example.com");
+      return false;
+    }
+    clearFieldError(field, true);
+    return true;
+  }
+
+  function initEmailField(field) {
+    var input = qs(".input", field);
+    if (!input) return;
+    input.addEventListener("blur", function () {
+      if (input.value.trim()) validateEmailField(field);
+    });
+    input.addEventListener("input", function () {
+      if (field.classList.contains("is-invalid")) validateEmailField(field);
+    });
+  }
+
+  function validatePasswordField(field, opts) {
+    var input = qs(".input", field);
+    var value = input.value;
+
+    if (!value) {
+      setFieldError(field, "Введите пароль");
+      return false;
+    }
+
+    if (opts && opts.minLength && value.length < opts.minLength) {
+      setFieldError(field, "Пароль должен быть не менее " + opts.minLength + " символов");
+      return false;
+    }
+
+    clearFieldError(field, true);
+    return true;
+  }
+
+  function initPasswordField(field, opts) {
+    var input = qs(".input", field);
+    if (!input) return null;
+
+    input.addEventListener("blur", function () {
+      if (input.value) validatePasswordField(field, opts);
+    });
+    input.addEventListener("input", function () {
+      if (field.classList.contains("is-invalid")) validatePasswordField(field, opts);
+    });
+
+    return input;
+  }
+
+  function setLoading(btn, isLoading) {
+    btn.disabled = isLoading;
+    btn.classList.toggle("is-loading", isLoading);
+  }
+
+  function setSuccess(btn) {
+    btn.classList.remove("is-loading");
+    btn.classList.add("is-success");
+  }
+
+  function shakeCard(el) {
+    if (!el) return;
+    var card = el.classList.contains("card") ? el : upTo(el, "card");
+    if (!card) return;
+    card.classList.remove("is-shaking");
+    void card.offsetWidth;
+    card.classList.add("is-shaking");
+  }
+
+  function getBackUrl() {
+    var ref = document.referrer;
+    if (ref && ref.indexOf(location.protocol + "//" + location.host) === 0) {
+      var path = ref.slice(location.protocol.length + 2 + location.host.length);
+      if (path === "") path = "/";
+      if (path !== location.pathname && !/^\/(login|registration|lost)([\/?#]|$)/.test(path)) return ref;
+    }
+    return "/";
+  }
+
+  function extractErrorMessage(response) {
+    if (!response || !response.message) return "";
+    var msg = response.message;
+    var i;
+    var text;
+
+    if (typeof msg === "object") {
+      var order = ["email", "password", "login_name", "login_password"];
+      for (i = 0; i < order.length; i++) {
+        if (msg[order[i]]) return msg[order[i]];
+      }
+      return "";
+    }
+
+    text = String(msg);
+    if (text.indexOf("<li>") !== -1) {
+      var m = text.match(/<li>([\s\S]*?)<\/li>/);
+      if (m) text = m[1];
+    }
+    text = text.replace(/<[^>]*>/g, "");
+    return text.replace(/^\s+|\s+$/g, "");
+  }
+
+  function initLoginForm() {
+    var form = qs("#loginForm");
+    if (!form) return;
+
+    var card = upTo(form, "card");
+    var emailField = qs('[data-field="email"]', form);
+    var passwordField = qs('[data-field="password"]', form);
+    var submitBtn = qs("#loginSubmit", form);
+
+    initEmailField(emailField);
+    initPasswordField(passwordField, { minLength: 8 });
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var emailOk = validateEmailField(emailField);
+      var pwOk = validatePasswordField(passwordField, { minLength: 8 });
+
+      if (!emailOk || !pwOk) {
+        shakeCard(card || form);
+        var firstInvalid = !emailOk ? qs(".input", emailField) : qs(".input", passwordField);
+        firstInvalid.focus({ preventScroll: true });
+        return;
+      }
+
+      setLoading(submitBtn, true);
+
+      ajaxPost(
+        form.action,
+        "login_name=" + encodeURIComponent(qs(".input", emailField).value.trim()) +
+          "&login_password=" + encodeURIComponent(qs(".input", passwordField).value) +
+          "&login_not_save=0",
+        function (err, response) {
+          if (err) {
+            setLoading(submitBtn, false);
+            setFieldError(emailField, "Ошибка сети. Проверьте соединение и попробуйте снова.");
+            shakeCard(card || form);
+            return;
+          }
+
+          var result;
+
+          try {
+            result = JSON.parse(response);
+          } catch (e2) {
+            setLoading(submitBtn, false);
+            setFieldError(emailField, "Сервер вернул некорректный ответ. Попробуйте ещё раз.");
+            shakeCard(card || form);
+            return;
+          }
+
+          if (result.success) {
+            setSuccess(submitBtn);
+            setTimeout(function () {
+              window.location.replace(getBackUrl());
+            }, 200);
+          } else if (result.logged_email) {
+            setLoading(submitBtn, false);
+            setFieldErrorHTML(emailField, "Необходимо <a href=\"/logout/\">выйти из аккаунта</a> " + result.logged_email);
+            shakeCard(card || form);
+          } else {
+            setLoading(submitBtn, false);
+            var text = extractErrorMessage(result) || "Не удалось выполнить вход. Попробуйте ещё раз.";
+            setFieldError(emailField, text);
+            shakeCard(card || form);
+          }
+        }
+      );
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    initEyeToggles();
+    initLoginForm();
+  });
+})();
+</script>
+<script>
+    window.op=window.op||function(){var n=[];return new Proxy(function(){arguments.length&&n.push([].slice.call(arguments))},{get:function(t,r){return"q"===r?n:function(){n.push([r].concat([].slice.call(arguments)))}},has:function(t,r){return"q"===r}})}();
+    window.op('init', {
+        apiUrl: 'https://an.dittolytics.com/api',
+        clientId: 'bb6fe020-fe94-43cd-b2f5-b176563eeec4',
+        trackScreenViews: true,
+        trackOutgoingLinks: true,
+        trackAttributes: true
+    });
+</script>
+<script src="/j/andt.js" defer async></script>
+</body>
+</html>

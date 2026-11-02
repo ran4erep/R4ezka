@@ -57,6 +57,7 @@ import com.example.ui.RezkaViewModel
 import com.example.ui.screens.CommentUserAvatar
 import com.example.ui.screens.DetailMetaRow
 import com.example.ui.screens.DetailRatingsRow
+import com.example.ui.screens.RegionBlockNotice
 import com.example.ui.screens.YouTubeLogoIcon
 import com.example.ui.theme.*
 
@@ -114,6 +115,7 @@ fun TvDetailContent(
     onNavigateToMovie: (RezkaItem) -> Unit = {},
     onNavigateToThematic: (String, String) -> Unit = { _, _ -> },
     isPlayerOpen: Boolean = false,
+    regionBlocked: Boolean = false,
     scrollState: androidx.compose.foundation.lazy.LazyListState? = null,
     fromHistory: Boolean = false,
     viewModel: RezkaViewModel? = null,
@@ -1414,11 +1416,14 @@ fun TvDetailContent(
                 // ---- 7. КНОПКА "СМОТРЕТЬ" ДЛЯ ОДНОСЕРИЙНЫХ ФИЛЬМОВ ----
                 if (!detail.hasEpisodes) {
                     item {
-                        val isPlayEnabled = detail.isReleased
+                        val isPlayEnabled = detail.isReleased && !regionBlocked
                         Column(
                             modifier = Modifier.fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
+                            if (regionBlocked && detail.isReleased) {
+                                RegionBlockNotice()
+                            } else {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1562,6 +1567,7 @@ fun TvDetailContent(
                                     }
                                 }
                             }
+                            }
                         }
                     }
                 }
@@ -1692,7 +1698,10 @@ fun TvDetailContent(
 
                             Spacer(modifier = Modifier.height(10.dp))
 
-                            if (onDownloadClick != null) {
+                            if (regionBlocked) {
+                                RegionBlockNotice()
+                                Spacer(modifier = Modifier.height(10.dp))
+                            } else if (onDownloadClick != null) {
                                 Surface(
                                     color = CinemaCard,
                                     shape = RoundedCornerShape(8.dp),
@@ -1798,7 +1807,9 @@ fun TvDetailContent(
                                                     .tvFocusableItem(
                                                         onClick = {
                                                             onSelectEpisode(ep.id)
-                                                            onPlayEpisode(currentSeason, ep)
+                                                            if (!regionBlocked) {
+                                                                onPlayEpisode(currentSeason, ep)
+                                                            }
                                                         },
                                                         scaleFactor = 1.04f,
                                                         shape = RoundedCornerShape(8.dp),
