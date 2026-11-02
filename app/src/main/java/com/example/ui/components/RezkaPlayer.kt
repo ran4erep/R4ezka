@@ -338,6 +338,9 @@ fun RezkaPlayer(
     var activePlayerMenu by remember { mutableStateOf(PlayerMenuType.NONE) }
     var menuFocusedIndex by remember { mutableIntStateOf(0) }
 
+    // Позиция курсора внутри ряда выбора размера шрифта субтитров (0..3)
+    var sizeMenuFocusedIndex by remember { mutableIntStateOf(0) }
+
     androidx.activity.compose.BackHandler(enabled = activePlayerMenu != PlayerMenuType.NONE) {
         activePlayerMenu = PlayerMenuType.NONE
     }
@@ -385,6 +388,15 @@ fun RezkaPlayer(
             if (targetMode != null && targetMode != currentResizeMode) {
                 currentResizeMode = targetMode
             }
+        }
+    }
+
+    LaunchedEffect(activePlayerMenu) {
+        // При открытии меню субтитров ставим курсор размера шрифта на текущий выбранный размер
+        if (activePlayerMenu == PlayerMenuType.SUBTITLES) {
+            sizeMenuFocusedIndex = SubtitleSizeOptions.indexOfFirst {
+                kotlin.math.abs(it.second - subtitleTextScale) < 0.005f
+            }.coerceAtLeast(0)
         }
     }
 
@@ -1699,7 +1711,7 @@ fun RezkaPlayer(
                             PlayerMenuType.QUALITY -> cleanStreams.size
                             PlayerMenuType.SPEED -> availableSpeeds.size
                             PlayerMenuType.TRANSLATOR -> translators.size
-                            PlayerMenuType.SUBTITLES -> 1 + availableSubtitles.size
+                            PlayerMenuType.SUBTITLES -> 1 + availableSubtitles.size + 1 // +1 = ряд выбора размера шрифта
                             PlayerMenuType.NONE -> 0
                         }
 
@@ -1757,25 +1769,39 @@ fun RezkaPlayer(
                                         }
                                     }
                                     PlayerMenuType.SUBTITLES -> {
-                                        if (menuFocusedIndex == 0) {
-                                            isSubtitlesEnabled = false
-                                            selectedSubtitleTrack = null
-                                            applySubtitleTrack(null, false)
-                                            prefs.edit().putString("preferred_subtitle_lang", "off").apply()
-                                            RezkaService.setPreferredSubtitleLang("off")
-                                            FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = "off")
-                                            screenNotificationMessage = "Субтитры выключены"
-                                        } else {
-                                            val trackIdx = menuFocusedIndex - 1
-                                            if (trackIdx in availableSubtitles.indices) {
-                                                val track = availableSubtitles[trackIdx]
-                                                selectedSubtitleTrack = track
-                                                isSubtitlesEnabled = true
-                                                applySubtitleTrack(track, true)
-                                                prefs.edit().putString("preferred_subtitle_lang", track.language).apply()
-                                                RezkaService.setPreferredSubtitleLang(track.language)
-                                                FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = track.language)
-                                                screenNotificationMessage = "Субтитры: ${track.title}"
+                                        val sizeRowIndex = 1 + availableSubtitles.size
+                                        when {
+                                            menuFocusedIndex == 0 -> {
+                                                isSubtitlesEnabled = false
+                                                selectedSubtitleTrack = null
+                                                applySubtitleTrack(null, false)
+                                                prefs.edit().putString("preferred_subtitle_lang", "off").apply()
+                                                RezkaService.setPreferredSubtitleLang("off")
+                                                FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = "off")
+                                                screenNotificationMessage = "Субтитры выключены"
+                                            }
+                                            menuFocusedIndex <= availableSubtitles.size -> {
+                                                val trackIdx = menuFocusedIndex - 1
+                                                if (trackIdx in availableSubtitles.indices) {
+                                                    val track = availableSubtitles[trackIdx]
+                                                    selectedSubtitleTrack = track
+                                                    isSubtitlesEnabled = true
+                                                    applySubtitleTrack(track, true)
+                                                    prefs.edit().putString("preferred_subtitle_lang", track.language).apply()
+                                                    RezkaService.setPreferredSubtitleLang(track.language)
+                                                    FirebaseSyncManager.onSettingsUpdated(preferredSubtitleLang = track.language)
+                                                    screenNotificationMessage = "Субтитры: ${track.title}"
+                                                }
+                                            }
+                                            menuFocusedIndex == sizeRowIndex -> {
+                                                // Выбор размера шрифта субтитров
+                                                val chosen = SubtitleSizeOptions.getOrNull(sizeMenuFocusedIndex)
+                                                val scale = chosen?.second ?: subtitleTextScale
+                                                subtitleTextScale = scale
+                                                prefs.edit().putFloat("subtitle_text_scale", scale).apply()
+                                                RezkaService.setSubtitleTextScale(scale)
+                                                FirebaseSyncManager.onSettingsUpdated(subtitleTextScale = scale)
+                                                screenNotificationMessage = "Размер субтитров: ${chosen?.first}"
                                             }
                                         }
                                     }
@@ -1794,6 +1820,17 @@ fun RezkaPlayer(
                             }
                             android.view.KeyEvent.KEYCODE_DPAD_LEFT,
                             android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                // В меню субтитров влево/вправо переключают размер шрифта,
+                                // когда курсор находится на ряду размеров
+                                if (activePlayerMenu == PlayerMenuType.SUBTITLES) {
+                                    val sizeRowIndex = 1 + availableSubtitles.size
+                                    if (menuFocusedIndex == sizeRowIndex) {
+                                        val delta = if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1
+                                        sizeMenuFocusedIndex = ((sizeMenuFocusedIndex + delta) % SubtitleSizeOptions.size + SubtitleSizeOptions.size) % SubtitleSizeOptions.size
+                                        HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                        return@onKeyEvent true
+                                    }
+                                }
                                 activePlayerMenu = PlayerMenuType.NONE
                                 currentFocusArea = PlayerFocusArea.BOTTOM
                                 return@onKeyEvent false
@@ -3368,6 +3405,7 @@ fun RezkaPlayer(
                                             availableSubtitles = availableSubtitles,
                                             subtitleTextScale = subtitleTextScale,
                                             remoteFocusedIndex = menuFocusedIndex,
+                                            sizeRemoteFocusedIndex = if (menuFocusedIndex == 1 + availableSubtitles.size) sizeMenuFocusedIndex else -1,
                                             onSelectOff = {
                                                 isSubtitlesEnabled = false
                                                 selectedSubtitleTrack = null
