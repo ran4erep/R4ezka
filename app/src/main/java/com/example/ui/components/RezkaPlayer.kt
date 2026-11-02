@@ -1187,8 +1187,10 @@ fun RezkaPlayer(
 
     // Удерживаем фокус D-Pad строго на корневом контейнере плеера, чтобы клавиши пульта
     // не «проваливались» на страницу фильма позади и не нажимали её элементы.
-    // Фокус перезапрашивается при любом изменении состояния интерфейса плеера.
-    LaunchedEffect(showControls, activePlayerMenu, isScreenLocked, showAutoNextCountdown, playerErrorMessage, isRemoteActive) {
+    // Перезапрос фокуса выполняется ТОЛЬКО при дискретных переходах интерфейса
+    // (закрытие меню, снятие блокировки, исчезновение ошибки, оверлей следующей серии),
+    // а не при каждом изменении контролов — это исключает конфликт с доставкой клавиш на ТВ.
+    LaunchedEffect(activePlayerMenu, isScreenLocked, playerErrorMessage, showAutoNextCountdown) {
         if (!isFloating && !isInPipMode && playerErrorMessage == null && activePlayerMenu == PlayerMenuType.NONE) {
             delay(40)
             try {
@@ -1583,6 +1585,26 @@ fun RezkaPlayer(
                 .background(Color.Black)
                 .focusRequester(playerFocusRequester)
                 .focusable()
+                .onPreviewKeyEvent { keyEvent ->
+                    // Гарантированная обработка «Назад» (и «Esc» на пультах, где Назад = Esc)
+                    // на самом верхнем уровне: работает независимо от активной зоны фокуса.
+                    if (keyEvent.type == KeyEventType.KeyDown) {
+                        val kc = keyEvent.nativeKeyEvent.keyCode
+                        if (kc == android.view.KeyEvent.KEYCODE_BACK || kc == android.view.KeyEvent.KEYCODE_ESCAPE) {
+                            if (!isScreenLocked) {
+                                if (activePlayerMenu != PlayerMenuType.NONE) {
+                                    activePlayerMenu = PlayerMenuType.NONE
+                                    currentFocusArea = PlayerFocusArea.BOTTOM
+                                    HapticEngine.get().perform(HapticType.GENTLE_TICK)
+                                } else {
+                                    onBack()
+                                }
+                                return@onPreviewKeyEvent true
+                            }
+                        }
+                    }
+                    false
+                }
                 .onKeyEvent { keyEvent ->
                     if (keyEvent.type != KeyEventType.KeyDown) return@onKeyEvent false
 
@@ -1689,7 +1711,9 @@ fun RezkaPlayer(
                     // ТОЛЬКО кнопка «Назад». Запрещаем перемотку, паузу и любую навигацию по меню:
                     // исключаем случайные нажатия пульта и утечку фокуса на страницу фильма позади.
                     if ((isLoading || !hasInitialPlayStarted) && playerErrorMessage == null) {
-                        if (keyCode == android.view.KeyEvent.KEYCODE_BACK) {
+                        if (keyCode == android.view.KeyEvent.KEYCODE_BACK ||
+                            keyCode == android.view.KeyEvent.KEYCODE_ESCAPE
+                        ) {
                             onBack()
                             return@onKeyEvent true
                         }
@@ -1790,7 +1814,8 @@ fun RezkaPlayer(
                                 currentFocusArea = PlayerFocusArea.BOTTOM
                                 return@onKeyEvent true
                             }
-                            android.view.KeyEvent.KEYCODE_BACK -> {
+                            android.view.KeyEvent.KEYCODE_BACK,
+                            android.view.KeyEvent.KEYCODE_ESCAPE -> {
                                 activePlayerMenu = PlayerMenuType.NONE
                                 currentFocusArea = PlayerFocusArea.BOTTOM
                                 HapticEngine.get().perform(HapticType.GENTLE_TICK)
@@ -1961,7 +1986,8 @@ fun RezkaPlayer(
                                     controlsInteractionKey++
                                     true
                                 }
-                                android.view.KeyEvent.KEYCODE_BACK -> {
+                                android.view.KeyEvent.KEYCODE_BACK,
+                                android.view.KeyEvent.KEYCODE_ESCAPE -> {
                                     onBack()
                                     true
                                 }
@@ -2022,7 +2048,8 @@ fun RezkaPlayer(
                                     }
                                     true
                                 }
-                                android.view.KeyEvent.KEYCODE_BACK -> {
+                                android.view.KeyEvent.KEYCODE_BACK,
+                                android.view.KeyEvent.KEYCODE_ESCAPE -> {
                                     try {
                                         val pos = exoPlayer.currentPosition
                                         val dur = exoPlayer.duration
@@ -2111,7 +2138,8 @@ fun RezkaPlayer(
                                     }
                                     true
                                 }
-                                android.view.KeyEvent.KEYCODE_BACK -> {
+                                android.view.KeyEvent.KEYCODE_BACK,
+                                android.view.KeyEvent.KEYCODE_ESCAPE -> {
                                     try {
                                         val pos = exoPlayer.currentPosition
                                         val dur = exoPlayer.duration
