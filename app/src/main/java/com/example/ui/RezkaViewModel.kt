@@ -384,6 +384,40 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
     private val _regionBlocked = MutableStateFlow(false)
     val regionBlocked: StateFlow<Boolean> = _regionBlocked.asStateFlow()
 
+    private var lastLoadedDetailUrl: String = ""
+
+    init {
+        // При смене сети/VPN сбрасываем кэш пробника и перепроверяем регион для текущего тайтла:
+        // если пользователь включил VPN, плашка должна исчезнуть, а серии — стать активными.
+        viewModelScope.launch {
+            combine(NetworkMonitor.isOnline, NetworkMonitor.isVpn) { online, vpn -> online to vpn }
+                .drop(1)
+                .distinctUntilChanged()
+                .collect { (online, _) ->
+                    if (online) {
+                        RezkaService.clearRegionProbeCache()
+                        val cur = _detailState.value as? DetailState.Success
+                        if (cur != null && cur.detail.isReleased && cur.detail.numericPostId.isNotEmpty()) {
+                            refreshRegionBlocked(cur.detail, lastLoadedDetailUrl)
+                        }
+                    }
+                }
+        }
+    }
+
+    private suspend fun refreshRegionBlocked(detail: RezkaDetail, pageUrl: String) {
+        try {
+            val defTrans = detail.translators.find { it.isDefault } ?: detail.translators.firstOrNull()
+            val probe = RezkaService.probeRegionAvailability(
+                itemId = detail.numericPostId,
+                type = detail.type,
+                translatorId = defTrans?.id.orEmpty(),
+                itemUrl = pageUrl
+            )
+            _regionBlocked.value = probe == RezkaService.RegionProbeResult.REGION_BLOCKED
+        } catch (_: Exception) {}
+    }
+
     private val _commentsState = MutableStateFlow(MovieCommentsState())
     val commentsState: StateFlow<MovieCommentsState> = _commentsState.asStateFlow()
     private var commentsJob: Job? = null
@@ -1440,6 +1474,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
         try {
             val detail = RezkaService.getDetail(url)
+            lastLoadedDetailUrl = url
             _detailState.value = DetailState.Success(detail)
 
             if (detail.imageUrl.isNotBlank()) {
@@ -1492,18 +1527,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             // Проверяем региональную доступность (один лёгкий AJAX-запрос к CDN)
             if (NetworkMonitor.isOnline.value && detail.isReleased && detail.numericPostId.isNotEmpty()) {
                 viewModelScope.launch(Dispatchers.IO) {
-                    try {
-                        val defTrans = detail.translators.find { it.isDefault } ?: detail.translators.firstOrNull()
-                        val probe = RezkaService.probeRegionAvailability(
-                            itemId = detail.numericPostId,
-                            type = detail.type,
-                            translatorId = defTrans?.id.orEmpty(),
-                            itemUrl = url
-                        )
-                        if (probe == RezkaService.RegionProbeResult.REGION_BLOCKED) {
-                            _regionBlocked.value = true
-                        }
-                    } catch (_: Exception) {}
+                    refreshRegionBlocked(detail, url)
                 }
             }
 

@@ -17,6 +17,9 @@ object NetworkMonitor {
     private val _isOnline = MutableStateFlow(true)
     val isOnline: StateFlow<Boolean> = _isOnline.asStateFlow()
 
+    private val _isVpn = MutableStateFlow(false)
+    val isVpn: StateFlow<Boolean> = _isVpn.asStateFlow()
+
     private var isInitialized = false
     private var connectivityManager: ConnectivityManager? = null
 
@@ -57,6 +60,7 @@ object NetworkMonitor {
         }
 
         _isOnline.value = checkCurrentConnectivity()
+        _isVpn.value = isVpnActive()
 
         try {
             val request = NetworkRequest.Builder()
@@ -66,17 +70,20 @@ object NetworkMonitor {
             cm.registerNetworkCallback(request, object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
                     _isOnline.value = true
+                    _isVpn.value = isVpnActive()
                     SafeDns.clearCache()
                 }
 
                 override fun onLost(network: Network) {
                     _isOnline.value = checkCurrentConnectivity()
+                    _isVpn.value = isVpnActive()
                     SafeDns.clearCache()
                 }
 
                 override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
                     val hasInternet = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                     _isOnline.value = hasInternet
+                    _isVpn.value = networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
                     SafeDns.clearCache()
                 }
             })

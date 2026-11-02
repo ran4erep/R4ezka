@@ -5959,6 +5959,14 @@ object RezkaService {
     private val regionProbeCache = ConcurrentHashMap<String, RegionProbeResult>()
 
     /**
+     * Сбрасывает кэш проверки региона (например, при включении/выключении VPN),
+     * чтобы следующий запрос выполнился заново.
+     */
+    fun clearRegionProbeCache() {
+        regionProbeCache.clear()
+    }
+
+    /**
      * Лёгкий пробник: один AJAX-запрос к CDN для дефолтной озвучки.
      * Если сервер отвечает {"success":true,"url":false} — видео в текущем регионе недоступно.
      */
