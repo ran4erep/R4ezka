@@ -1,0 +1,76 @@
+# ============================================================
+# Новые правила для узла "settings" (Firebase Realtime Database)
+# ============================================================
+#
+# Замени этим блоком текущий "settings" внутри своих правил
+# (остальные узлы users/profile, favorites, history и т.д. не трогай).
+#
+# Что изменилось:
+#  - сняты жёсткие проверки типов (булево/число/энум);
+#  - ВСЕ поля теперь принимают строки-токены вида:
+#        deviceId=12345(CARTOON),deviceId=6789(MOVIE)
+#    чтобы настройки каждого устройства хранились прямо в значениях полей,
+#    без создания новых веток в БД;
+#  - firstDeviceId — тоже значение вида "deviceId=<id>";
+#  - updatedAt остаётся числом;
+#  - посторонние ключи по-прежнему запрещены ($other = false).
+#
+# Ограничения длины выбраны с запасом на несколько устройств в аккаунте.
+# Примечание: составной deviceId — это 64 hex-символа, поэтому firstDeviceId
+# имеет лимит 128 (строка вида "deviceId=<id>" занимает 73 символа).
+# ============================================================
+
+"settings": {
+  ".validate": "newData.hasChildren(['mirror', 'defaultQuality'])",
+  "mirror": {
+    ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 512"
+  },
+  "defaultQuality": {
+    ".validate": "newData.isString() && newData.val().length <= 128"
+  },
+  "autoNextEpisode": {
+    ".validate": "newData.isString() && newData.val().length <= 64"
+  },
+  "dirtyHandsMode": {
+    ".validate": "newData.isString() && newData.val().length <= 64"
+  },
+  "preferredSubtitleLang": {
+    ".validate": "newData.isString() && newData.val().length <= 128"
+  },
+  "subtitleTextScale": {
+    ".validate": "newData.isString() && newData.val().length <= 64"
+  },
+  "resizeMode": {
+    ".validate": "newData.isString() && newData.val().length <= 256"
+  },
+  "tvMode": {
+    ".validate": "newData.isString() && newData.val().length <= 256"
+  },
+  "cardGridMode": {
+    ".validate": "newData.isString() && newData.val().length <= 128"
+  },
+  "seriesBadgeMode": {
+    ".validate": "newData.isString() && newData.val().length <= 256"
+  },
+  "defaultCatalogType": {
+    ".validate": "newData.isString() && newData.val().length <= 256"
+  },
+  "defaultCatalogSection": {
+    ".validate": "newData.isString() && newData.val().length <= 256"
+  },
+  "defaultCatalogGenre": {
+    ".validate": "newData.isString() && newData.val().length <= 512"
+  },
+  "defaultCatalogCountry": {
+    ".validate": "newData.isString() && newData.val().length <= 512"
+  },
+  "firstDeviceId": {
+    ".validate": "!newData.exists() || (newData.isString() && newData.val().length <= 128)"
+  },
+  "updatedAt": {
+    ".validate": "!newData.exists() || newData.isNumber()"
+  },
+  "$other": {
+    ".validate": false
+  }
+}

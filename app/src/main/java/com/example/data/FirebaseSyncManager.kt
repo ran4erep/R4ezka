@@ -2,6 +2,7 @@ package com.example.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -13,6 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -51,6 +54,8 @@ object FirebaseSyncManager {
     // при одном и том же аккаунте (телефон / планшет / ТВ).
     private var deviceId: String = ""
 
+    val currentDeviceId: String get() = deviceId
+
     private val _isLoggedIn = MutableStateFlow(false)
     val isLoggedIn: StateFlow<Boolean> = _isLoggedIn.asStateFlow()
 
@@ -79,14 +84,31 @@ object FirebaseSyncManager {
 
     fun init(context: Context, repository: RezkaRepository) {
         prefs = context.getSharedPreferences("r4ezka_firebase_auth", Context.MODE_PRIVATE)
-        // Стабильный ID устройства: только ANDROID_ID (переживает переустановку, привязан к устройству+подписи).
-        // Никаких случайных UUID — нужна точность.
+        // Стабильный составной ID устройства: sha256(ANDROID_ID | Build.FINGERPRINT).
+        // Переживает переустановку приложения (ANDROID_ID стабилен при той же подписи),
+        // привязан к конкретному устройству и прошивке, что исключает коллизии между
+        // одинаковыми моделями и эмуляторами. Без UUID.
         val androidId = try {
             Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
         } catch (_: Exception) {
             null
         }
-        deviceId = androidId?.takeIf { it.isNotBlank() } ?: "android_unknown"
+        val idSeed = buildString {
+            append(androidId?.takeIf { it.isNotBlank() } ?: "")
+            append('|')
+            append(Build.FINGERPRINT)
+        }
+        deviceId = if (idSeed.replace("|", "").isBlank()) {
+            "android_unknown"
+        } else {
+            val md = MessageDigest.getInstance("SHA-256")
+            val bytes = md.digest(idSeed.toByteArray(Charsets.UTF_8))
+            val sb = StringBuilder(64)
+            for (b in bytes) {
+                sb.append(String.format("%02x", b))
+            }
+            sb.toString()
+        }
         val savedUser = prefs?.getString("auth_username", null)
         val savedKey = prefs?.getString("auth_user_key", null)
         val savedAvatar = prefs?.getString("auth_avatar", null)
@@ -609,7 +631,8 @@ object FirebaseSyncManager {
         }
     }
 
-    // Поля настроек, которые хранятся раздельно по устройствам (кодируются внутри значения).
+    // Поля настроек, синхронизируемые раздельно по устройствам.
+    // Каждое поле хранит строку-токен: "deviceId=<id>(<значение>),deviceId=<id>(<значение>)"
     private val SETTING_FIELDS = arrayOf(
         "mirror", "defaultQuality", "autoNextEpisode", "dirtyHandsMode",
         "preferredSubtitleLang", "subtitleTextScale", "resizeMode", "tvMode",
@@ -617,233 +640,252 @@ object FirebaseSyncManager {
         "defaultCatalogGenre", "defaultCatalogCountry"
     )
 
-    private val DEVICE_TOKEN_REGEX = Regex("""AndroidId=([^()]*)\(([^)]*)\)""")
+    // Сериализует сетевые записи настроек (всегда идут под мьютексом).
+    private val settingsWriteMutex = Mutex()
 
-    /**
-     * Формат значения для конкретного устройства:
-     * "AndroidId=12345(https://rezka-tv.org),AndroidId=78901(https://rezka.ag)"
-     * — никаких новых веток БД, всё живёт внутри существующего значения поля.
-     */
-    private fun extractMyValue(raw: String): String? {
-        if (raw.isEmpty()) return null
-        if (!raw.startsWith("AndroidId=")) return raw // старое «плоское» legacy-значение
+    private suspend fun fetchSettingsRoot(key: String): JSONObject {
+        return try {
+            val resp = httpClient.newCall(
+                Request.Builder().url("$DATABASE_URL/users/$key/settings.json").get().build()
+            ).execute()
+            if (resp.isSuccessful) {
+                val b = resp.body?.string()?.trim().orEmpty()
+                if (b.isNotEmpty() && b != "null") JSONObject(b) else JSONObject()
+            } else JSONObject()
+        } catch (_: Exception) {
+            JSONObject()
+        }
+    }
+
+    private val DEVICE_TOKEN_REGEX = Regex("""deviceId=([^()]*)\(([^)]*)\)""")
+
+    private fun parseTokens(raw: String): List<Pair<String, String>> {
+        if (raw.isEmpty()) return emptyList()
+        val result = mutableListOf<Pair<String, String>>()
         for (m in DEVICE_TOKEN_REGEX.findAll(raw)) {
-            if (m.groupValues[1] == deviceId) return m.groupValues[2]
+            result.add(m.groupValues[1] to m.groupValues[2])
+        }
+        return result
+    }
+
+    private fun upsertToken(current: String, value: String): String {
+        val entries = parseTokens(current).toMutableList()
+        entries.removeAll { it.first == deviceId }
+        entries.add(deviceId to value)
+        return entries.joinToString(",") { "deviceId=${it.first}(${it.second})" }
+    }
+
+    /** Достаёт значения токенов конкретного устройства из «сырых» значений полей. */
+    private fun tokenValueMap(root: JSONObject, targetId: String): LinkedHashMap<String, String> {
+        val out = LinkedHashMap<String, String>()
+        for (field in SETTING_FIELDS) {
+            val mine = parseTokens(root.optString(field, "")).firstOrNull { it.first == targetId }?.second
+            if (mine != null) out[field] = mine
+        }
+        return out
+    }
+
+    /** Значения первого попавшегося токена любого устройства (фоллбэк). */
+    private fun anyTokenValueMap(root: JSONObject): LinkedHashMap<String, String> {
+        val out = LinkedHashMap<String, String>()
+        for (field in SETTING_FIELDS) {
+            val first = parseTokens(root.optString(field, "")).firstOrNull()?.second
+            if (first != null) out[field] = first
+        }
+        return out
+    }
+
+    /** Первый deviceId, встреченный среди токенов всех полей. */
+    private fun firstTokenDeviceId(root: JSONObject): String? {
+        for (field in SETTING_FIELDS) {
+            val id = parseTokens(root.optString(field, "")).firstOrNull()?.first
+            if (id != null) return id
         }
         return null
     }
 
-    private fun upsertMyValue(current: String, value: String): String {
-        val entries = mutableListOf<Pair<String, String>>()
-        for (m in DEVICE_TOKEN_REGEX.findAll(current)) {
-            entries.add(m.groupValues[1] to m.groupValues[2])
+    /** Есть ли старые «плоские» значения без токенов. */
+    private fun hasLegacyFlat(root: JSONObject): Boolean =
+        SETTING_FIELDS.any { f ->
+            val raw = root.optString(f, "")
+            raw.isNotEmpty() && !raw.contains("deviceId=")
         }
-        entries.removeAll { it.first == deviceId }
-        entries.add(deviceId to value)
-        return entries.joinToString(",") { "AndroidId=${it.first}(${it.second})" }
+
+    // Правила БД для tvMode допускают только auto | tv | mobile,
+    // локально приложение хранит auto | force_tv | force_mobile.
+    private fun normalizeTvModeForCloud(local: String): String = when (local) {
+        "force_tv" -> "tv"
+        "force_mobile" -> "mobile"
+        "tv", "mobile" -> local
+        else -> "auto"
     }
 
-    /**
-     * Собирает значения настроек конкретного устройства (по его AndroidId-токенам).
-     */
-    private fun tokenValuesFor(root: JSONObject, targetId: String): JSONObject {
-        val out = JSONObject()
-        for (field in SETTING_FIELDS) {
+    private fun localTvModeFromCloud(cloud: String): String = when (cloud) {
+        "tv" -> "force_tv"
+        "mobile" -> "force_mobile"
+        else -> "auto"
+    }
+
+    /** Текущие локальные значения как «сырые» строки (уже в облачных форматах). */
+    private fun currentRawValues(): LinkedHashMap<String, String> = linkedMapOf(
+        "mirror" to RezkaService.currentMirror.value,
+        "defaultQuality" to RezkaService.defaultQuality.value,
+        "autoNextEpisode" to RezkaService.autoNextEpisode.value.toString(),
+        "dirtyHandsMode" to RezkaService.dirtyHandsMode.value.toString(),
+        "preferredSubtitleLang" to RezkaService.preferredSubtitleLang.value,
+        "subtitleTextScale" to RezkaService.subtitleTextScale.value.coerceIn(0.01f, 0.2f).toString(),
+        "resizeMode" to RezkaService.defaultResizeMode.value,
+        "tvMode" to normalizeTvModeForCloud(RezkaService.tvModePreference.value),
+        "cardGridMode" to RezkaService.cardGridMode.value,
+        "seriesBadgeMode" to RezkaService.seriesBadgeMode.value.id,
+        "defaultCatalogType" to (RezkaService.defaultCatalogType.value?.name ?: "ALL"),
+        "defaultCatalogSection" to RezkaService.defaultCatalogSection.value.name,
+        "defaultCatalogGenre" to RezkaService.defaultCatalogGenre.value,
+        "defaultCatalogCountry" to RezkaService.defaultCatalogCountry.value
+    )
+
+    /** «Сырые» значения из старых плоских полей облака (первое устройство).
+     *  Поля, уже содержащие токены, не трогаем — для них берём текущее локальное значение. */
+    private fun legacyRawValues(root: JSONObject): LinkedHashMap<String, String> {
+        val current = currentRawValues()
+        fun flat(field: String): String {
             val raw = root.optString(field, "")
-            var found: String? = null
-            for (m in DEVICE_TOKEN_REGEX.findAll(raw)) {
-                if (m.groupValues[1] == targetId) {
-                    found = m.groupValues[2]
-                    break
+            return if (raw.isNotEmpty() && !raw.contains("deviceId=")) raw else current[field] ?: ""
+        }
+        val scale = flat("subtitleTextScale").toDoubleOrNull()
+            ?.coerceIn(0.01, 0.2)?.toString() ?: current["subtitleTextScale"]!!
+        return linkedMapOf(
+            "mirror" to flat("mirror"),
+            "defaultQuality" to flat("defaultQuality"),
+            "autoNextEpisode" to flat("autoNextEpisode"),
+            "dirtyHandsMode" to flat("dirtyHandsMode"),
+            "preferredSubtitleLang" to flat("preferredSubtitleLang"),
+            "subtitleTextScale" to scale,
+            "resizeMode" to flat("resizeMode"),
+            "tvMode" to normalizeTvModeForCloud(flat("tvMode")),
+            "cardGridMode" to flat("cardGridMode"),
+            "seriesBadgeMode" to flat("seriesBadgeMode"),
+            "defaultCatalogType" to flat("defaultCatalogType"),
+            "defaultCatalogSection" to flat("defaultCatalogSection"),
+            "defaultCatalogGenre" to flat("defaultCatalogGenre"),
+            "defaultCatalogCountry" to flat("defaultCatalogCountry")
+        )
+    }
+
+    /**
+     * Запись настроек: каждое поле — строка с токенами устройств,
+     * например defaultCatalogType: "deviceId=12345(CARTOON),deviceId=6789(MOVIE)".
+     * firstDeviceId — тоже значение вида "deviceId=<id>". Никаких новых веток БД.
+     */
+    private suspend fun writeDeviceSettings(rawValues: Map<String, String>, markFirst: Boolean): Boolean {
+        val key = _userKey.value ?: return false
+        var written = false
+        settingsWriteMutex.withLock {
+            try {
+                val root = fetchSettingsRoot(key)
+                val firstRaw = root.optString("firstDeviceId", "")
+                val existingFirst = parseTokens(firstRaw).firstOrNull()?.first
+                val firstId = when {
+                    existingFirst != null -> existingFirst
+                    markFirst -> deviceId
+                    else -> firstTokenDeviceId(root) ?: deviceId
                 }
-            }
-            if (found != null) out.put(field, found)
-        }
-        return out
-    }
 
-    /**
-     * Фоллбэк: берёт значения первого попавшегося токена любого устройства
-     * (используется, когда метка первого устройства потеряна).
-     */
-    private fun tokenValuesForAny(root: JSONObject): JSONObject {
-        val out = JSONObject()
-        for (field in SETTING_FIELDS) {
-            val raw = root.optString(field, "")
-            val m = DEVICE_TOKEN_REGEX.find(raw)
-            if (m != null) out.put(field, m.groupValues[2])
-        }
-        return out
-    }
-
-    /**
-     * Строит JSON настроек для PATCH: каждое поле — токен ЭТОГО устройства,
-     * остальные токены других устройств сохраняются.
-     */
-    private fun buildCurrentSettingsJson(currentRoot: JSONObject, markFirst: Boolean): JSONObject {
-        fun cur(field: String): String = currentRoot.optString(field, "")
-        return JSONObject().apply {
-            put("mirror", upsertMyValue(cur("mirror"), RezkaService.currentMirror.value))
-            put("defaultQuality", upsertMyValue(cur("defaultQuality"), RezkaService.defaultQuality.value))
-            put("autoNextEpisode", upsertMyValue(cur("autoNextEpisode"), RezkaService.autoNextEpisode.value.toString()))
-            put("dirtyHandsMode", upsertMyValue(cur("dirtyHandsMode"), RezkaService.dirtyHandsMode.value.toString()))
-            put("preferredSubtitleLang", upsertMyValue(cur("preferredSubtitleLang"), RezkaService.preferredSubtitleLang.value))
-            put("subtitleTextScale", upsertMyValue(cur("subtitleTextScale"), RezkaService.subtitleTextScale.value.toString()))
-            put("resizeMode", upsertMyValue(cur("resizeMode"), RezkaService.defaultResizeMode.value))
-            put("tvMode", upsertMyValue(cur("tvMode"), RezkaService.tvModePreference.value))
-            put("cardGridMode", upsertMyValue(cur("cardGridMode"), RezkaService.cardGridMode.value))
-            put("seriesBadgeMode", upsertMyValue(cur("seriesBadgeMode"), RezkaService.seriesBadgeMode.value.id))
-            put("defaultCatalogType", upsertMyValue(cur("defaultCatalogType"), RezkaService.defaultCatalogType.value?.name ?: "ALL"))
-            put("defaultCatalogSection", upsertMyValue(cur("defaultCatalogSection"), RezkaService.defaultCatalogSection.value.name))
-            put("defaultCatalogGenre", upsertMyValue(cur("defaultCatalogGenre"), RezkaService.defaultCatalogGenre.value))
-            put("defaultCatalogCountry", upsertMyValue(cur("defaultCatalogCountry"), RezkaService.defaultCatalogCountry.value))
-            if (markFirst) put("firstDeviceId", deviceId)
-            put("updatedAt", System.currentTimeMillis())
-        }
-    }
-
-    /**
-     * Синхронный (внутри текущей корутины) посев настроек устройства в БД.
-     */
-    private suspend fun seedDeviceSettings(markFirst: Boolean) {
-        val key = _userKey.value ?: return
-        try {
-            val currentRoot = try {
-                val resp = httpClient.newCall(
-                    Request.Builder().url("$DATABASE_URL/users/$key/settings.json").get().build()
-                ).execute()
-                if (resp.isSuccessful) {
-                    val b = resp.body?.string()?.trim().orEmpty()
-                    if (b.isNotEmpty() && b != "null") JSONObject(b) else JSONObject()
-                } else JSONObject()
-            } catch (_: Exception) {
-                JSONObject()
-            }
-            val json = buildCurrentSettingsJson(currentRoot, markFirst)
-            val request = Request.Builder()
-                .url("$DATABASE_URL/users/$key/settings.json")
-                .patch(json.toString().toRequestBody(JSON_MEDIA_TYPE))
-                .build()
-            if (executeAndLog(request, "seedDeviceSettings")) {
-                // Проверяем, что новый формат реально записался в базу
-                try {
-                    val verResp = httpClient.newCall(
-                        Request.Builder().url("$DATABASE_URL/users/$key/settings.json").get().build()
-                    ).execute()
-                    if (verResp.isSuccessful) {
-                        val v = verResp.body?.string()?.trim().orEmpty()
-                        Log.i(TAG, "seedDeviceSettings verify: containsTokens=${v.contains("AndroidId=")}, body=${v.take(160)}")
-                    }
-                } catch (_: Exception) {}
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to seed device settings: ${e.message}")
-        }
-    }
-
-    /**
-     * Применяет облачные настройки устройства к локальным предпочтениям приложения.
-     */
-    private suspend fun applyRemoteSettings(setJson: JSONObject) {
-        val remoteMirror = setJson.optString("mirror")
-        val remoteQuality = setJson.optString("defaultQuality")
-        val hasAutoNext = setJson.has("autoNextEpisode")
-        val remoteAutoNext = setJson.optBoolean("autoNextEpisode", true)
-        val remoteSubLang = setJson.optString("preferredSubtitleLang", "")
-        val remoteSubScale = if (setJson.has("subtitleTextScale")) setJson.optDouble("subtitleTextScale").toFloat() else null
-        val remoteResize = setJson.optString("resizeMode", "")
-        val remoteTvMode = setJson.optString("tvMode", "")
-        val remoteGridMode = setJson.optString("cardGridMode", "")
-
-        if (remoteMirror.isNotBlank() && remoteMirror != RezkaService.currentMirror.value) {
-            withContext(Dispatchers.Main) {
-                RezkaService.setMirror(remoteMirror)
-                Unit
-            }
-        }
-        if (remoteQuality.isNotBlank() && remoteQuality != RezkaService.defaultQuality.value) {
-            withContext(Dispatchers.Main) {
-                RezkaService.setDefaultQuality(remoteQuality)
-            }
-        }
-        if (hasAutoNext && remoteAutoNext != RezkaService.autoNextEpisode.value) {
-            withContext(Dispatchers.Main) {
-                RezkaService.setAutoNextEpisode(remoteAutoNext)
-            }
-        }
-        val hasDirtyHands = setJson.has("dirtyHandsMode")
-        val remoteDirtyHands = setJson.optBoolean("dirtyHandsMode", false)
-        if (hasDirtyHands && remoteDirtyHands != RezkaService.dirtyHandsMode.value) {
-            withContext(Dispatchers.Main) {
-                RezkaService.setDirtyHandsMode(remoteDirtyHands)
-            }
-        }
-        if (remoteSubLang.isNotBlank() && remoteSubLang != RezkaService.preferredSubtitleLang.value) {
-            withContext(Dispatchers.Main) {
-                RezkaService.setPreferredSubtitleLang(remoteSubLang)
-            }
-        }
-        if (remoteSubScale != null && remoteSubScale > 0.01f && kotlin.math.abs(remoteSubScale - RezkaService.subtitleTextScale.value) > 0.002f) {
-            withContext(Dispatchers.Main) {
-                RezkaService.setSubtitleTextScale(remoteSubScale)
-            }
-        }
-        if (remoteResize.isNotBlank() && remoteResize != RezkaService.defaultResizeMode.value) {
-            withContext(Dispatchers.Main) {
-                RezkaService.setDefaultResizeMode(remoteResize)
-            }
-        }
-        if (remoteTvMode.isNotBlank() && remoteTvMode != RezkaService.tvModePreference.value) {
-            withContext(Dispatchers.Main) {
-                RezkaService.setTvModePreference(remoteTvMode)
-            }
-        }
-        if (remoteGridMode.isNotBlank() && remoteGridMode != RezkaService.cardGridMode.value) {
-            withContext(Dispatchers.Main) {
-                RezkaService.setCardGridMode(remoteGridMode)
-            }
-        }
-        val remoteBadgeMode = setJson.optString("seriesBadgeMode", "")
-        if (remoteBadgeMode.isNotBlank()) {
-            val parsedMode = com.example.ui.util.SeriesBadgeMode.fromId(remoteBadgeMode)
-            if (parsedMode != RezkaService.seriesBadgeMode.value) {
-                withContext(Dispatchers.Main) {
-                    RezkaService.setSeriesBadgeMode(parsedMode)
+                val patch = JSONObject()
+                for ((field, value) in rawValues) {
+                    patch.put(field, upsertToken(root.optString(field, ""), value))
                 }
+                if (existingFirst != null) {
+                    patch.put("firstDeviceId", firstRaw)
+                } else {
+                    patch.put("firstDeviceId", "deviceId=$firstId")
+                }
+                patch.put("updatedAt", System.currentTimeMillis())
+
+                written = executeAndLog(
+                    Request.Builder().url("$DATABASE_URL/users/$key/settings.json")
+                        .patch(patch.toString().toRequestBody(JSON_MEDIA_TYPE))
+                        .build(),
+                    "writeDeviceSettings"
+                )
+                Log.i(TAG, "writeDeviceSettings: first=$firstId fields=${rawValues.size} written=$written")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to write device settings: ${e.message}")
             }
         }
-        val remoteType = setJson.optString("defaultCatalogType", "")
-        if (remoteType.isNotBlank()) {
+        return written
+    }
+
+    /**
+     * Применяет «сырые» значения (из токенов или legacy) к локальным настройкам.
+     */
+    private suspend fun applySettingsValues(values: Map<String, String>) {
+        if (values.isEmpty()) return
+
+        values["mirror"]?.takeIf { it.isNotBlank() && it != RezkaService.currentMirror.value }
+            ?.let { withContext(Dispatchers.Main) { RezkaService.setMirror(it) } }
+        values["defaultQuality"]?.takeIf { it.isNotBlank() && it != RezkaService.defaultQuality.value }
+            ?.let { withContext(Dispatchers.Main) { RezkaService.setDefaultQuality(it) } }
+        values["autoNextEpisode"]?.let {
+            val b = it.equals("true", ignoreCase = true)
+            if (b != RezkaService.autoNextEpisode.value) {
+                withContext(Dispatchers.Main) { RezkaService.setAutoNextEpisode(b) }
+            }
+        }
+        values["dirtyHandsMode"]?.let {
+            val b = it.equals("true", ignoreCase = true)
+            if (b != RezkaService.dirtyHandsMode.value) {
+                withContext(Dispatchers.Main) { RezkaService.setDirtyHandsMode(b) }
+            }
+        }
+        values["preferredSubtitleLang"]?.takeIf { it.isNotBlank() && it != RezkaService.preferredSubtitleLang.value }
+            ?.let { withContext(Dispatchers.Main) { RezkaService.setPreferredSubtitleLang(it) } }
+        values["subtitleTextScale"]?.toFloatOrNull()?.let {
+            val clamped = it.coerceIn(0.01f, 0.2f)
+            if (clamped != RezkaService.subtitleTextScale.value) {
+                withContext(Dispatchers.Main) { RezkaService.setSubtitleTextScale(clamped) }
+            }
+        }
+        values["resizeMode"]?.takeIf { it.isNotBlank() && it != RezkaService.defaultResizeMode.value }
+            ?.let { withContext(Dispatchers.Main) { RezkaService.setDefaultResizeMode(it) } }
+        values["tvMode"]?.takeIf { it.isNotBlank() }?.let {
+            val local = localTvModeFromCloud(it)
+            if (local != RezkaService.tvModePreference.value) {
+                withContext(Dispatchers.Main) { RezkaService.setTvModePreference(local) }
+            }
+        }
+        values["cardGridMode"]?.takeIf { it.isNotBlank() && it != RezkaService.cardGridMode.value }
+            ?.let { withContext(Dispatchers.Main) { RezkaService.setCardGridMode(it) } }
+        values["seriesBadgeMode"]?.takeIf { it.isNotBlank() }?.let {
+            val mode = com.example.ui.util.SeriesBadgeMode.fromId(it)
+            if (mode != RezkaService.seriesBadgeMode.value) {
+                withContext(Dispatchers.Main) { RezkaService.setSeriesBadgeMode(mode) }
+            }
+        }
+        values["defaultCatalogType"]?.takeIf { it.isNotBlank() }?.let { remoteType ->
             try {
                 val t = if (remoteType.equals("ALL", ignoreCase = true)) null else RezkaType.valueOf(remoteType)
                 if (t != RezkaType.COLLECTIONS && t != RezkaService.defaultCatalogType.value) {
-                    withContext(Dispatchers.Main) {
-                        RezkaService.setDefaultCatalogType(t)
-                    }
+                    withContext(Dispatchers.Main) { RezkaService.setDefaultCatalogType(t) }
                 }
             } catch (_: Exception) {}
         }
-        val remoteSection = setJson.optString("defaultCatalogSection", "")
-        if (remoteSection.isNotBlank()) {
+        values["defaultCatalogSection"]?.takeIf { it.isNotBlank() }?.let { remoteSection ->
             try {
                 val s = SectionType.valueOf(remoteSection)
                 if (s != RezkaService.defaultCatalogSection.value) {
-                    withContext(Dispatchers.Main) {
-                        RezkaService.setDefaultCatalogSection(s)
-                    }
+                    withContext(Dispatchers.Main) { RezkaService.setDefaultCatalogSection(s) }
                 }
             } catch (_: Exception) {}
         }
-        val remoteGenre = setJson.optString("defaultCatalogGenre", "")
-        if (remoteGenre != RezkaService.defaultCatalogGenre.value) {
-            withContext(Dispatchers.Main) {
-                RezkaService.setDefaultCatalogGenre(remoteGenre)
+        values["defaultCatalogGenre"]?.let {
+            if (it != RezkaService.defaultCatalogGenre.value) {
+                withContext(Dispatchers.Main) { RezkaService.setDefaultCatalogGenre(it) }
             }
         }
-        val remoteCountry = setJson.optString("defaultCatalogCountry", "")
-        if (remoteCountry != RezkaService.defaultCatalogCountry.value) {
-            withContext(Dispatchers.Main) {
-                RezkaService.setDefaultCatalogCountry(remoteCountry)
+        values["defaultCatalogCountry"]?.let {
+            if (it != RezkaService.defaultCatalogCountry.value) {
+                withContext(Dispatchers.Main) { RezkaService.setDefaultCatalogCountry(it) }
             }
         }
     }
@@ -869,47 +911,23 @@ object FirebaseSyncManager {
     ) {
         val key = _userKey.value ?: return
         scope.launch {
-            try {
-                // Читаем текущий узел настроек, чтобы не затереть записи других устройств
-                val currentRoot = try {
-                    val resp = httpClient.newCall(
-                        Request.Builder().url("$DATABASE_URL/users/$key/settings.json").get().build()
-                    ).execute()
-                    if (resp.isSuccessful) {
-                        val b = resp.body?.string()?.trim().orEmpty()
-                        if (b.isNotEmpty() && b != "null") JSONObject(b) else JSONObject()
-                    } else JSONObject()
-                } catch (_: Exception) {
-                    JSONObject()
-                }
-
-                fun cur(field: String): String = currentRoot.optString(field, "")
-
-                val json = JSONObject().apply {
-                    put("mirror", upsertMyValue(cur("mirror"), mirror))
-                    put("defaultQuality", upsertMyValue(cur("defaultQuality"), quality))
-                    put("autoNextEpisode", upsertMyValue(cur("autoNextEpisode"), autoNextEpisode.toString()))
-                    put("dirtyHandsMode", upsertMyValue(cur("dirtyHandsMode"), dirtyHandsMode.toString()))
-                    put("preferredSubtitleLang", upsertMyValue(cur("preferredSubtitleLang"), preferredSubtitleLang))
-                    put("subtitleTextScale", upsertMyValue(cur("subtitleTextScale"), subtitleTextScale.toString()))
-                    put("resizeMode", upsertMyValue(cur("resizeMode"), resizeMode))
-                    put("tvMode", upsertMyValue(cur("tvMode"), tvMode))
-                    put("cardGridMode", upsertMyValue(cur("cardGridMode"), cardGridMode))
-                    put("seriesBadgeMode", upsertMyValue(cur("seriesBadgeMode"), seriesBadgeMode))
-                    put("defaultCatalogType", upsertMyValue(cur("defaultCatalogType"), defaultCatalogType))
-                    put("defaultCatalogSection", upsertMyValue(cur("defaultCatalogSection"), defaultCatalogSection))
-                    put("defaultCatalogGenre", upsertMyValue(cur("defaultCatalogGenre"), defaultCatalogGenre))
-                    put("defaultCatalogCountry", upsertMyValue(cur("defaultCatalogCountry"), defaultCatalogCountry))
-                    put("updatedAt", System.currentTimeMillis())
-                }
-                val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/settings.json")
-                    .patch(json.toString().toRequestBody(JSON_MEDIA_TYPE))
-                    .build()
-                executeAndLog(request, "onSettingsUpdated")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to sync settings to Firebase: ${e.message}")
-            }
+            val raw = linkedMapOf(
+                "mirror" to mirror,
+                "defaultQuality" to quality,
+                "autoNextEpisode" to autoNextEpisode.toString(),
+                "dirtyHandsMode" to dirtyHandsMode.toString(),
+                "preferredSubtitleLang" to preferredSubtitleLang,
+                "subtitleTextScale" to subtitleTextScale.coerceIn(0.01f, 0.2f).toString(),
+                "resizeMode" to resizeMode,
+                "tvMode" to normalizeTvModeForCloud(tvMode),
+                "cardGridMode" to cardGridMode,
+                "seriesBadgeMode" to seriesBadgeMode,
+                "defaultCatalogType" to defaultCatalogType,
+                "defaultCatalogSection" to defaultCatalogSection,
+                "defaultCatalogGenre" to defaultCatalogGenre,
+                "defaultCatalogCountry" to defaultCatalogCountry
+            )
+            writeDeviceSettings(raw, markFirst = false)
         }
     }
 
@@ -1260,8 +1278,8 @@ object FirebaseSyncManager {
                 }
             }
 
-            // 3. Синхронизация Настроек — раздельно по устройствам ВНУТРИ значений полей.
-            // Никаких новых веток БД: поле хранит "AndroidId=123(…),AndroidId=456(…)".
+            // 3. Синхронизация Настроек — раздельно по устройствам ВНУТРИ значений полей:
+            //    "deviceId=123(CARTOON),deviceId=456(MOVIE)". Никаких новых веток БД.
             try {
                 val setReq = Request.Builder().url("$DATABASE_URL/users/$key/settings.json").get().build()
                 val setResp = httpClient.newCall(setReq).execute()
@@ -1269,55 +1287,39 @@ object FirebaseSyncManager {
                     val setBody = setResp.body?.string()?.trim() ?: ""
                     if (setBody != "null" && setBody.isNotEmpty()) {
                         val rootJson = JSONObject(setBody)
-
-                        // Есть ли ещё старые «плоские» значения без разделения по устройствам
-                        val hasLegacy = SETTING_FIELDS.any { f ->
-                            val raw = rootJson.optString(f, "")
-                            raw.isNotEmpty() && !raw.startsWith("AndroidId=")
-                        }
-                        val firstDeviceId = rootJson.optString("firstDeviceId", "")
-                        val myTokens = tokenValuesFor(rootJson, deviceId)
+                        val myTokens = tokenValueMap(rootJson, deviceId)
+                        val firstId = firstTokenDeviceId(rootJson)
 
                         when {
-                            // 1. Первое устройство аккаунта: наследуем старые плоские настройки,
-                            //    создаём свой токен и помечаем себя как первое устройство.
-                            hasLegacy -> {
-                                val legacy = JSONObject()
-                                for (f in SETTING_FIELDS) {
-                                    val raw = rootJson.optString(f, "")
-                                    if (raw.isNotEmpty() && !raw.startsWith("AndroidId=")) legacy.put(f, raw)
-                                }
-                                if (legacy.length() > 0) applyRemoteSettings(legacy)
-                                seedDeviceSettings(markFirst = true)
+                            // 1. Старые «плоские» значения без токенов — миграция: становимся первым устройством.
+                            hasLegacyFlat(rootJson) -> {
+                                val legacy = legacyRawValues(rootJson)
+                                applySettingsValues(legacy)
+                                writeDeviceSettings(legacy, markFirst = true)
                             }
 
-                            // 2. У этого устройства уже есть свои токены — применяем свои настройки,
-                            //    при необходимости дописывая недостающие поля.
-                            myTokens.length() > 0 -> {
-                                applyRemoteSettings(myTokens)
-                                if (myTokens.length() < SETTING_FIELDS.size) {
-                                    seedDeviceSettings(markFirst = false)
+                            // 2. У этого устройства уже есть токены — применяем свои настройки.
+                            myTokens.isNotEmpty() -> {
+                                applySettingsValues(myTokens)
+                                if (myTokens.size < SETTING_FIELDS.size) {
+                                    writeDeviceSettings(currentRawValues(), markFirst = false)
                                 }
                             }
 
-                            // 3. Новое устройство: наследуем настройки ПЕРВОГО устройства, затем создаём свой токен.
-                            firstDeviceId.isNotEmpty() && firstDeviceId != deviceId -> {
-                                var inherited = tokenValuesFor(rootJson, firstDeviceId)
-                                if (inherited.length() == 0) inherited = tokenValuesForAny(rootJson)
-                                if (inherited.length() > 0) applyRemoteSettings(inherited)
-                                seedDeviceSettings(markFirst = false)
+                            // 3. Есть токены других устройств — наследуем первое устройство и создаём свои токены.
+                            firstId != null -> {
+                                val inherited = tokenValueMap(rootJson, firstId).ifEmpty { anyTokenValueMap(rootJson) }
+                                if (inherited.isNotEmpty()) applySettingsValues(inherited)
+                                writeDeviceSettings(currentRawValues(), markFirst = false)
                             }
 
-                            // 4. Данные есть, но без метки первого устройства — считаем себя первым.
-                            rootJson.has("mirror") -> {
-                                seedDeviceSettings(markFirst = true)
+                            // 4. Совсем нет данных — создаём токены с текущими настройками.
+                            else -> {
+                                writeDeviceSettings(currentRawValues(), markFirst = true)
                             }
-
-                            // 5. Новый пользователь / нет данных: создаём токен с текущими (дефолтными) настройками.
-                            else -> seedDeviceSettings(markFirst = false)
                         }
                     } else {
-                        seedDeviceSettings(markFirst = false)
+                        writeDeviceSettings(currentRawValues(), markFirst = true)
                     }
                 }
             } catch (e: Exception) {
