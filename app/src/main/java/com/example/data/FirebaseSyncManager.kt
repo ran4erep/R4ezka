@@ -663,6 +663,74 @@ object FirebaseSyncManager {
     }
 
     /**
+     * Фоллбэк: берёт значения первого попавшегося токена любого устройства
+     * (используется, когда метка первого устройства потеряна).
+     */
+    private fun tokenValuesForAny(root: JSONObject): JSONObject {
+        val out = JSONObject()
+        for (field in SETTING_FIELDS) {
+            val raw = root.optString(field, "")
+            val m = DEVICE_TOKEN_REGEX.find(raw)
+            if (m != null) out.put(field, m.groupValues[2])
+        }
+        return out
+    }
+
+    /**
+     * Строит JSON настроек для PATCH: каждое поле — токен ЭТОГО устройства,
+     * остальные токены других устройств сохраняются.
+     */
+    private fun buildCurrentSettingsJson(currentRoot: JSONObject, markFirst: Boolean): JSONObject {
+        fun cur(field: String): String = currentRoot.optString(field, "")
+        return JSONObject().apply {
+            put("mirror", upsertMyValue(cur("mirror"), RezkaService.currentMirror.value))
+            put("defaultQuality", upsertMyValue(cur("defaultQuality"), RezkaService.defaultQuality.value))
+            put("autoNextEpisode", upsertMyValue(cur("autoNextEpisode"), RezkaService.autoNextEpisode.value.toString()))
+            put("dirtyHandsMode", upsertMyValue(cur("dirtyHandsMode"), RezkaService.dirtyHandsMode.value.toString()))
+            put("preferredSubtitleLang", upsertMyValue(cur("preferredSubtitleLang"), RezkaService.preferredSubtitleLang.value))
+            put("subtitleTextScale", upsertMyValue(cur("subtitleTextScale"), RezkaService.subtitleTextScale.value.toString()))
+            put("resizeMode", upsertMyValue(cur("resizeMode"), RezkaService.defaultResizeMode.value))
+            put("tvMode", upsertMyValue(cur("tvMode"), RezkaService.tvModePreference.value))
+            put("cardGridMode", upsertMyValue(cur("cardGridMode"), RezkaService.cardGridMode.value))
+            put("seriesBadgeMode", upsertMyValue(cur("seriesBadgeMode"), RezkaService.seriesBadgeMode.value.id))
+            put("defaultCatalogType", upsertMyValue(cur("defaultCatalogType"), RezkaService.defaultCatalogType.value?.name ?: "ALL"))
+            put("defaultCatalogSection", upsertMyValue(cur("defaultCatalogSection"), RezkaService.defaultCatalogSection.value.name))
+            put("defaultCatalogGenre", upsertMyValue(cur("defaultCatalogGenre"), RezkaService.defaultCatalogGenre.value))
+            put("defaultCatalogCountry", upsertMyValue(cur("defaultCatalogCountry"), RezkaService.defaultCatalogCountry.value))
+            if (markFirst) put("firstDeviceId", deviceId)
+            put("updatedAt", System.currentTimeMillis())
+        }
+    }
+
+    /**
+     * Синхронный (внутри текущей корутины) посев настроек устройства в БД.
+     */
+    private suspend fun seedDeviceSettings(markFirst: Boolean) {
+        val key = _userKey.value ?: return
+        try {
+            val currentRoot = try {
+                val resp = httpClient.newCall(
+                    Request.Builder().url("$DATABASE_URL/users/$key/settings.json").get().build()
+                ).execute()
+                if (resp.isSuccessful) {
+                    val b = resp.body?.string()?.trim().orEmpty()
+                    if (b.isNotEmpty() && b != "null") JSONObject(b) else JSONObject()
+                } else JSONObject()
+            } catch (_: Exception) {
+                JSONObject()
+            }
+            val json = buildCurrentSettingsJson(currentRoot, markFirst)
+            val request = Request.Builder()
+                .url("$DATABASE_URL/users/$key/settings.json")
+                .patch(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+            executeAndLog(request, "seedDeviceSettings")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to seed device settings: ${e.message}")
+        }
+    }
+
+    /**
      * Применяет облачные настройки устройства к локальным предпочтениям приложения.
      */
     private suspend fun applyRemoteSettings(setJson: JSONObject) {
@@ -1209,15 +1277,7 @@ object FirebaseSyncManager {
                                     if (raw.isNotEmpty() && !raw.startsWith("AndroidId=")) legacy.put(f, raw)
                                 }
                                 if (legacy.length() > 0) applyRemoteSettings(legacy)
-                                onSettingsUpdated()
-                                try {
-                                    val mark = JSONObject().put("firstDeviceId", deviceId)
-                                    val markReq = Request.Builder()
-                                        .url("$DATABASE_URL/users/$key/settings.json")
-                                        .patch(mark.toString().toRequestBody(JSON_MEDIA_TYPE))
-                                        .build()
-                                    executeAndLog(markReq, "syncAll_markFirstDevice")
-                                } catch (_: Exception) {}
+                                seedDeviceSettings(markFirst = true)
                             }
 
                             // 2. У этого устройства уже есть свои токены — применяем свои настройки,
@@ -1225,22 +1285,28 @@ object FirebaseSyncManager {
                             myTokens.length() > 0 -> {
                                 applyRemoteSettings(myTokens)
                                 if (myTokens.length() < SETTING_FIELDS.size) {
-                                    onSettingsUpdated()
+                                    seedDeviceSettings(markFirst = false)
                                 }
                             }
 
                             // 3. Новое устройство: наследуем настройки ПЕРВОГО устройства, затем создаём свой токен.
                             firstDeviceId.isNotEmpty() && firstDeviceId != deviceId -> {
-                                val inherited = tokenValuesFor(rootJson, firstDeviceId)
+                                var inherited = tokenValuesFor(rootJson, firstDeviceId)
+                                if (inherited.length() == 0) inherited = tokenValuesForAny(rootJson)
                                 if (inherited.length() > 0) applyRemoteSettings(inherited)
-                                onSettingsUpdated()
+                                seedDeviceSettings(markFirst = false)
                             }
 
-                            // 4. Новый пользователь / нет данных: создаём токен с текущими (дефолтными) настройками.
-                            else -> onSettingsUpdated()
+                            // 4. Данные есть, но без метки первого устройства — считаем себя первым.
+                            rootJson.has("mirror") -> {
+                                seedDeviceSettings(markFirst = true)
+                            }
+
+                            // 5. Новый пользователь / нет данных: создаём токен с текущими (дефолтными) настройками.
+                            else -> seedDeviceSettings(markFirst = false)
                         }
                     } else {
-                        onSettingsUpdated()
+                        seedDeviceSettings(markFirst = false)
                     }
                 }
             } catch (e: Exception) {
