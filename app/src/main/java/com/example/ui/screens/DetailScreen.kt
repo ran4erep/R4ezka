@@ -4153,7 +4153,7 @@ fun RegionBlockNotice(modifier: Modifier = Modifier) {
             modifier = Modifier.size(36.dp)
         )
         Text(
-            text = "К сожалению, это видео не доступно в вашем регионе. Включите VPN и попробуйте ещё раз.",
+            text = "К сожалению, это видео не доступно в вашем регионе. Включите VPN, затем запустите аудит зеркал в настройках и попробуйте ещё раз.",
             color = CinemaTextWhite,
             fontSize = 13.sp,
             lineHeight = 18.sp,

@@ -1814,8 +1814,8 @@ fun TvDetailContent(
                                                     )
                                                     .tvFocusableItem(
                                                         onClick = {
-                                                            onSelectEpisode(ep.id)
                                                             if (!regionBlocked) {
+                                                                onSelectEpisode(ep.id)
                                                                 onPlayEpisode(currentSeason, ep)
                                                             }
                                                         },
