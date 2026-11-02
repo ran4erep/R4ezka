@@ -57,6 +57,8 @@ import com.example.data.DownloadHelper
 import com.example.data.DnsPreference
 import com.example.data.ResilientSslEngine
 import com.example.data.SafeDns
+import com.example.data.SniBypassMode
+import com.example.data.SniFragmentationEngine
 import com.example.data.OfflineMediaEntity
 import com.example.data.RezkaService
 import com.example.data.RezkaType
@@ -128,6 +130,11 @@ fun SettingsScreen(
     var dnsDropdownExpanded by remember { mutableStateOf(false) }
     var isTestingDns by remember { mutableStateOf(false) }
     var dnsCheckResult by remember { mutableStateOf<String?>(null) }
+    val sniBypassEnabled by viewModel.sniBypassEnabled.collectAsState()
+    val sniBypassMode by viewModel.sniBypassMode.collectAsState()
+    var sniDropdownExpanded by remember { mutableStateOf(false) }
+    var isTestingSni by remember { mutableStateOf(false) }
+    var sniCheckResult by remember { mutableStateOf<String?>(null) }
     val presetMirrors = viewModel.presetMirrors
 
     var customMirrorInput by remember(currentMirror) { mutableStateOf(currentMirror) }
@@ -180,10 +187,20 @@ fun SettingsScreen(
     val offlineCategoryRequester = remember { FocusRequester() }
 
     val networkFirstItemRequester = remember { FocusRequester() }
-    val networkLastItemRequester = remember { FocusRequester() }
+    val resetMirrorRequester = remember { FocusRequester() }
+    val mirrorAuditFocusRequester = remember { FocusRequester() }
     val mirrorDropdownTriggerRequester = remember { FocusRequester() }
     val customMirrorFocusRequester = remember { FocusRequester() }
     val applyMirrorFocusRequester = remember { FocusRequester() }
+    val dnsDropdownTriggerRequester = remember { FocusRequester() }
+    val customDnsFocusRequester = remember { FocusRequester() }
+    val saveCustomDnsFocusRequester = remember { FocusRequester() }
+    val testDnsFocusRequester = remember { FocusRequester() }
+    val clearDnsCacheFocusRequester = remember { FocusRequester() }
+    val sniSwitchFocusRequester = remember { FocusRequester() }
+    val sniModeDropdownRequester = remember { FocusRequester() }
+    val testSniFocusRequester = remember { FocusRequester() }
+    val networkLastItemRequester = remember { FocusRequester() }
     val playbackFirstItemRequester = remember { FocusRequester() }
     val playbackLastItemRequester = remember { FocusRequester() }
     val tvFirstItemRequester = remember { FocusRequester() }
@@ -439,9 +456,21 @@ fun SettingsScreen(
                                                     networkCategoryRequester.requestFocusSafe()
                                                     true
                                                 }
+                                                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                                    if (currentMirror != RezkaService.PRIMARY_MIRROR) {
+                                                        resetMirrorRequester.requestFocusSafe()
+                                                        true
+                                                    } else false
+                                                }
                                                 android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                                    mirrorDropdownTriggerRequester.requestFocusSafe()
+                                                    mirrorAuditFocusRequester.requestFocusSafe()
                                                     true
+                                                }
+                                                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                    if (onNavigateLeftToSidebar != null) {
+                                                        onNavigateLeftToSidebar()
+                                                        true
+                                                    } else false
                                                 }
                                                 else -> false
                                             }
@@ -482,15 +511,39 @@ fun SettingsScreen(
                                 }
                                 OutlinedButton(
                                     onClick = triggerReset,
+                                    border = BorderStroke(1.dp, CinemaMuted),
                                     shape = RoundedCornerShape(10.dp),
-                                    border = ButtonDefaults.outlinedButtonBorder.copy(brush = androidx.compose.ui.graphics.SolidColor(CinemaMuted)),
-                                    modifier = Modifier.tvFocusableItem(
-                                        onClick = triggerReset,
-                                        shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.0f
-                                    )
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CinemaTextWhite),
+                                    modifier = Modifier
+                                        .onKeyEvent { keyEvent ->
+                                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                        networkFirstItemRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                        networkCategoryRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                        mirrorAuditFocusRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    else -> false
+                                                }
+                                            } else false
+                                        }
+                                        .tvFocusableItem(
+                                            onClick = triggerReset,
+                                            shape = RoundedCornerShape(10.dp),
+                                            scaleFactor = 1.0f,
+                                            focusRequester = resetMirrorRequester
+                                        )
                                 ) {
-                                    Text("Сброс", fontSize = 12.sp, color = CinemaTextGray)
+                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Сброс", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }
@@ -505,10 +558,32 @@ fun SettingsScreen(
                             border = BorderStroke(1.dp, CinemaPrimary.copy(alpha = 0.5f)),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .onKeyEvent { keyEvent ->
+                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                        when (keyEvent.nativeKeyEvent.keyCode) {
+                                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                networkFirstItemRequester.requestFocusSafe()
+                                                true
+                                            }
+                                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                mirrorDropdownTriggerRequester.requestFocusSafe()
+                                                true
+                                            }
+                                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                if (onNavigateLeftToSidebar != null) {
+                                                    onNavigateLeftToSidebar()
+                                                    true
+                                                } else false
+                                            }
+                                            else -> false
+                                        }
+                                    } else false
+                                }
                                 .tvFocusableItem(
                                     onClick = triggerAudit,
                                     shape = RoundedCornerShape(10.dp),
-                                    scaleFactor = 1.0f
+                                    scaleFactor = 1.0f,
+                                    focusRequester = mirrorAuditFocusRequester
                                 )
                                 .testTag("run_mirror_audit_button")
                         ) {
@@ -583,12 +658,18 @@ fun SettingsScreen(
                                         if (keyEvent.type == KeyEventType.KeyDown) {
                                             when (keyEvent.nativeKeyEvent.keyCode) {
                                                 android.view.KeyEvent.KEYCODE_DPAD_UP -> {
-                                                    networkFirstItemRequester.requestFocusSafe()
+                                                    mirrorAuditFocusRequester.requestFocusSafe()
                                                     true
                                                 }
                                                 android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
                                                     customMirrorFocusRequester.requestFocusSafe()
                                                     true
+                                                }
+                                                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                    if (onNavigateLeftToSidebar != null) {
+                                                        onNavigateLeftToSidebar()
+                                                        true
+                                                    } else false
                                                 }
                                                 else -> false
                                             }
@@ -752,8 +833,15 @@ fun SettingsScreen(
                                                 customMirrorFocusRequester.requestFocusSafe()
                                                 true
                                             }
-                                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                dnsDropdownTriggerRequester.requestFocusSafe()
                                                 true
+                                            }
+                                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                if (onNavigateLeftToSidebar != null) {
+                                                    onNavigateLeftToSidebar()
+                                                    true
+                                                } else false
                                             }
                                             else -> false
                                         }
@@ -789,20 +877,46 @@ fun SettingsScreen(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Банальный выпадающий список выбора DNS
+                        // Выпадающий список выбора DNS
                         Box(modifier = Modifier.fillMaxWidth()) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(CinemaCard)
+                                    .onKeyEvent { keyEvent ->
+                                        if (keyEvent.type == KeyEventType.KeyDown) {
+                                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                    applyMirrorFocusRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                    if (dnsPreference == DnsPreference.CUSTOM) {
+                                                        customDnsFocusRequester.requestFocusSafe()
+                                                    } else {
+                                                        testDnsFocusRequester.requestFocusSafe()
+                                                    }
+                                                    true
+                                                }
+                                                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                    if (onNavigateLeftToSidebar != null) {
+                                                        onNavigateLeftToSidebar()
+                                                        true
+                                                    } else false
+                                                }
+                                                else -> false
+                                            }
+                                        } else false
+                                    }
                                     .tvFocusableItem(
                                         onClick = {
                                             HapticEngine.get().perform(HapticType.SOFT_CLICK)
                                             dnsDropdownExpanded = true
                                         },
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.0f
+                                        scaleFactor = 1.0f,
+                                        focusRequester = dnsDropdownTriggerRequester
                                     )
                                     .clickable {
                                         HapticEngine.get().perform(HapticType.SOFT_CLICK)
@@ -896,7 +1010,6 @@ fun SettingsScreen(
                                     .fillMaxWidth()
                                     .padding(top = 10.dp)
                             ) {
-                                val customDnsFocusRequester = remember { FocusRequester() }
                                 val saveCustomDnsAction = {
                                     HapticEngine.get().perform(HapticType.CONFIRM)
                                     val input = customDnsInput.trim()
@@ -918,7 +1031,24 @@ fun SettingsScreen(
                                     containerColor = CinemaCard,
                                     focusRequester = customDnsFocusRequester,
                                     testTag = "custom_dns_input",
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .onKeyEvent { keyEvent ->
+                                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                        dnsDropdownTriggerRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                        saveCustomDnsFocusRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> true
+                                                    else -> false
+                                                }
+                                            } else false
+                                        }
                                 )
 
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -929,10 +1059,32 @@ fun SettingsScreen(
                                     shape = RoundedCornerShape(10.dp),
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .onKeyEvent { keyEvent ->
+                                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                        customDnsFocusRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                        testDnsFocusRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                        if (onNavigateLeftToSidebar != null) {
+                                                            onNavigateLeftToSidebar()
+                                                            true
+                                                        } else false
+                                                    }
+                                                    else -> false
+                                                }
+                                            } else false
+                                        }
                                         .tvFocusableItem(
                                             onClick = saveCustomDnsAction,
                                             shape = RoundedCornerShape(10.dp),
-                                            scaleFactor = 1.0f
+                                            scaleFactor = 1.0f,
+                                            focusRequester = saveCustomDnsFocusRequester
                                         )
                                         .testTag("save_custom_dns_button")
                                 ) {
@@ -976,10 +1128,40 @@ fun SettingsScreen(
                                 shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier
                                     .weight(1f)
+                                    .onKeyEvent { keyEvent ->
+                                        if (keyEvent.type == KeyEventType.KeyDown) {
+                                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                    if (dnsPreference == DnsPreference.CUSTOM) {
+                                                        saveCustomDnsFocusRequester.requestFocusSafe()
+                                                    } else {
+                                                        dnsDropdownTriggerRequester.requestFocusSafe()
+                                                    }
+                                                    true
+                                                }
+                                                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                                    clearDnsCacheFocusRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                    sniSwitchFocusRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                    if (onNavigateLeftToSidebar != null) {
+                                                        onNavigateLeftToSidebar()
+                                                        true
+                                                    } else false
+                                                }
+                                                else -> false
+                                            }
+                                        } else false
+                                    }
                                     .tvFocusableItem(
                                         onClick = testDnsAction,
                                         shape = RoundedCornerShape(10.dp),
-                                        scaleFactor = 1.0f
+                                        scaleFactor = 1.0f,
+                                        focusRequester = testDnsFocusRequester
                                     )
                                     .testTag("test_dns_button")
                             ) {
@@ -1012,16 +1194,33 @@ fun SettingsScreen(
                                 modifier = Modifier
                                     .weight(1f)
                                     .onKeyEvent { keyEvent ->
-                                        if (keyEvent.type == KeyEventType.KeyDown && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
-                                            playbackCategoryRequester.requestFocusSafe()
-                                            true
+                                        if (keyEvent.type == KeyEventType.KeyDown) {
+                                            when (keyEvent.nativeKeyEvent.keyCode) {
+                                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                    if (dnsPreference == DnsPreference.CUSTOM) {
+                                                        saveCustomDnsFocusRequester.requestFocusSafe()
+                                                    } else {
+                                                        dnsDropdownTriggerRequester.requestFocusSafe()
+                                                    }
+                                                    true
+                                                }
+                                                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                    testDnsFocusRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                    sniSwitchFocusRequester.requestFocusSafe()
+                                                    true
+                                                }
+                                                else -> false
+                                            }
                                         } else false
                                     }
                                     .tvFocusableItem(
                                         onClick = clearCacheAction,
                                         shape = RoundedCornerShape(10.dp),
                                         scaleFactor = 1.0f,
-                                        focusRequester = networkLastItemRequester
+                                        focusRequester = clearDnsCacheFocusRequester
                                     )
                                     .testTag("clear_dns_cache_button")
                             ) {
@@ -1044,13 +1243,342 @@ fun SettingsScreen(
                                         )
                                         .padding(horizontal = 12.dp, vertical = 8.dp)
                                         .testTag("dns_check_result")
-                                ) {
+                                 ) {
                                     Text(
                                         text = text,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = if (isOk) CinemaGreen else CinemaPrimary
                                     )
+                                }
+                            }
+                        }
+
+                        // ==========================================
+                        // РАЗДЕЛ: ОБХОД БЛОКИРОВОК (ANTI-DPI)
+                        // ==========================================
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Divider(color = CinemaMuted.copy(alpha = 0.3f), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Text(
+                            text = "ОБХОД БЛОКИРОВОК (ANTI-DPI)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = CinemaPrimary,
+                            letterSpacing = 1.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        val toggleSniAction = {
+                            val newState = !sniBypassEnabled
+                            HapticEngine.get().perform(HapticType.TOGGLE)
+                            viewModel.setSniBypassEnabled(newState)
+                            sniCheckResult = null
+                        }
+
+                        // Карточка включения/выключения обхода Anti-DPI
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(CinemaCard)
+                                .onKeyEvent { keyEvent ->
+                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                        when (keyEvent.nativeKeyEvent.keyCode) {
+                                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                testDnsFocusRequester.requestFocusSafe()
+                                                true
+                                            }
+                                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                if (sniBypassEnabled) {
+                                                    sniModeDropdownRequester.requestFocusSafe()
+                                                } else {
+                                                    playbackCategoryRequester.requestFocusSafe()
+                                                }
+                                                true
+                                            }
+                                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                if (onNavigateLeftToSidebar != null) {
+                                                    onNavigateLeftToSidebar()
+                                                    true
+                                                } else false
+                                            }
+                                            else -> false
+                                        }
+                                    } else false
+                                }
+                                .tvFocusableItem(
+                                    onClick = toggleSniAction,
+                                    shape = RoundedCornerShape(10.dp),
+                                    scaleFactor = 1.0f,
+                                    focusRequester = sniSwitchFocusRequester
+                                )
+                                .clickable { toggleSniAction() }
+                                .padding(horizontal = 14.dp, vertical = 12.dp)
+                                .testTag("sni_bypass_card"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(1f, fill = false)
+                            ) {
+                                Text(
+                                    text = "Обход блокировок провайдера",
+                                    color = CinemaTextWhite,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Фрагментация пакетов ClientHello (разбиение SNI без VPN)",
+                                    color = CinemaTextGray,
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp
+                                )
+                            }
+
+                            Switch(
+                                checked = sniBypassEnabled,
+                                onCheckedChange = { checked ->
+                                    HapticEngine.get().perform(HapticType.TOGGLE)
+                                    viewModel.setSniBypassEnabled(checked)
+                                    sniCheckResult = null
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = CinemaPrimary,
+                                    checkedTrackColor = CinemaPrimary.copy(alpha = 0.35f),
+                                    uncheckedThumbColor = CinemaTextGray,
+                                    uncheckedTrackColor = CinemaMuted
+                                ),
+                                modifier = Modifier.testTag("sni_bypass_switch")
+                            )
+                        }
+
+                        AnimatedVisibility(visible = sniBypassEnabled) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 10.dp)
+                            ) {
+                                // Выпадающий список выбора алгоритма
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(CinemaCard)
+                                            .onKeyEvent { keyEvent ->
+                                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                                    when (keyEvent.nativeKeyEvent.keyCode) {
+                                                        android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                            sniSwitchFocusRequester.requestFocusSafe()
+                                                            true
+                                                        }
+                                                        android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                            testSniFocusRequester.requestFocusSafe()
+                                                            true
+                                                        }
+                                                        android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                            if (onNavigateLeftToSidebar != null) {
+                                                                onNavigateLeftToSidebar()
+                                                                true
+                                                            } else false
+                                                        }
+                                                        else -> false
+                                                    }
+                                                } else false
+                                            }
+                                            .tvFocusableItem(
+                                                onClick = {
+                                                    HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                                    sniDropdownExpanded = true
+                                                },
+                                                shape = RoundedCornerShape(10.dp),
+                                                scaleFactor = 1.0f,
+                                                focusRequester = sniModeDropdownRequester
+                                            )
+                                            .clickable {
+                                                HapticEngine.get().perform(HapticType.SOFT_CLICK)
+                                                sniDropdownExpanded = true
+                                            }
+                                            .padding(horizontal = 14.dp, vertical = 12.dp)
+                                            .testTag("sni_mode_dropdown_trigger"),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        ) {
+                                            Text(
+                                                text = sniBypassMode.title,
+                                                color = CinemaTextWhite,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "Алгоритм фрагментации пакетов",
+                                                color = CinemaTextGray,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                        Icon(
+                                            imageVector = if (sniDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                            contentDescription = "Выбор алгоритма",
+                                            tint = CinemaPrimary,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+
+                                    DropdownMenu(
+                                        expanded = sniDropdownExpanded,
+                                        onDismissRequest = { sniDropdownExpanded = false },
+                                        modifier = Modifier
+                                            .background(CinemaDark)
+                                            .fillMaxWidth(0.85f)
+                                    ) {
+                                        SniBypassMode.entries.forEach { mode ->
+                                            val isSelected = (sniBypassMode == mode)
+                                            DropdownMenuItem(
+                                                leadingIcon = {
+                                                    Icon(
+                                                        imageVector = if (isSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                                                        contentDescription = null,
+                                                        tint = if (isSelected) CinemaPrimary else CinemaTextGray,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                },
+                                                text = {
+                                                    Column {
+                                                        Text(
+                                                            text = mode.title,
+                                                            color = if (isSelected) CinemaPrimary else CinemaTextWhite,
+                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                            fontSize = 13.sp
+                                                        )
+                                                        Text(
+                                                            text = mode.description,
+                                                            color = CinemaTextGray,
+                                                            fontSize = 11.sp
+                                                        )
+                                                    }
+                                                },
+                                                onClick = {
+                                                    HapticEngine.get().perform(HapticType.SELECTION)
+                                                    viewModel.setSniBypassMode(mode)
+                                                    sniCheckResult = null
+                                                    sniDropdownExpanded = false
+                                                },
+                                                modifier = Modifier.tvFocusableItem(
+                                                    onClick = {
+                                                        HapticEngine.get().perform(HapticType.SELECTION)
+                                                        viewModel.setSniBypassMode(mode)
+                                                        sniCheckResult = null
+                                                        sniDropdownExpanded = false
+                                                    },
+                                                    scaleFactor = 1.0f
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Кнопка проверки обхода DPI
+                                val testSniAction: () -> Unit = {
+                                    HapticEngine.get().perform(HapticType.CONFIRM)
+                                    isTestingSni = true
+                                    sniCheckResult = null
+                                    coroutineScope.launch {
+                                        val result = viewModel.testSniBypass()
+                                        isTestingSni = false
+                                        sniCheckResult = if (result.success) {
+                                            "Обход успешен: ${result.durationMs} мс • ${result.details}"
+                                        } else {
+                                            "Ошибка проверки: ${result.errorMessage ?: "сбой рукопожатия"}"
+                                        }
+                                    }
+                                }
+
+                                Button(
+                                    onClick = testSniAction,
+                                    enabled = !isTestingSni,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = CinemaMuted.copy(alpha = 0.5f),
+                                        contentColor = CinemaTextWhite
+                                    ),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .onKeyEvent { keyEvent ->
+                                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                                when (keyEvent.nativeKeyEvent.keyCode) {
+                                                    android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                                        sniModeDropdownRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                                        playbackCategoryRequester.requestFocusSafe()
+                                                        true
+                                                    }
+                                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                                        if (onNavigateLeftToSidebar != null) {
+                                                            onNavigateLeftToSidebar()
+                                                            true
+                                                        } else false
+                                                    }
+                                                    else -> false
+                                                }
+                                            } else false
+                                        }
+                                        .tvFocusableItem(
+                                            onClick = testSniAction,
+                                            shape = RoundedCornerShape(10.dp),
+                                            scaleFactor = 1.0f,
+                                            focusRequester = testSniFocusRequester
+                                        )
+                                        .testTag("test_sni_bypass_button")
+                                ) {
+                                    if (isTestingSni) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            color = CinemaTextWhite,
+                                            strokeWidth = 2.dp
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Проверка...", fontSize = 12.sp)
+                                    } else {
+                                        Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Проверить обход DPI", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+
+                                AnimatedVisibility(visible = sniCheckResult != null) {
+                                    sniCheckResult?.let { text ->
+                                        val isOk = text.startsWith("Обход успешен")
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 8.dp)
+                                                .background(
+                                                    if (isOk) CinemaGreen.copy(alpha = 0.12f) else CinemaPrimary.copy(alpha = 0.12f),
+                                                    RoundedCornerShape(8.dp)
+                                                )
+                                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                                .testTag("sni_check_result")
+                                        ) {
+                                            Text(
+                                                text = text,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = if (isOk) CinemaGreen else CinemaPrimary
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1088,7 +1616,11 @@ fun SettingsScreen(
                                     }
                                     android.view.KeyEvent.KEYCODE_DPAD_UP -> {
                                         if (isMirrorsExpanded) {
-                                            networkLastItemRequester.requestFocusSafe()
+                                            if (sniBypassEnabled) {
+                                                testSniFocusRequester.requestFocusSafe()
+                                            } else {
+                                                sniSwitchFocusRequester.requestFocusSafe()
+                                            }
                                             true
                                         } else {
                                             networkCategoryRequester.requestFocusSafe()

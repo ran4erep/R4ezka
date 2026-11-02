@@ -2711,6 +2711,28 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         SafeDns.clearCache()
     }
 
+    // Anti-DPI SNI Fragmentation (обход блокировок ТСПУ и провайдеров)
+    val sniBypassEnabled: StateFlow<Boolean> = com.example.data.SniFragmentationEngine.isEnabledFlow
+    val sniBypassMode: StateFlow<com.example.data.SniBypassMode> = com.example.data.SniFragmentationEngine.modeFlow
+
+    fun setSniBypassEnabled(enabled: Boolean) {
+        com.example.data.SniFragmentationEngine.setEnabled(enabled)
+    }
+
+    fun setSniBypassMode(mode: com.example.data.SniBypassMode) {
+        com.example.data.SniFragmentationEngine.setMode(mode)
+    }
+
+    suspend fun testSniBypass(): com.example.data.BypassTestResult = withContext(Dispatchers.IO) {
+        val host = try {
+            val url = java.net.URL(currentMirror.value)
+            url.host
+        } catch (_: Exception) {
+            "hdrezka.me"
+        }
+        com.example.data.SniFragmentationEngine.testBypass(host)
+    }
+
     fun setSelectedPlayer(playerKey: String) {
         RezkaService.setSelectedPlayer(playerKey)
     }
