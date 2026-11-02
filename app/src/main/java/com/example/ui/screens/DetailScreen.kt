@@ -38,6 +38,9 @@ import com.example.ui.haptics.HapticEngine
 import com.example.ui.haptics.HapticType
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -4138,20 +4141,11 @@ fun RegionBlockNotice(modifier: Modifier = Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Box(contentAlignment = Alignment.TopEnd) {
-            Icon(
-                imageVector = Icons.Default.Public,
-                contentDescription = null,
-                tint = CinemaTextWhite.copy(alpha = 0.9f),
-                modifier = Modifier.size(36.dp)
-            )
-            Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = null,
-                tint = Color(0xFFFF5252),
-                modifier = Modifier.size(16.dp)
-            )
-        }
+        Image(
+            painter = painterResource(R.drawable.globe),
+            contentDescription = null,
+            modifier = Modifier.size(36.dp)
+        )
         Text(
             text = "К сожалению, это видео не доступно в вашем регионе.\nВключите VPN и попробуйте ещё раз.",
             color = CinemaTextWhite,
