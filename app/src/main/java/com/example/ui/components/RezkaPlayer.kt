@@ -1223,6 +1223,11 @@ fun RezkaPlayer(
     val doTvSeekRight: () -> Unit = seekRight@{
         // Во время первоначальной буферизации перемотка пульта запрещена
         if (isLoading || !hasInitialPlayStarted) return@seekRight
+        // Новая серия перемотки (после скрытия индикатора или смена стороны) — начинаем счёт заново.
+        // Счётчик НЕ обнуляется при скрытии, иначе во время fade-out мелькает "+10"/"-10".
+        if (activeSeekSide != SeekSide.RIGHT) {
+            accumulatedSeekSeconds = 0
+        }
         val cur = exoPlayer.currentPosition
         val dur = exoPlayer.duration.coerceAtLeast(0L)
         val target = (cur + 10_000L).coerceAtMost(dur)
@@ -1236,13 +1241,16 @@ fun RezkaPlayer(
         tvSeekResetJob = scope.launch {
             delay(850)
             activeSeekSide = SeekSide.NONE
-            accumulatedSeekSeconds = 0
         }
     }
 
     val doTvSeekLeft: () -> Unit = seekLeft@{
         // Во время первоначальной буферизации перемотка пульта запрещена
         if (isLoading || !hasInitialPlayStarted) return@seekLeft
+        // Новая серия перемотки (после скрытия индикатора или смена стороны) — начинаем счёт заново
+        if (activeSeekSide != SeekSide.LEFT) {
+            accumulatedSeekSeconds = 0
+        }
         val cur = exoPlayer.currentPosition
         val target = (cur - 10_000L).coerceAtLeast(0L)
         exoPlayer.seekTo(target)
@@ -1255,7 +1263,6 @@ fun RezkaPlayer(
         tvSeekResetJob = scope.launch {
             delay(850)
             activeSeekSide = SeekSide.NONE
-            accumulatedSeekSeconds = 0
         }
     }
 
@@ -2380,9 +2387,9 @@ fun RezkaPlayer(
                                         gestureDismissJob = scope.launch {
                                             delay(850)
                                             gestureCurrentSide = SeekSide.NONE
-                                            gestureAccumulatedSec = 0
                                             activeSeekSide = SeekSide.NONE
-                                            accumulatedSeekSeconds = 0
+                                            // Не обнуляем счётчики здесь: они сбросятся при старте новой серии,
+                                            // чтобы во время fade-out не мигнуть "+10"/"-10".
                                         }
                                     } else if (delta < 320 && gestureLastTapIsLeft == isLeft) {
                                         // 2nd tap: activate double-tap seek!
@@ -2413,9 +2420,9 @@ fun RezkaPlayer(
                                         gestureDismissJob = scope.launch {
                                             delay(850)
                                             gestureCurrentSide = SeekSide.NONE
-                                            gestureAccumulatedSec = 0
                                             activeSeekSide = SeekSide.NONE
-                                            accumulatedSeekSeconds = 0
+                                            // Не обнуляем счётчики здесь: они сбросятся при старте новой серии,
+                                            // чтобы во время fade-out не мигнуть "+10"/"-10".
                                         }
                                     } else {
                                         // 1st tap: trigger controls toggle immediately with 200ms window for double tap
