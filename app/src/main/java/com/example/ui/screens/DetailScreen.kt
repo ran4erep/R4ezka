@@ -38,9 +38,7 @@ import com.example.ui.haptics.HapticEngine
 import com.example.ui.haptics.HapticType
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.Image
-import androidx.compose.ui.res.painterResource
-import com.example.R
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -4141,9 +4139,10 @@ fun RegionBlockNotice(modifier: Modifier = Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Image(
-            painter = painterResource(R.drawable.globe),
+        AsyncImage(
+            model = "file:///android_asset/globe_lock.svg",
             contentDescription = null,
+            colorFilter = ColorFilter.tint(CinemaTextWhite),
             modifier = Modifier.size(36.dp)
         )
         Text(
