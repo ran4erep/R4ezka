@@ -179,6 +179,9 @@ object ResilientSslEngine {
             }
         }
 
+        // Внедряем высокопроизводительную фабрику сокетов со SNI Fragmentation для обхода блокировок DPI/ТСПУ
+        builder.socketFactory(SniFragmentationEngine.socketFactory)
+
         val factory = sslSocketFactory
         val manager = resilientTrustManager
 
