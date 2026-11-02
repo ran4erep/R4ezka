@@ -91,17 +91,17 @@ object SniFragmentationEngine {
     private var sharedPreferences: SharedPreferences? = null
 
     @Volatile
-    var isEnabled: Boolean = true
+    var isEnabled: Boolean = false
         private set
 
     @Volatile
-    var mode: SniBypassMode = SniBypassMode.AUTO_SNI
+    var mode: SniBypassMode = SniBypassMode.OFF
         private set
 
-    private val _modeFlow = MutableStateFlow(SniBypassMode.AUTO_SNI)
+    private val _modeFlow = MutableStateFlow(SniBypassMode.OFF)
     val modeFlow: StateFlow<SniBypassMode> = _modeFlow.asStateFlow()
 
-    private val _isEnabledFlow = MutableStateFlow(true)
+    private val _isEnabledFlow = MutableStateFlow(false)
     val isEnabledFlow: StateFlow<Boolean> = _isEnabledFlow.asStateFlow()
 
     // Атомарная телеметрия для диагностики
@@ -120,8 +120,8 @@ object SniFragmentationEngine {
         try {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             sharedPreferences = prefs
-            isEnabled = prefs.getBoolean(KEY_ENABLED, true)
-            mode = SniBypassMode.fromId(prefs.getString(KEY_MODE, SniBypassMode.AUTO_SNI.id))
+            isEnabled = prefs.getBoolean(KEY_ENABLED, false)
+            mode = SniBypassMode.fromId(prefs.getString(KEY_MODE, SniBypassMode.OFF.id))
 
             _isEnabledFlow.value = isEnabled
             _modeFlow.value = mode
@@ -208,28 +208,37 @@ class SniSocketFactory(
     private val delegate: SocketFactory = SocketFactory.getDefault()
 ) : SocketFactory() {
 
+    /**
+     * Обёртка создаётся ТОЛЬКО когда обход реально включён (isEnabled && режим != OFF).
+     * При выключенном обходе возвращаем обычный нативный сокет — без каких-либо
+     * перехватов, фрагментации и надстроек (поведение ровно как до добавления Anti-DPI).
+     */
+    private fun wrapIfActive(socket: Socket): Socket {
+        return if (SniFragmentationEngine.isEnabled && SniFragmentationEngine.mode != SniBypassMode.OFF) {
+            SniFragmentingSocket(socket)
+        } else {
+            socket
+        }
+    }
+
     override fun createSocket(): Socket {
-        return SniFragmentingSocket(delegate.createSocket())
+        return wrapIfActive(delegate.createSocket())
     }
 
     override fun createSocket(host: String, port: Int): Socket {
-        val socket = delegate.createSocket(host, port)
-        return SniFragmentingSocket(socket)
+        return wrapIfActive(delegate.createSocket(host, port))
     }
 
     override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket {
-        val socket = delegate.createSocket(host, port, localHost, localPort)
-        return SniFragmentingSocket(socket)
+        return wrapIfActive(delegate.createSocket(host, port, localHost, localPort))
     }
 
     override fun createSocket(host: InetAddress, port: Int): Socket {
-        val socket = delegate.createSocket(host, port)
-        return SniFragmentingSocket(socket)
+        return wrapIfActive(delegate.createSocket(host, port))
     }
 
     override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket {
-        val socket = delegate.createSocket(address, port, localAddress, localPort)
-        return SniFragmentingSocket(socket)
+        return wrapIfActive(delegate.createSocket(address, port, localAddress, localPort))
     }
 }
 
