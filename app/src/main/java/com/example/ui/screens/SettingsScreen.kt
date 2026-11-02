@@ -53,6 +53,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.R
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
 import com.example.data.DownloadHelper
 import com.example.data.DnsPreference
 import com.example.data.ResilientSslEngine
@@ -3740,7 +3742,6 @@ fun SettingsScreen(
         val supportUrl = stringResource(R.string.support_project_url)
         val supportTitle = stringResource(R.string.support_project)
         val supportDisplay = stringResource(R.string.support_project_link_display)
-        val supportIconUrl = stringResource(R.string.support_project_icon_url)
         val supportIconDesc = stringResource(R.string.support_project_icon_desc)
         val errorOpenLinkText = stringResource(R.string.error_cannot_open_link)
         val developerLabel = stringResource(R.string.developer_label)
@@ -3820,13 +3821,9 @@ fun SettingsScreen(
                                 .background(Color(0xFFFFDD00)),
                             contentAlignment = Alignment.Center
                         ) {
-                            AsyncImage(
-                                model = ImageRequest.Builder(context)
-                                    .data(supportIconUrl)
-                                    .crossfade(200)
-                                    .build(),
+                            Image(
+                                painter = painterResource(R.drawable.bmc_icon),
                                 contentDescription = supportIconDesc,
-                                contentScale = ContentScale.Fit,
                                 modifier = Modifier.size(26.dp)
                             )
                         }
