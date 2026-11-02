@@ -2,6 +2,7 @@ package com.example.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.provider.Settings
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,6 +47,10 @@ object FirebaseSyncManager {
 
     private var prefs: SharedPreferences? = null
 
+    // Стабильный идентификатор устройства: настройки синхронизируются раздельно для каждого устройства
+    // при одном и том же аккаунте (телефон / планшет / ТВ).
+    private var deviceId: String = ""
+
     private val _isLoggedIn = MutableStateFlow(false)
     val isLoggedIn: StateFlow<Boolean> = _isLoggedIn.asStateFlow()
 
@@ -74,6 +79,14 @@ object FirebaseSyncManager {
 
     fun init(context: Context, repository: RezkaRepository) {
         prefs = context.getSharedPreferences("r4ezka_firebase_auth", Context.MODE_PRIVATE)
+        // Стабильный ID устройства: только ANDROID_ID (переживает переустановку, привязан к устройству+подписи).
+        // Никаких случайных UUID — нужна точность.
+        val androidId = try {
+            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+        } catch (_: Exception) {
+            null
+        }
+        deviceId = androidId?.takeIf { it.isNotBlank() } ?: "android_unknown"
         val savedUser = prefs?.getString("auth_username", null)
         val savedKey = prefs?.getString("auth_user_key", null)
         val savedAvatar = prefs?.getString("auth_avatar", null)
@@ -596,6 +609,166 @@ object FirebaseSyncManager {
         }
     }
 
+    // Поля настроек, которые хранятся раздельно по устройствам (кодируются внутри значения).
+    private val SETTING_FIELDS = arrayOf(
+        "mirror", "defaultQuality", "autoNextEpisode", "dirtyHandsMode",
+        "preferredSubtitleLang", "subtitleTextScale", "resizeMode", "tvMode",
+        "cardGridMode", "seriesBadgeMode", "defaultCatalogType", "defaultCatalogSection",
+        "defaultCatalogGenre", "defaultCatalogCountry"
+    )
+
+    private val DEVICE_TOKEN_REGEX = Regex("""AndroidId=([^()]*)\(([^)]*)\)""")
+
+    /**
+     * Формат значения для конкретного устройства:
+     * "AndroidId=12345(https://rezka-tv.org),AndroidId=78901(https://rezka.ag)"
+     * — никаких новых веток БД, всё живёт внутри существующего значения поля.
+     */
+    private fun extractMyValue(raw: String): String? {
+        if (raw.isEmpty()) return null
+        if (!raw.startsWith("AndroidId=")) return raw // старое «плоское» legacy-значение
+        for (m in DEVICE_TOKEN_REGEX.findAll(raw)) {
+            if (m.groupValues[1] == deviceId) return m.groupValues[2]
+        }
+        return null
+    }
+
+    private fun upsertMyValue(current: String, value: String): String {
+        val entries = mutableListOf<Pair<String, String>>()
+        for (m in DEVICE_TOKEN_REGEX.findAll(current)) {
+            entries.add(m.groupValues[1] to m.groupValues[2])
+        }
+        entries.removeAll { it.first == deviceId }
+        entries.add(deviceId to value)
+        return entries.joinToString(",") { "AndroidId=${it.first}(${it.second})" }
+    }
+
+    /**
+     * Собирает значения настроек конкретного устройства (по его AndroidId-токенам).
+     */
+    private fun tokenValuesFor(root: JSONObject, targetId: String): JSONObject {
+        val out = JSONObject()
+        for (field in SETTING_FIELDS) {
+            val raw = root.optString(field, "")
+            var found: String? = null
+            for (m in DEVICE_TOKEN_REGEX.findAll(raw)) {
+                if (m.groupValues[1] == targetId) {
+                    found = m.groupValues[2]
+                    break
+                }
+            }
+            if (found != null) out.put(field, found)
+        }
+        return out
+    }
+
+    /**
+     * Применяет облачные настройки устройства к локальным предпочтениям приложения.
+     */
+    private suspend fun applyRemoteSettings(setJson: JSONObject) {
+        val remoteMirror = setJson.optString("mirror")
+        val remoteQuality = setJson.optString("defaultQuality")
+        val hasAutoNext = setJson.has("autoNextEpisode")
+        val remoteAutoNext = setJson.optBoolean("autoNextEpisode", true)
+        val remoteSubLang = setJson.optString("preferredSubtitleLang", "")
+        val remoteSubScale = if (setJson.has("subtitleTextScale")) setJson.optDouble("subtitleTextScale").toFloat() else null
+        val remoteResize = setJson.optString("resizeMode", "")
+        val remoteTvMode = setJson.optString("tvMode", "")
+        val remoteGridMode = setJson.optString("cardGridMode", "")
+
+        if (remoteMirror.isNotBlank() && remoteMirror != RezkaService.currentMirror.value) {
+            withContext(Dispatchers.Main) {
+                RezkaService.setMirror(remoteMirror)
+                Unit
+            }
+        }
+        if (remoteQuality.isNotBlank() && remoteQuality != RezkaService.defaultQuality.value) {
+            withContext(Dispatchers.Main) {
+                RezkaService.setDefaultQuality(remoteQuality)
+            }
+        }
+        if (hasAutoNext && remoteAutoNext != RezkaService.autoNextEpisode.value) {
+            withContext(Dispatchers.Main) {
+                RezkaService.setAutoNextEpisode(remoteAutoNext)
+            }
+        }
+        val hasDirtyHands = setJson.has("dirtyHandsMode")
+        val remoteDirtyHands = setJson.optBoolean("dirtyHandsMode", false)
+        if (hasDirtyHands && remoteDirtyHands != RezkaService.dirtyHandsMode.value) {
+            withContext(Dispatchers.Main) {
+                RezkaService.setDirtyHandsMode(remoteDirtyHands)
+            }
+        }
+        if (remoteSubLang.isNotBlank() && remoteSubLang != RezkaService.preferredSubtitleLang.value) {
+            withContext(Dispatchers.Main) {
+                RezkaService.setPreferredSubtitleLang(remoteSubLang)
+            }
+        }
+        if (remoteSubScale != null && remoteSubScale > 0.01f && kotlin.math.abs(remoteSubScale - RezkaService.subtitleTextScale.value) > 0.002f) {
+            withContext(Dispatchers.Main) {
+                RezkaService.setSubtitleTextScale(remoteSubScale)
+            }
+        }
+        if (remoteResize.isNotBlank() && remoteResize != RezkaService.defaultResizeMode.value) {
+            withContext(Dispatchers.Main) {
+                RezkaService.setDefaultResizeMode(remoteResize)
+            }
+        }
+        if (remoteTvMode.isNotBlank() && remoteTvMode != RezkaService.tvModePreference.value) {
+            withContext(Dispatchers.Main) {
+                RezkaService.setTvModePreference(remoteTvMode)
+            }
+        }
+        if (remoteGridMode.isNotBlank() && remoteGridMode != RezkaService.cardGridMode.value) {
+            withContext(Dispatchers.Main) {
+                RezkaService.setCardGridMode(remoteGridMode)
+            }
+        }
+        val remoteBadgeMode = setJson.optString("seriesBadgeMode", "")
+        if (remoteBadgeMode.isNotBlank()) {
+            val parsedMode = com.example.ui.util.SeriesBadgeMode.fromId(remoteBadgeMode)
+            if (parsedMode != RezkaService.seriesBadgeMode.value) {
+                withContext(Dispatchers.Main) {
+                    RezkaService.setSeriesBadgeMode(parsedMode)
+                }
+            }
+        }
+        val remoteType = setJson.optString("defaultCatalogType", "")
+        if (remoteType.isNotBlank()) {
+            try {
+                val t = if (remoteType.equals("ALL", ignoreCase = true)) null else RezkaType.valueOf(remoteType)
+                if (t != RezkaType.COLLECTIONS && t != RezkaService.defaultCatalogType.value) {
+                    withContext(Dispatchers.Main) {
+                        RezkaService.setDefaultCatalogType(t)
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        val remoteSection = setJson.optString("defaultCatalogSection", "")
+        if (remoteSection.isNotBlank()) {
+            try {
+                val s = SectionType.valueOf(remoteSection)
+                if (s != RezkaService.defaultCatalogSection.value) {
+                    withContext(Dispatchers.Main) {
+                        RezkaService.setDefaultCatalogSection(s)
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        val remoteGenre = setJson.optString("defaultCatalogGenre", "")
+        if (remoteGenre != RezkaService.defaultCatalogGenre.value) {
+            withContext(Dispatchers.Main) {
+                RezkaService.setDefaultCatalogGenre(remoteGenre)
+            }
+        }
+        val remoteCountry = setJson.optString("defaultCatalogCountry", "")
+        if (remoteCountry != RezkaService.defaultCatalogCountry.value) {
+            withContext(Dispatchers.Main) {
+                RezkaService.setDefaultCatalogCountry(remoteCountry)
+            }
+        }
+    }
+
     /**
      * Сохранение настроек приложения (зеркало, качество видео, автопереключение серии, субтитры, масштаб, режим интерфейса и сетка карточек) в облако
      */
@@ -618,26 +791,41 @@ object FirebaseSyncManager {
         val key = _userKey.value ?: return
         scope.launch {
             try {
+                // Читаем текущий узел настроек, чтобы не затереть записи других устройств
+                val currentRoot = try {
+                    val resp = httpClient.newCall(
+                        Request.Builder().url("$DATABASE_URL/users/$key/settings.json").get().build()
+                    ).execute()
+                    if (resp.isSuccessful) {
+                        val b = resp.body?.string()?.trim().orEmpty()
+                        if (b.isNotEmpty() && b != "null") JSONObject(b) else JSONObject()
+                    } else JSONObject()
+                } catch (_: Exception) {
+                    JSONObject()
+                }
+
+                fun cur(field: String): String = currentRoot.optString(field, "")
+
                 val json = JSONObject().apply {
-                    put("mirror", mirror)
-                    put("defaultQuality", quality)
-                    put("autoNextEpisode", autoNextEpisode)
-                    put("dirtyHandsMode", dirtyHandsMode)
-                    put("preferredSubtitleLang", preferredSubtitleLang)
-                    put("subtitleTextScale", subtitleTextScale.toDouble())
-                    put("resizeMode", resizeMode)
-                    put("tvMode", tvMode)
-                    put("cardGridMode", cardGridMode)
-                    put("seriesBadgeMode", seriesBadgeMode)
-                    put("defaultCatalogType", defaultCatalogType)
-                    put("defaultCatalogSection", defaultCatalogSection)
-                    put("defaultCatalogGenre", defaultCatalogGenre)
-                    put("defaultCatalogCountry", defaultCatalogCountry)
+                    put("mirror", upsertMyValue(cur("mirror"), mirror))
+                    put("defaultQuality", upsertMyValue(cur("defaultQuality"), quality))
+                    put("autoNextEpisode", upsertMyValue(cur("autoNextEpisode"), autoNextEpisode.toString()))
+                    put("dirtyHandsMode", upsertMyValue(cur("dirtyHandsMode"), dirtyHandsMode.toString()))
+                    put("preferredSubtitleLang", upsertMyValue(cur("preferredSubtitleLang"), preferredSubtitleLang))
+                    put("subtitleTextScale", upsertMyValue(cur("subtitleTextScale"), subtitleTextScale.toString()))
+                    put("resizeMode", upsertMyValue(cur("resizeMode"), resizeMode))
+                    put("tvMode", upsertMyValue(cur("tvMode"), tvMode))
+                    put("cardGridMode", upsertMyValue(cur("cardGridMode"), cardGridMode))
+                    put("seriesBadgeMode", upsertMyValue(cur("seriesBadgeMode"), seriesBadgeMode))
+                    put("defaultCatalogType", upsertMyValue(cur("defaultCatalogType"), defaultCatalogType))
+                    put("defaultCatalogSection", upsertMyValue(cur("defaultCatalogSection"), defaultCatalogSection))
+                    put("defaultCatalogGenre", upsertMyValue(cur("defaultCatalogGenre"), defaultCatalogGenre))
+                    put("defaultCatalogCountry", upsertMyValue(cur("defaultCatalogCountry"), defaultCatalogCountry))
                     put("updatedAt", System.currentTimeMillis())
                 }
                 val request = Request.Builder()
                     .url("$DATABASE_URL/users/$key/settings.json")
-                    .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .patch(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 executeAndLog(request, "onSettingsUpdated")
             } catch (e: Exception) {
@@ -993,117 +1181,65 @@ object FirebaseSyncManager {
                 }
             }
 
-            // 3. Синхронизация Настроек (зеркало, качество видео, автопереключение серии, субтитры, масштаб)
+            // 3. Синхронизация Настроек — раздельно по устройствам ВНУТРИ значений полей.
+            // Никаких новых веток БД: поле хранит "AndroidId=123(…),AndroidId=456(…)".
             try {
                 val setReq = Request.Builder().url("$DATABASE_URL/users/$key/settings.json").get().build()
                 val setResp = httpClient.newCall(setReq).execute()
                 if (setResp.isSuccessful) {
                     val setBody = setResp.body?.string()?.trim() ?: ""
                     if (setBody != "null" && setBody.isNotEmpty()) {
-                        val setJson = JSONObject(setBody)
-                        val remoteMirror = setJson.optString("mirror")
-                        val remoteQuality = setJson.optString("defaultQuality")
-                        val hasAutoNext = setJson.has("autoNextEpisode")
-                        val remoteAutoNext = setJson.optBoolean("autoNextEpisode", true)
-                        val remoteSubLang = setJson.optString("preferredSubtitleLang", "")
-                        val remoteSubScale = if (setJson.has("subtitleTextScale")) setJson.optDouble("subtitleTextScale").toFloat() else null
-                        val remoteResize = setJson.optString("resizeMode", "")
-                        val remoteTvMode = setJson.optString("tvMode", "")
-                        val remoteGridMode = setJson.optString("cardGridMode", "")
+                        val rootJson = JSONObject(setBody)
 
-                        if (remoteMirror.isNotBlank() && remoteMirror != RezkaService.currentMirror.value) {
-                            withContext(Dispatchers.Main) {
-                                RezkaService.setMirror(remoteMirror)
-                                Unit
-                            }
+                        // Есть ли ещё старые «плоские» значения без разделения по устройствам
+                        val hasLegacy = SETTING_FIELDS.any { f ->
+                            val raw = rootJson.optString(f, "")
+                            raw.isNotEmpty() && !raw.startsWith("AndroidId=")
                         }
-                        if (remoteQuality.isNotBlank() && remoteQuality != RezkaService.defaultQuality.value) {
-                            withContext(Dispatchers.Main) {
-                                RezkaService.setDefaultQuality(remoteQuality)
+                        val firstDeviceId = rootJson.optString("firstDeviceId", "")
+                        val myTokens = tokenValuesFor(rootJson, deviceId)
+
+                        when {
+                            // 1. Первое устройство аккаунта: наследуем старые плоские настройки,
+                            //    создаём свой токен и помечаем себя как первое устройство.
+                            hasLegacy -> {
+                                val legacy = JSONObject()
+                                for (f in SETTING_FIELDS) {
+                                    val raw = rootJson.optString(f, "")
+                                    if (raw.isNotEmpty() && !raw.startsWith("AndroidId=")) legacy.put(f, raw)
+                                }
+                                if (legacy.length() > 0) applyRemoteSettings(legacy)
+                                onSettingsUpdated()
+                                try {
+                                    val mark = JSONObject().put("firstDeviceId", deviceId)
+                                    val markReq = Request.Builder()
+                                        .url("$DATABASE_URL/users/$key/settings.json")
+                                        .patch(mark.toString().toRequestBody(JSON_MEDIA_TYPE))
+                                        .build()
+                                    executeAndLog(markReq, "syncAll_markFirstDevice")
+                                } catch (_: Exception) {}
                             }
-                        }
-                        if (hasAutoNext && remoteAutoNext != RezkaService.autoNextEpisode.value) {
-                            withContext(Dispatchers.Main) {
-                                RezkaService.setAutoNextEpisode(remoteAutoNext)
-                            }
-                        }
-                        val hasDirtyHands = setJson.has("dirtyHandsMode")
-                        val remoteDirtyHands = setJson.optBoolean("dirtyHandsMode", false)
-                        if (hasDirtyHands && remoteDirtyHands != RezkaService.dirtyHandsMode.value) {
-                            withContext(Dispatchers.Main) {
-                                RezkaService.setDirtyHandsMode(remoteDirtyHands)
-                            }
-                        }
-                        if (remoteSubLang.isNotBlank() && remoteSubLang != RezkaService.preferredSubtitleLang.value) {
-                            withContext(Dispatchers.Main) {
-                                RezkaService.setPreferredSubtitleLang(remoteSubLang)
-                            }
-                        }
-                        if (remoteSubScale != null && remoteSubScale > 0.01f && kotlin.math.abs(remoteSubScale - RezkaService.subtitleTextScale.value) > 0.002f) {
-                            withContext(Dispatchers.Main) {
-                                RezkaService.setSubtitleTextScale(remoteSubScale)
-                            }
-                        }
-                        if (remoteResize.isNotBlank() && remoteResize != RezkaService.defaultResizeMode.value) {
-                            withContext(Dispatchers.Main) {
-                                RezkaService.setDefaultResizeMode(remoteResize)
-                            }
-                        }
-                        if (remoteTvMode.isNotBlank() && remoteTvMode != RezkaService.tvModePreference.value) {
-                            withContext(Dispatchers.Main) {
-                                RezkaService.setTvModePreference(remoteTvMode)
-                            }
-                        }
-                        if (remoteGridMode.isNotBlank() && remoteGridMode != RezkaService.cardGridMode.value) {
-                            withContext(Dispatchers.Main) {
-                                RezkaService.setCardGridMode(remoteGridMode)
-                            }
-                        }
-                        val remoteBadgeMode = setJson.optString("seriesBadgeMode", "")
-                        if (remoteBadgeMode.isNotBlank()) {
-                            val parsedMode = com.example.ui.util.SeriesBadgeMode.fromId(remoteBadgeMode)
-                            if (parsedMode != RezkaService.seriesBadgeMode.value) {
-                                withContext(Dispatchers.Main) {
-                                    RezkaService.setSeriesBadgeMode(parsedMode)
+
+                            // 2. У этого устройства уже есть свои токены — применяем свои настройки,
+                            //    при необходимости дописывая недостающие поля.
+                            myTokens.length() > 0 -> {
+                                applyRemoteSettings(myTokens)
+                                if (myTokens.length() < SETTING_FIELDS.size) {
+                                    onSettingsUpdated()
                                 }
                             }
-                        }
-                        val remoteType = setJson.optString("defaultCatalogType", "")
-                        if (remoteType.isNotBlank()) {
-                            try {
-                                val t = if (remoteType.equals("ALL", ignoreCase = true)) null else RezkaType.valueOf(remoteType)
-                                if (t != RezkaType.COLLECTIONS && t != RezkaService.defaultCatalogType.value) {
-                                    withContext(Dispatchers.Main) {
-                                        RezkaService.setDefaultCatalogType(t)
-                                    }
-                                }
-                            } catch (_: Exception) {}
-                        }
-                        val remoteSection = setJson.optString("defaultCatalogSection", "")
-                        if (remoteSection.isNotBlank()) {
-                            try {
-                                val s = SectionType.valueOf(remoteSection)
-                                if (s != RezkaService.defaultCatalogSection.value) {
-                                    withContext(Dispatchers.Main) {
-                                        RezkaService.setDefaultCatalogSection(s)
-                                    }
-                                }
-                            } catch (_: Exception) {}
-                        }
-                        val remoteGenre = setJson.optString("defaultCatalogGenre", "")
-                        if (remoteGenre != RezkaService.defaultCatalogGenre.value) {
-                            withContext(Dispatchers.Main) {
-                                RezkaService.setDefaultCatalogGenre(remoteGenre)
+
+                            // 3. Новое устройство: наследуем настройки ПЕРВОГО устройства, затем создаём свой токен.
+                            firstDeviceId.isNotEmpty() && firstDeviceId != deviceId -> {
+                                val inherited = tokenValuesFor(rootJson, firstDeviceId)
+                                if (inherited.length() > 0) applyRemoteSettings(inherited)
+                                onSettingsUpdated()
                             }
-                        }
-                        val remoteCountry = setJson.optString("defaultCatalogCountry", "")
-                        if (remoteCountry != RezkaService.defaultCatalogCountry.value) {
-                            withContext(Dispatchers.Main) {
-                                RezkaService.setDefaultCatalogCountry(remoteCountry)
-                            }
+
+                            // 4. Новый пользователь / нет данных: создаём токен с текущими (дефолтными) настройками.
+                            else -> onSettingsUpdated()
                         }
                     } else {
-                        // В облаке ещё нет настроек пользователя - выгружаем текущие
                         onSettingsUpdated()
                     }
                 }
