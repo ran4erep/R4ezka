@@ -1681,6 +1681,17 @@ fun RezkaPlayer(
                         return@onKeyEvent true
                     }
 
+                    // Во время первоначальной буферизации (плавающие «черепки») с пульта
+                    // работает ТОЛЬКО кнопка «Назад»: не показываем контролы/PiP/блокировку
+                    // экрана и не даём перемотать или выбрать что-либо (и на ТВ, и на телефоне).
+                    if ((isLoading || !hasInitialPlayStarted) && playerErrorMessage == null) {
+                        if (keyCode == android.view.KeyEvent.KEYCODE_BACK) {
+                            onBack()
+                            return@onKeyEvent true
+                        }
+                        return@onKeyEvent true
+                    }
+
                     // Handle navigation inside anchored context menus (Quality, Speed, Translator, Subtitles)
                     if (activePlayerMenu != PlayerMenuType.NONE) {
                         val availableSpeeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
