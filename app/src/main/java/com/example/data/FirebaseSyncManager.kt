@@ -149,6 +149,21 @@ object FirebaseSyncManager {
         return sb.toString()
     }
 
+    /**
+     * Секретный ключ пользователя для новой схемы: SHA-256(логин + ":" + пароль).
+     * Знает его только владелец аккаунта, поэтому путь недоступен посторонним даже при известном логине.
+     */
+    fun generateSecretKey(username: String, password: String): String {
+        val normalized = username.trim().lowercase()
+        val md = MessageDigest.getInstance("SHA-256")
+        val bytes = md.digest("$normalized:$password".toByteArray(Charsets.UTF_8))
+        val sb = StringBuilder(64)
+        for (b in bytes) {
+            sb.append(String.format("%02x", b))
+        }
+        return sb.toString()
+    }
+
     private fun generateSalt(): String {
         val random = SecureRandom()
         val bytes = ByteArray(16)
@@ -202,18 +217,23 @@ object FirebaseSyncManager {
             return@withContext Result.failure(Exception("Пароль должен содержать минимум 4 символа"))
         }
 
-        val key = generateUserKey(cleanName)
+        val key = generateSecretKey(cleanName, password)
+        val legacyKey = generateUserKey(cleanName)
 
         try {
-            // 1. Проверяем, существует ли уже такой пользователь
-            val checkUrl = "$DATABASE_URL/users/$key/profile.json"
-            val checkRequest = Request.Builder().url(checkUrl).get().build()
-            val checkResp = httpClient.newCall(checkRequest).execute()
-
-            if (checkResp.isSuccessful) {
-                val body = checkResp.body?.string()?.trim() ?: "null"
-                if (body != "null" && body.isNotEmpty()) {
-                    return@withContext Result.failure(Exception("Пользователь с таким логином уже зарегистрирован"))
+            // 1. Проверяем, существует ли уже такой пользователь (и в новой, и в старой схеме)
+            val checkUrls = listOf(
+                "$DATABASE_URL/users/$key/private/profile.json",
+                "$DATABASE_URL/users/$legacyKey/profile.json"
+            )
+            for (checkUrl in checkUrls) {
+                val checkRequest = Request.Builder().url(checkUrl).get().build()
+                val checkResp = httpClient.newCall(checkRequest).execute()
+                if (checkResp.isSuccessful) {
+                    val body = checkResp.body?.string()?.trim() ?: "null"
+                    if (body != "null" && body.isNotEmpty()) {
+                        return@withContext Result.failure(Exception("Пользователь с таким логином уже зарегистрирован"))
+                    }
                 }
             }
 
@@ -230,7 +250,7 @@ object FirebaseSyncManager {
             }
 
             val putProfileRequest = Request.Builder()
-                .url("$DATABASE_URL/users/$key/profile.json")
+                .url("$DATABASE_URL/users/$key/private/profile.json")
                 .put(profileJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                 .build()
 
@@ -245,7 +265,7 @@ object FirebaseSyncManager {
                 prefs?.edit()?.putString("auth_avatar", avatar)?.apply()
                 try {
                     val avatarReq = Request.Builder()
-                        .url("$DATABASE_URL/users/$key/avatar.json")
+                        .url("$DATABASE_URL/users/$key/private/avatar.json")
                         .put(JSONObject.quote(avatar).toRequestBody(JSON_MEDIA_TYPE))
                         .build()
                     httpClient.newCall(avatarReq).execute().close()
@@ -277,7 +297,8 @@ object FirebaseSyncManager {
     }
 
     /**
-     * Вход пользователя с проверкой хэша пароля
+     * Вход пользователя: сначала новая секретная схема, затем фолбэк на старую
+     * с автоматической миграцией данных на секретный путь.
      */
     suspend fun login(
         username: String,
@@ -289,57 +310,93 @@ object FirebaseSyncManager {
             return@withContext Result.failure(Exception("Заполните логин и пароль"))
         }
 
-        val key = generateUserKey(cleanName)
+        val key = generateSecretKey(cleanName, password)
+        val legacyKey = generateUserKey(cleanName)
 
         try {
-            val profileUrl = "$DATABASE_URL/users/$key/profile.json"
-            val request = Request.Builder().url(profileUrl).get().build()
-            val response = httpClient.newCall(request).execute()
-
-            if (!response.isSuccessful) {
-                return@withContext Result.failure(Exception("Ошибка базы данных: HTTP ${response.code}"))
-            }
-
-            val body = response.body?.string()?.trim() ?: "null"
-            if (body == "null" || body.isEmpty()) {
-                return@withContext Result.failure(Exception("Пользователь с таким логином не найден"))
-            }
-
-            val json = JSONObject(body)
-            val storedHash = json.optString("passwordHash", "")
-            val storedSalt = json.optString("salt", "")
-            val realUsername = json.optString("username", cleanName)
-            val registeredAt = json.optLong("registeredAt", 0L)
-
-            if (storedHash.isEmpty() || storedSalt.isEmpty()) {
-                return@withContext Result.failure(Exception("Ошибка структуры профиля в базе данных"))
-            }
-
-            val computedHash = hashPassword(password, storedSalt)
-            if (computedHash != storedHash) {
-                return@withContext Result.failure(Exception("Неверный пароль"))
-            }
-
-            // Загружаем аватар пользователя из базы
+            // 1. Новая схема: секретный ключ зависит от пароля, путь никто не знает.
+            var profile: JSONObject? = null
             var fetchedAvatar: String? = null
-            try {
-                val avReq = Request.Builder().url("$DATABASE_URL/users/$key/avatar.json").get().build()
-                val avResp = httpClient.newCall(avReq).execute()
-                if (avResp.isSuccessful) {
-                    val avBody = avResp.body?.string()?.trim() ?: "null"
-                    if (avBody != "null" && avBody.isNotEmpty()) {
-                        fetchedAvatar = if (avBody.startsWith("\"") && avBody.endsWith("\"")) {
-                            avBody.substring(1, avBody.length - 1)
-                                .replace("\\\"", "\"")
-                                .replace("\\\\", "\\")
-                                .replace("\\/", "/")
-                        } else {
-                            avBody
-                        }
+            var registeredAt = 0L
+            var realUsername = cleanName
+
+            runCatching {
+                val resp = httpClient.newCall(
+                    Request.Builder().url("$DATABASE_URL/users/$key/private/profile.json").get().build()
+                ).execute()
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string()?.trim() ?: "null"
+                    if (body != "null" && body.isNotEmpty()) {
+                        profile = JSONObject(body)
                     }
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Error fetching avatar", e)
+            }
+
+            if (profile != null) {
+                val storedHash = profile!!.optString("passwordHash", "")
+                val storedSalt = profile!!.optString("salt", "")
+                realUsername = profile!!.optString("username", cleanName).ifBlank { cleanName }
+                registeredAt = profile!!.optLong("registeredAt", 0L)
+                if (storedHash.isEmpty() || storedSalt.isEmpty()) {
+                    return@withContext Result.failure(Exception("Ошибка структуры профиля в базе данных"))
+                }
+                val computedHash = hashPassword(password, storedSalt)
+                if (computedHash != storedHash) {
+                    return@withContext Result.failure(Exception("Неверный пароль"))
+                }
+                try {
+                    val avResp = httpClient.newCall(
+                        Request.Builder().url("$DATABASE_URL/users/$key/private/avatar.json").get().build()
+                    ).execute()
+                    if (avResp.isSuccessful) {
+                        val avBody = avResp.body?.string()?.trim() ?: "null"
+                        if (avBody != "null" && avBody.isNotEmpty()) {
+                            fetchedAvatar = decodeJsonString(avBody)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error fetching avatar", e)
+                }
+            } else {
+                // 2. Фолбэк: старая схема (пользователь ещё не мигрировал).
+                val legacyResp = httpClient.newCall(
+                    Request.Builder().url("$DATABASE_URL/users/$legacyKey/profile.json").get().build()
+                ).execute()
+                if (!legacyResp.isSuccessful) {
+                    return@withContext Result.failure(Exception("Ошибка базы данных: HTTP ${legacyResp.code}"))
+                }
+                val body = legacyResp.body?.string()?.trim() ?: "null"
+                if (body == "null" || body.isEmpty()) {
+                    return@withContext Result.failure(Exception("Пользователь с таким логином не найден"))
+                }
+                val json = JSONObject(body)
+                val storedHash = json.optString("passwordHash", "")
+                val storedSalt = json.optString("salt", "")
+                realUsername = json.optString("username", cleanName).ifBlank { cleanName }
+                registeredAt = json.optLong("registeredAt", 0L)
+                if (storedHash.isEmpty() || storedSalt.isEmpty()) {
+                    return@withContext Result.failure(Exception("Ошибка структуры профиля в базе данных"))
+                }
+                val computedHash = hashPassword(password, storedSalt)
+                if (computedHash != storedHash) {
+                    return@withContext Result.failure(Exception("Неверный пароль"))
+                }
+                try {
+                    val avResp = httpClient.newCall(
+                        Request.Builder().url("$DATABASE_URL/users/$legacyKey/avatar.json").get().build()
+                    ).execute()
+                    if (avResp.isSuccessful) {
+                        val avBody = avResp.body?.string()?.trim() ?: "null"
+                        if (avBody != "null" && avBody.isNotEmpty()) {
+                            fetchedAvatar = decodeJsonString(avBody)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error fetching avatar", e)
+                }
+
+                // 3. Автомиграция: переносим все данные на секретный путь.
+                migrateLegacyUser(legacyKey, key)
             }
 
             // Успешная авторизация
@@ -374,6 +431,46 @@ object FirebaseSyncManager {
         }
     }
 
+    /** Распаковывает JSON-строку из RTDB (например, аватар) в обычную строку. */
+    private fun decodeJsonString(raw: String): String {
+        val t = raw.trim()
+        return if (t.startsWith("\"") && t.endsWith("\"")) {
+            t.substring(1, t.length - 1)
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\")
+                .replace("\\/", "/")
+        } else {
+            t
+        }
+    }
+
+    /** Переносит данные старой схемы в новую секретную ветку. */
+    private suspend fun migrateLegacyUser(legacyKey: String, newKey: String) {
+        val fields = listOf(
+            "profile", "avatar", "settings", "favorites", "history",
+            "subscriptions", "searchHistory", "voice_commands", "voiceCommands",
+            "itemResizeModes", "updatedAt"
+        )
+        for (field in fields) {
+            try {
+                val resp = httpClient.newCall(
+                    Request.Builder().url("$DATABASE_URL/users/$legacyKey/$field.json").get().build()
+                ).execute()
+                if (!resp.isSuccessful) continue
+                val body = resp.body?.string()?.trim() ?: "null"
+                resp.close()
+                if (body == "null" || body.isEmpty()) continue
+                val putReq = Request.Builder()
+                    .url("$DATABASE_URL/users/$newKey/private/$field.json")
+                    .put(body.toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                executeAndLog(putReq, "migrate_$field")
+            } catch (e: Exception) {
+                Log.w(TAG, "Migration failed for $field: ${e.message}")
+            }
+        }
+    }
+
     /**
      * Обновление аватара пользователя (синхронно локально + выгрузка в облако)
      */
@@ -391,12 +488,12 @@ object FirebaseSyncManager {
 
             val req = if (avatar != null) {
                 Request.Builder()
-                    .url("$DATABASE_URL/users/$key/avatar.json")
+                    .url("$DATABASE_URL/users/$key/private/avatar.json")
                     .put(JSONObject.quote(avatar).toRequestBody(JSON_MEDIA_TYPE))
                     .build()
             } else {
                 Request.Builder()
-                    .url("$DATABASE_URL/users/$key/avatar.json")
+                    .url("$DATABASE_URL/users/$key/private/avatar.json")
                     .delete()
                     .build()
             }
@@ -461,7 +558,7 @@ object FirebaseSyncManager {
                 val safeId = safeFirebaseKey(entity.id)
                 val json = favoriteToJson(entity)
                 val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/favorites/$safeId.json")
+                    .url("$DATABASE_URL/users/$key/private/favorites/$safeId.json")
                     .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 executeAndLog(request, "onFavoriteAdded")
@@ -480,7 +577,7 @@ object FirebaseSyncManager {
             try {
                 val safeId = safeFirebaseKey(itemId)
                 val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/favorites/$safeId.json")
+                    .url("$DATABASE_URL/users/$key/private/favorites/$safeId.json")
                     .delete()
                     .build()
                 executeAndLog(request, "onFavoriteRemoved")
@@ -500,7 +597,7 @@ object FirebaseSyncManager {
                 val safeId = safeFirebaseKey(entity.id)
                 val json = subscriptionToJson(entity)
                 val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/subscriptions/$safeId.json")
+                    .url("$DATABASE_URL/users/$key/private/subscriptions/$safeId.json")
                     .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 executeAndLog(request, "onSubscriptionAdded")
@@ -519,7 +616,7 @@ object FirebaseSyncManager {
             try {
                 val safeId = safeFirebaseKey(itemId)
                 val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/subscriptions/$safeId.json")
+                    .url("$DATABASE_URL/users/$key/private/subscriptions/$safeId.json")
                     .delete()
                     .build()
                 executeAndLog(request, "onSubscriptionRemoved")
@@ -551,7 +648,7 @@ object FirebaseSyncManager {
                     put("hasUnseenUpdate", hasUpdate)
                 }
                 val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/subscriptions/$safeId.json")
+                    .url("$DATABASE_URL/users/$key/private/subscriptions/$safeId.json")
                     .patch(patchJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 executeAndLog(request, "onSubscriptionProgressUpdated")
@@ -595,7 +692,7 @@ object FirebaseSyncManager {
                 try {
                     val json = historyToJson(item)
                     val request = Request.Builder()
-                        .url("$DATABASE_URL/users/$key/history/$safeId.json")
+                        .url("$DATABASE_URL/users/$key/private/history/$safeId.json")
                         .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                         .build()
                     executeAndLog(request, "flushProgress_$safeId")
@@ -621,7 +718,7 @@ object FirebaseSyncManager {
                     put("updatedAt", System.currentTimeMillis())
                 }
                 val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/itemResizeModes/$safeId.json")
+                    .url("$DATABASE_URL/users/$key/private/itemResizeModes/$safeId.json")
                     .put(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 executeAndLog(request, "onItemResizeModeUpdated")
@@ -646,7 +743,7 @@ object FirebaseSyncManager {
     private suspend fun fetchSettingsRoot(key: String): JSONObject {
         return try {
             val resp = httpClient.newCall(
-                Request.Builder().url("$DATABASE_URL/users/$key/settings.json").get().build()
+                Request.Builder().url("$DATABASE_URL/users/$key/private/settings.json").get().build()
             ).execute()
             if (resp.isSuccessful) {
                 val b = resp.body?.string()?.trim().orEmpty()
@@ -802,7 +899,7 @@ object FirebaseSyncManager {
                 }
                 body.put("updatedAt", System.currentTimeMillis())
                 val bodyStr = body.toString()
-                val url = "$DATABASE_URL/users/$key/settings.json"
+                val url = "$DATABASE_URL/users/$key/private/settings.json"
 
                 // Сначала PATCH (частичное обновление), при неудаче — полная замена PUT
                 val patchReq = Request.Builder().url(url)
@@ -950,7 +1047,7 @@ object FirebaseSyncManager {
                     put(actionId, compressedBase64)
                 }
                 val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/voice_commands.json")
+                    .url("$DATABASE_URL/users/$key/private/voice_commands.json")
                     .patch(json.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 executeAndLog(request, "onVoiceCommandUpdated")
@@ -969,7 +1066,7 @@ object FirebaseSyncManager {
         scope.launch {
             try {
                 val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/voice_commands/$actionId.json")
+                    .url("$DATABASE_URL/users/$key/private/voice_commands/$actionId.json")
                     .delete()
                     .build()
                 executeAndLog(request, "onVoiceCommandDeleted")
@@ -990,7 +1087,7 @@ object FirebaseSyncManager {
             try {
                 val safeId = safeFirebaseKey(historyId)
                 val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/history/$safeId.json")
+                    .url("$DATABASE_URL/users/$key/private/history/$safeId.json")
                     .delete()
                     .build()
                 executeAndLog(request, "onHistoryDeleted")
@@ -1009,7 +1106,7 @@ object FirebaseSyncManager {
             try {
                 // Читаем текущую историю из облака, находим совпадения по itemId и удаляем их
                 val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/history.json")
+                    .url("$DATABASE_URL/users/$key/private/history.json")
                     .get()
                     .build()
                 val resp = httpClient.newCall(request).execute()
@@ -1028,7 +1125,7 @@ object FirebaseSyncManager {
                         }
                         for (k in keysToDelete) {
                             val delReq = Request.Builder()
-                                .url("$DATABASE_URL/users/$key/history/$k.json")
+                                .url("$DATABASE_URL/users/$key/private/history/$k.json")
                                 .delete()
                                 .build()
                             executeAndLog(delReq, "deleteHistory_$k")
@@ -1050,7 +1147,7 @@ object FirebaseSyncManager {
         scope.launch {
             try {
                 val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/history.json")
+                    .url("$DATABASE_URL/users/$key/private/history.json")
                     .delete()
                     .build()
                 executeAndLog(request, "onAllHistoryCleared")
@@ -1083,7 +1180,7 @@ object FirebaseSyncManager {
                     }
                 }
                 val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/searchHistory.json")
+                    .url("$DATABASE_URL/users/$key/private/searchHistory.json")
                     .put(historyObj.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 executeAndLog(request, "onSearchHistoryUpdated")
@@ -1102,7 +1199,7 @@ object FirebaseSyncManager {
         scope.launch {
             try {
                 val request = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/searchHistory.json")
+                    .url("$DATABASE_URL/users/$key/private/searchHistory.json")
                     .delete()
                     .build()
                 executeAndLog(request, "onSearchHistoryCleared")
@@ -1146,7 +1243,7 @@ object FirebaseSyncManager {
         try {
             // 0. Синхронизация профиля (дата регистрации)
             try {
-                val profReq = Request.Builder().url("$DATABASE_URL/users/$key/profile.json").get().build()
+                val profReq = Request.Builder().url("$DATABASE_URL/users/$key/private/profile.json").get().build()
                 val profResp = httpClient.newCall(profReq).execute()
                 if (profResp.isSuccessful) {
                     val body = profResp.body?.string()?.trim() ?: ""
@@ -1165,7 +1262,7 @@ object FirebaseSyncManager {
 
             // 1. Синхронизация Избранного
             try {
-            val favReq = Request.Builder().url("$DATABASE_URL/users/$key/favorites.json").get().build()
+            val favReq = Request.Builder().url("$DATABASE_URL/users/$key/private/favorites.json").get().build()
             val favResp = httpClient.newCall(favReq).execute()
             val remoteFavorites = mutableListOf<FavoriteEntity>()
 
@@ -1202,7 +1299,7 @@ object FirebaseSyncManager {
             if (favUpdateJson.length() > 0) {
                 try {
                     val patchRequest = Request.Builder()
-                        .url("$DATABASE_URL/users/$key/favorites.json")
+                        .url("$DATABASE_URL/users/$key/private/favorites.json")
                         .patch(favUpdateJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                         .build()
                     executeAndLog(patchRequest, "syncAll_patchFavorites")
@@ -1217,7 +1314,7 @@ object FirebaseSyncManager {
 
             // 2. Синхронизация Истории просмотров (серии, сезоны, секунды прогресса)
             try {
-            val histReq = Request.Builder().url("$DATABASE_URL/users/$key/history.json").get().build()
+            val histReq = Request.Builder().url("$DATABASE_URL/users/$key/private/history.json").get().build()
             val histResp = httpClient.newCall(histReq).execute()
             val remoteHistory = mutableListOf<WatchHistoryEntity>()
 
@@ -1282,7 +1379,7 @@ object FirebaseSyncManager {
             if (histUpdateJson.length() > 0) {
                 try {
                     val patchRequest = Request.Builder()
-                        .url("$DATABASE_URL/users/$key/history.json")
+                        .url("$DATABASE_URL/users/$key/private/history.json")
                         .patch(histUpdateJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                         .build()
                     executeAndLog(patchRequest, "syncAll_patchHistory")
@@ -1298,7 +1395,7 @@ object FirebaseSyncManager {
             // 3. Синхронизация Настроек — раздельно по устройствам ВНУТРИ значений полей:
             //    "deviceId=123(CARTOON),deviceId=456(MOVIE)". Никаких новых веток БД.
             try {
-                val setReq = Request.Builder().url("$DATABASE_URL/users/$key/settings.json").get().build()
+                val setReq = Request.Builder().url("$DATABASE_URL/users/$key/private/settings.json").get().build()
                 val setResp = httpClient.newCall(setReq).execute()
                 if (setResp.isSuccessful) {
                     val setBody = setResp.body?.string()?.trim() ?: ""
@@ -1345,7 +1442,7 @@ object FirebaseSyncManager {
 
             // 3.5. Синхронизация индивидуальных настроек масштабирования для фильмов/сериалов
             try {
-                val itemScaleReq = Request.Builder().url("$DATABASE_URL/users/$key/itemResizeModes.json").get().build()
+                val itemScaleReq = Request.Builder().url("$DATABASE_URL/users/$key/private/itemResizeModes.json").get().build()
                 val itemScaleResp = httpClient.newCall(itemScaleReq).execute()
                 if (itemScaleResp.isSuccessful) {
                     val bodyStr = itemScaleResp.body?.string()?.trim() ?: ""
@@ -1369,7 +1466,7 @@ object FirebaseSyncManager {
 
             // 4. Синхронизация Истории поиска (недавние поисковые запросы)
             try {
-                val searchReq = Request.Builder().url("$DATABASE_URL/users/$key/searchHistory.json").get().build()
+                val searchReq = Request.Builder().url("$DATABASE_URL/users/$key/private/searchHistory.json").get().build()
                 val searchResp = httpClient.newCall(searchReq).execute()
                 val remoteQueries = mutableListOf<String>()
                 if (searchResp.isSuccessful) {
@@ -1421,7 +1518,7 @@ object FirebaseSyncManager {
 
             // 5. Синхронизация Подписок на сериалы
             try {
-                val subReq = Request.Builder().url("$DATABASE_URL/users/$key/subscriptions.json").get().build()
+                val subReq = Request.Builder().url("$DATABASE_URL/users/$key/private/subscriptions.json").get().build()
                 val subResp = httpClient.newCall(subReq).execute()
                 val remoteSubs = mutableListOf<SeriesSubscriptionEntity>()
 
@@ -1473,7 +1570,7 @@ object FirebaseSyncManager {
                 if (subUpdateJson.length() > 0) {
                     try {
                         val patchRequest = Request.Builder()
-                            .url("$DATABASE_URL/users/$key/subscriptions.json")
+                            .url("$DATABASE_URL/users/$key/private/subscriptions.json")
                             .patch(subUpdateJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                             .build()
                         executeAndLog(patchRequest, "syncAll_patchSubscriptions")
@@ -1487,7 +1584,7 @@ object FirebaseSyncManager {
 
             // 6. Синхронизация голосовых команд режима «Грязные руки» (со сжатием ZLIB)
             try {
-                val voiceReq = Request.Builder().url("$DATABASE_URL/users/$key/voice_commands.json").get().build()
+                val voiceReq = Request.Builder().url("$DATABASE_URL/users/$key/private/voice_commands.json").get().build()
                 val voiceResp = httpClient.newCall(voiceReq).execute()
                 if (voiceResp.isSuccessful) {
                     val voiceBody = voiceResp.body?.string()?.trim() ?: ""
@@ -1504,7 +1601,7 @@ object FirebaseSyncManager {
                         patchJson.put(cmdAction, cmdData)
                     }
                     val patchReq = Request.Builder()
-                        .url("$DATABASE_URL/users/$key/voice_commands.json")
+                        .url("$DATABASE_URL/users/$key/private/voice_commands.json")
                         .patch(patchJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                         .build()
                     executeAndLog(patchReq, "syncAll_patchVoiceCommands")
@@ -1529,7 +1626,7 @@ object FirebaseSyncManager {
                     favJson.put(safeId, favoriteToJson(fav))
                 }
                 val req = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/favorites.json")
+                    .url("$DATABASE_URL/users/$key/private/favorites.json")
                     .patch(favJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 executeAndLog(req, "uploadLocalData_favorites")
@@ -1543,7 +1640,7 @@ object FirebaseSyncManager {
                     histJson.put(safeId, historyToJson(hist))
                 }
                 val req = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/history.json")
+                    .url("$DATABASE_URL/users/$key/private/history.json")
                     .patch(histJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 executeAndLog(req, "uploadLocalData_history")
@@ -1564,7 +1661,7 @@ object FirebaseSyncManager {
                     subJson.put(safeId, subscriptionToJson(sub))
                 }
                 val req = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/subscriptions.json")
+                    .url("$DATABASE_URL/users/$key/private/subscriptions.json")
                     .patch(subJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 executeAndLog(req, "uploadLocalData_subscriptions")
@@ -1578,7 +1675,7 @@ object FirebaseSyncManager {
                     voiceJson.put(a, d)
                 }
                 val req = Request.Builder()
-                    .url("$DATABASE_URL/users/$key/voice_commands.json")
+                    .url("$DATABASE_URL/users/$key/private/voice_commands.json")
                     .patch(voiceJson.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
                 executeAndLog(req, "uploadLocalData_voiceCommands")
