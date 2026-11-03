@@ -3193,7 +3193,14 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissMirrorAudit() {
         auditJob?.cancel()
+        val wasFirstLaunch = isFirstLaunchAuditSession
         _mirrorAuditState.value = MirrorAuditUiState.Idle
+        // Если аудит первого запуска закрыт без выбора — считаем его выполненным,
+        // чтобы он не перезапускался при каждом следующем холодном старте
+        // (иначе он мог в любой момент заново сменить зеркало).
+        if (wasFirstLaunch) {
+            RezkaService.markFirstLaunchAuditDone()
+        }
     }
 
     companion object {

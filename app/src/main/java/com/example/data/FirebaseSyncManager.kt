@@ -934,12 +934,19 @@ object FirebaseSyncManager {
         return written
     }
 
+    /** Убирает поле зеркала из набора значений (для наследования/легаси). */
+    private fun withoutMirror(values: Map<String, String>): Map<String, String> =
+        values.filterKeys { it != "mirror" }
+
     /**
      * Применяет «сырые» значения (из токенов или legacy) к локальным настройкам.
      */
     private suspend fun applySettingsValues(values: Map<String, String>) {
         if (values.isEmpty()) return
 
+        // Зеркало применяется из облака ТОЛЬКО если это значение собственного токена устройства
+        // (см. syncAll — из наследования/легаси зеркало исключается). Чужое устройство
+        // не может молча сменить зеркало этого устройства.
         values["mirror"]?.takeIf { it.isNotBlank() && it != RezkaService.currentMirror.value }
             ?.let { withContext(Dispatchers.Main) { RezkaService.setMirror(it) } }
         values["defaultQuality"]?.takeIf { it.isNotBlank() && it != RezkaService.defaultQuality.value }
@@ -1420,10 +1427,12 @@ object FirebaseSyncManager {
 
                         when {
                             // 1. Старые «плоские» значения без токенов — миграция: становимся первым устройством.
+                            // Зеркало исключается: легаси не должно молча сменить локальный выбор.
                             hasLegacyFlat(rootJson) -> {
                                 val legacy = legacyRawValues(rootJson)
-                                applySettingsValues(legacy)
-                                writeDeviceSettings(legacy, markFirst = true)
+                                val legacySafe = withoutMirror(legacy)
+                                applySettingsValues(legacySafe)
+                                writeDeviceSettings(legacySafe, markFirst = true)
                             }
 
                             // 2. У этого устройства уже есть токены — применяем свои настройки.
@@ -1435,9 +1444,11 @@ object FirebaseSyncManager {
                             }
 
                             // 3. Есть токены других устройств — наследуем первое устройство и создаём свои токены.
+                            // Зеркало исключается: чужое устройство не может сменить зеркало этого.
                             firstId != null -> {
                                 val inherited = tokenValueMap(rootJson, firstId).ifEmpty { anyTokenValueMap(rootJson) }
-                                if (inherited.isNotEmpty()) applySettingsValues(inherited)
+                                val inheritedSafe = withoutMirror(inherited)
+                                if (inheritedSafe.isNotEmpty()) applySettingsValues(inheritedSafe)
                                 writeDeviceSettings(currentRawValues(), markFirst = false)
                             }
 
