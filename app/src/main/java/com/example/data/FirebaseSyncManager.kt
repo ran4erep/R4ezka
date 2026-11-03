@@ -113,15 +113,19 @@ object FirebaseSyncManager {
         val savedKey = prefs?.getString("auth_user_key", null)
         val savedAvatar = prefs?.getString("auth_avatar", null)
         val savedRegAt = prefs?.getLong("auth_registered_at", 0L) ?: 0L
+        val savedScheme = prefs?.getString("auth_scheme", null)
 
-        if (!savedAvatar.isNullOrBlank()) {
-            _currentUserAvatar.value = savedAvatar
-        }
-        if (savedRegAt > 0L) {
-            _currentUserRegisteredAt.value = savedRegAt
-        }
+        // Сессия восстанавливается только для новой секретной схемы (метка v2).
+        // Старые сессии (легаси-ключ) сбрасываются: пользователь один раз входит заново,
+        // и его данные корректно мигрируют на секретный ключ.
+        if (!savedUser.isNullOrBlank() && !savedKey.isNullOrBlank() && savedScheme == "v2") {
+            if (!savedAvatar.isNullOrBlank()) {
+                _currentUserAvatar.value = savedAvatar
+            }
+            if (savedRegAt > 0L) {
+                _currentUserRegisteredAt.value = savedRegAt
+            }
 
-        if (!savedUser.isNullOrBlank() && !savedKey.isNullOrBlank()) {
             _currentUser.value = savedUser
             _userKey.value = savedKey
             _isLoggedIn.value = true
@@ -130,6 +134,14 @@ object FirebaseSyncManager {
             scope.launch {
                 syncAll(repository)
             }
+        } else {
+            prefs?.edit()
+                ?.remove("auth_username")
+                ?.remove("auth_user_key")
+                ?.remove("auth_avatar")
+                ?.remove("auth_registered_at")
+                ?.remove("auth_scheme")
+                ?.apply()
         }
     }
 
