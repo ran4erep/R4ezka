@@ -224,6 +224,10 @@ fun MainContent(viewModel: RezkaViewModel = viewModel()) {
 
     LaunchedEffect(currentTab, navigationStack.size) {
         if (currentTab == NavTab.HISTORY && navigationStack.isEmpty()) {
+            // Синхронизация с облаком при открытии экрана «История»:
+            // закрывает случай, когда приложение не сворачивалось (ON_RESUME не срабатывает),
+            // а пользователь просто зашёл в историю.
+            viewModel.onForegroundResumed()
             viewModel.checkHistorySeriesUpdates(force = true)
         }
     }
