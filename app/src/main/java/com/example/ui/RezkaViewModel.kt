@@ -31,6 +31,8 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
+private const val FOREGROUND_SYNC_DEBOUNCE_MS = 15_000L
+
 sealed interface CatalogState {
     object Loading : CatalogState
     data class Success(val items: List<RezkaItem>) : CatalogState
@@ -2705,6 +2707,25 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             FirebaseSyncManager.syncAll(repository)
             onFinished?.invoke()
+        }
+    }
+
+    private var lastForegroundSyncAtMs = 0L
+
+    /**
+     * Синхронизация с облаком при возврате приложения на передний план.
+     * Закрывает проблему «тёплого» возврата: раньше данные (история и т.п.)
+     * обновлялись только при холодном старте или входе в аккаунт.
+     * Дебаунсинг защищает от частых срабатываний ON_RESUME.
+     */
+    fun onForegroundResumed() {
+        if (!FirebaseSyncManager.isLoggedIn.value) return
+        val now = System.currentTimeMillis()
+        if (now - lastForegroundSyncAtMs < FOREGROUND_SYNC_DEBOUNCE_MS) return
+        lastForegroundSyncAtMs = now
+        viewModelScope.launch {
+            delay(1000L)
+            FirebaseSyncManager.syncAll(repository)
         }
     }
 

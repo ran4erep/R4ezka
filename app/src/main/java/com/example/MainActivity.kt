@@ -39,6 +39,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.RezkaItem
 import com.example.data.ScreenState
@@ -95,6 +98,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Синхронизация с облаком при каждом возврате приложения на передний план
+        // (история и другие данные должны обновляться и при «тёплом» возврате, а не только при холодном старте).
+        lifecycle.addObserver(object : LifecycleEventObserver {
+            override fun onStateChanged(source: LifecycleOwner, event: Lifecycle.Event) {
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    viewModel.onForegroundResumed()
+                }
+            }
+        })
         try {
             SeriesUpdateScheduler.schedulePeriodicCheck(this)
             viewModel.triggerManualSeriesCheck(this)
