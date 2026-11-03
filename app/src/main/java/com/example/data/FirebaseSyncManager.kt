@@ -295,6 +295,7 @@ object FirebaseSyncManager {
             prefs?.edit()
                 ?.putString("auth_username", cleanName)
                 ?.putString("auth_user_key", key)
+                ?.putString("auth_scheme", "v2")
                 ?.putLong("auth_registered_at", regAt)
                 ?.apply()
 
@@ -423,6 +424,7 @@ object FirebaseSyncManager {
             val editor = prefs?.edit()
                 ?.putString("auth_username", realUsername)
                 ?.putString("auth_user_key", key)
+                ?.putString("auth_scheme", "v2")
             if (registeredAt > 0L) {
                 editor?.putLong("auth_registered_at", registeredAt)
             }
