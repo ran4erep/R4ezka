@@ -33,7 +33,8 @@ object CardGridEngine {
         cardGridMode: String,
         availableWidth: Dp,
         availableHeight: Dp,
-        isLandscapeOrTv: Boolean
+        isLandscapeOrTv: Boolean,
+        topPadding: Dp = 10.dp
     ): ResolvedCardGrid {
         val parsed = RezkaService.parseCardGrid(cardGridMode)
 
@@ -57,14 +58,14 @@ object CardGridEngine {
                 availableHeight > 680.dp -> 3
                 else -> 2
             }
-            // Запас на вертикальные паддинги сетки мобильного каталога
-            // (top 10dp + bottom 80dp в портрете).
-            val reserved = 90.dp
+            // Высота карточки считается так, чтобы ровно targetRows рядов заполнили
+            // видимую область от верхнего паддинга до нижней границы экрана.
+            // Тогда следующий ряд начинается ровно за экраном и не «выглядывает».
             val totalVerticalSpacings = (vSpacing.value * (targetRows - 1)).dp
             val minAllowedHeight = (40f * targetRows).dp
-            val netHeight = (availableHeight - reserved - totalVerticalSpacings)
+            val usableHeight = (availableHeight - topPadding - totalVerticalSpacings)
                 .coerceAtLeast(minAllowedHeight)
-            val cardHeight = (netHeight.value / targetRows).dp
+            val cardHeight = (usableHeight.value / targetRows).dp
 
             return ResolvedCardGrid(
                 columns = cols,
@@ -104,12 +105,11 @@ object CardGridEngine {
         val hSpacing = if (targetCols >= 8) 6.dp else if (targetCols >= 6) 8.dp else 12.dp
         val vSpacing = if (targetRows >= 5) 4.dp else if (targetRows >= 4) 6.dp else if (targetRows >= 3) 8.dp else 12.dp
 
-        // Вычисляем точную высоту карточки, чтобы ровно targetRows рядов поместились в availableHeight.
-        // Учитываем вертикальные паддинги сетки ТВ/ландшафта (top 12dp + bottom 48dp).
-        val reserved = 60.dp
+        // Вычисляем точную высоту карточки, чтобы ровно targetRows рядов заполнили
+        // видимую область от верхнего паддинга до нижней границы экрана.
         val totalVerticalSpacings = (vSpacing.value * (targetRows - 1)).dp
         val minAllowedHeight = (40f * targetRows).dp
-        val netHeight = (availableHeight - reserved - totalVerticalSpacings).coerceAtLeast(minAllowedHeight)
+        val netHeight = (availableHeight - topPadding - totalVerticalSpacings).coerceAtLeast(minAllowedHeight)
         val calculatedCardHeight = (netHeight.value / targetRows).dp
 
         val totalHorizontalSpacings = (hSpacing.value * (targetCols - 1)).dp
@@ -134,13 +134,15 @@ object CardGridEngine {
     fun calculateForTv(
         cardGridMode: String,
         availableWidth: Dp,
-        availableHeight: Dp
+        availableHeight: Dp,
+        topPadding: Dp = 12.dp
     ): ResolvedCardGrid {
         return calculate(
             cardGridMode = cardGridMode,
             availableWidth = availableWidth,
             availableHeight = availableHeight,
-            isLandscapeOrTv = true
+            isLandscapeOrTv = true,
+            topPadding = topPadding
         )
     }
 }

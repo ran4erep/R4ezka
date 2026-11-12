@@ -1013,8 +1013,9 @@ fun CatalogScreen(
                                     com.example.ui.tv.CardGridEngine.calculate(
                                         cardGridMode = cardGridMode,
                                         availableWidth = maxWidth - 32.dp,
-                                        availableHeight = maxHeight - 12.dp,
-                                        isLandscapeOrTv = isLandscape
+                                        availableHeight = maxHeight,
+                                        isLandscapeOrTv = isLandscape,
+                                        topPadding = 10.dp
                                     )
                                 }
 
