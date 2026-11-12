@@ -1261,7 +1261,8 @@ fun RezkaItemCard(
                     color = CinemaTextWhite,
                     fontSize = if (isUltraDense) 8.5.sp else if (columnsCount >= 7) 10.sp else if (isDense) 11.sp else 13.sp,
                     fontWeight = FontWeight.Bold,
-                    maxLines = 1,
+                    // Название может переноситься на вторую строку, чтобы не обрезаться
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (!isUltraDense || (cardHeight != androidx.compose.ui.unit.Dp.Unspecified && cardHeight.value >= 85f)) {

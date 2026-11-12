@@ -21,10 +21,11 @@ data class ResolvedCardGrid(
  * Высокопроизводительный движок вычисления геометрии сетки карточек фильмов/сериалов.
  * 
  * Особенности:
- * 1. В ландшафтной ориентации телефона и на телевизоре карточки подстраиваются по высоте
- *    так, чтобы на видимом экране помещалось ровно целое число рядов (без обрезания нижнего ряда).
- * 2. Для портретной (вертикальной) ориентации телефона сохраняется привычный естественный вид
- *    со стандартными пропорциями постера 2:3 и свободным вертикальным скроллингом.
+ * 1. Во всех режимах (Авто и ручные конфигурации) и на всех устройствах (телефон, планшет, ТВ)
+ *    высота карточки вычисляется так, чтобы целое число рядов гарантированно помещалось
+ *    в видимую область экрана (с учётом вертикальных паддингов сетки) — без обрезания нижнего ряда.
+ * 2. Целевое число рядов для ручных конфигураций берётся из настроек пользователя,
+ *    для «Авто» — вычисляется по высоте экрана.
  */
 object CardGridEngine {
 
@@ -36,7 +37,7 @@ object CardGridEngine {
     ): ResolvedCardGrid {
         val parsed = RezkaService.parseCardGrid(cardGridMode)
 
-        // Вертикальный телефон: оставляем стандартное поведение со свободным вертикальным скроллом
+        // Вертикальный телефон
         if (!isLandscapeOrTv) {
             val cols = parsed?.columns ?: 2
             val hSpacing = if (cols >= 6) 8.dp else 14.dp
@@ -47,11 +48,29 @@ object CardGridEngine {
             } else {
                 Dp.Unspecified
             }
+
+            // Целевое число рядов: у ручных конфигураций — заданное пользователем,
+            // у «Авто» — по высоте экрана.
+            val targetRows = when {
+                parsed != null -> parsed.rows ?: 1
+                availableHeight < 330.dp -> 1
+                availableHeight > 680.dp -> 3
+                else -> 2
+            }
+            // Запас на вертикальные паддинги сетки мобильного каталога
+            // (top 10dp + bottom 80dp в портрете).
+            val reserved = 90.dp
+            val totalVerticalSpacings = (vSpacing.value * (targetRows - 1)).dp
+            val minAllowedHeight = (40f * targetRows).dp
+            val netHeight = (availableHeight - reserved - totalVerticalSpacings)
+                .coerceAtLeast(minAllowedHeight)
+            val cardHeight = (netHeight.value / targetRows).dp
+
             return ResolvedCardGrid(
                 columns = cols,
-                rows = parsed?.rows ?: 1,
-                cardHeight = Dp.Unspecified,
-                isExactRowsFitted = false,
+                rows = targetRows,
+                cardHeight = cardHeight,
+                isExactRowsFitted = true,
                 horizontalSpacing = hSpacing,
                 verticalSpacing = vSpacing,
                 estimatedCardWidth = estWidth
@@ -85,10 +104,12 @@ object CardGridEngine {
         val hSpacing = if (targetCols >= 8) 6.dp else if (targetCols >= 6) 8.dp else 12.dp
         val vSpacing = if (targetRows >= 5) 4.dp else if (targetRows >= 4) 6.dp else if (targetRows >= 3) 8.dp else 12.dp
 
-        // Вычисляем точную высоту карточки, чтобы ровно targetRows рядов поместились в availableHeight
+        // Вычисляем точную высоту карточки, чтобы ровно targetRows рядов поместились в availableHeight.
+        // Учитываем вертикальные паддинги сетки ТВ/ландшафта (top 12dp + bottom 48dp).
+        val reserved = 60.dp
         val totalVerticalSpacings = (vSpacing.value * (targetRows - 1)).dp
         val minAllowedHeight = (40f * targetRows).dp
-        val netHeight = (availableHeight - totalVerticalSpacings).coerceAtLeast(minAllowedHeight)
+        val netHeight = (availableHeight - reserved - totalVerticalSpacings).coerceAtLeast(minAllowedHeight)
         val calculatedCardHeight = (netHeight.value / targetRows).dp
 
         val totalHorizontalSpacings = (hSpacing.value * (targetCols - 1)).dp

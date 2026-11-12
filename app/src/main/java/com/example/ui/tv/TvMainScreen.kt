@@ -1239,7 +1239,8 @@ private fun TvHeroPreview(
                         color = CinemaTextWhite,
                         fontSize = if (isCompact) 16.sp else 20.sp,
                         fontWeight = FontWeight.Bold,
-                        maxLines = 1,
+                        // На ТВ/больших экранах название может переноситься на вторую строку
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
 
@@ -2634,7 +2635,9 @@ private fun TvMovieCard(
                     color = CinemaTextWhite,
                     fontSize = if (isUltraDense) 8.5.sp else if (isDense) 10.sp else 12.sp,
                     fontWeight = FontWeight.Bold,
-                    maxLines = 1,
+                    // Название может переноситься на вторую строку, чтобы не обрезаться
+                    // на узких карточках при большом количестве колонок.
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (!isUltraDense || (cardHeight != Dp.Unspecified && cardHeight.value >= 85f)) {
