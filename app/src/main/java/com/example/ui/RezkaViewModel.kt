@@ -641,7 +641,9 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             _isLoadingMore.value = true
             try {
                 var consecutiveEmptyBatches = 0
-                while (matching < 24 && !_isEndReached.value && consecutiveEmptyBatches < 5) {
+                // Ограничение объёма докачки за один цикл, чтобы не выглядеть как сканер
+                var checkedPageBatches = 0
+                while (matching < 24 && !_isEndReached.value && consecutiveEmptyBatches < 5 && checkedPageBatches < 6) {
                     val page1 = currentCatalogPage + 1
                     val page2 = currentCatalogPage + 2
 
@@ -714,7 +716,8 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     if (batchHasEnd || matching >= 24) break
-                    delay(30)
+                    checkedPageBatches++
+                    delay(350)
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -2999,7 +3002,9 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         auditJob = viewModelScope.launch(Dispatchers.IO) {
-            val chunks = mirrors.chunked(5)
+            // Меньше параллелизма, чтобы не выглядеть как сканер и не провоцировать
+            // временные WAF-блокады (403) для домашнего IP.
+            val chunks = mirrors.chunked(2)
             var selectedWorkingMirror: String? = null
             var selectedCatalogItems: List<RezkaItem>? = null
             var firstCatalogOnlyMirror: String? = null
@@ -3112,6 +3117,9 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 if (selectedWorkingMirror != null) {
                     break
                 }
+
+                // Пауза между пачками зеркал — чтобы не создавать всплески запросов
+                kotlinx.coroutines.delay(350)
             }
 
             if (!isActive) return@launch
