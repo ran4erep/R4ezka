@@ -768,13 +768,59 @@ object FirebaseSyncManager {
         }
     }
 
-    private val DEVICE_TOKEN_REGEX = Regex("""deviceId=([^()]*)\(([^)]*)\)""")
+    // Токены настроек пишутся с префиксом deviceId=. Исторически (до перехода на
+    // deviceId=) в облаке могли остаться токены со старым префиксом AndroidId= —
+    // оба префикса распознаются, чтобы значение профиля не «затерялось».
+    // Символы ( ) внутри значений кодируются (percent-encoding), чтобы не ломали парсер.
+    private fun encodeTokenValue(value: String): String =
+        value.replace("%", "%25").replace("(", "%28").replace(")", "%29")
 
+    private fun decodeTokenValue(encoded: String): String =
+        encoded.replace("%28", "(").replace("%29", ")").replace("%25", "%")
+
+    private fun isTokenized(raw: String): Boolean =
+        raw.contains("deviceId=") || raw.contains("AndroidId=")
+
+    /** Устойчивый парсер токенов настроек вида "deviceId=<id>(<значение>),…". */
     private fun parseTokens(raw: String): List<Pair<String, String>> {
         if (raw.isEmpty()) return emptyList()
         val result = mutableListOf<Pair<String, String>>()
-        for (m in DEVICE_TOKEN_REGEX.findAll(raw)) {
-            result.add(m.groupValues[1] to m.groupValues[2])
+        var i = 0
+        val n = raw.length
+        while (i < n) {
+            val di = raw.indexOf("deviceId=", i)
+            val ai = raw.indexOf("AndroidId=", i)
+            val start = when {
+                di == -1 && ai == -1 -> return result
+                di == -1 -> ai
+                ai == -1 -> di
+                else -> if (di < ai) di else ai
+            }
+            val markerLen = if (raw.startsWith("AndroidId=", start)) 10 else 9
+            val idStart = start + markerLen
+            val open = raw.indexOf('(', idStart)
+            if (open == -1) break
+            val id = raw.substring(idStart, open)
+            var depth = 0
+            var j = open
+            var closed = false
+            while (j < n) {
+                when (raw[j]) {
+                    '(' -> depth++
+                    ')' -> {
+                        depth--
+                        if (depth == 0) {
+                            closed = true
+                            break
+                        }
+                    }
+                }
+                j++
+            }
+            if (!closed) break
+            val value = raw.substring(open + 1, j)
+            result.add(id to decodeTokenValue(value))
+            i = j + 1
         }
         return result
     }
@@ -782,7 +828,7 @@ object FirebaseSyncManager {
     private fun upsertToken(current: String, value: String): String {
         val entries = parseTokens(current).toMutableList()
         entries.removeAll { it.first == deviceId }
-        entries.add(deviceId to value)
+        entries.add(deviceId to encodeTokenValue(value))
         return entries.joinToString(",") { "deviceId=${it.first}(${it.second})" }
     }
 
@@ -819,7 +865,7 @@ object FirebaseSyncManager {
     private fun hasLegacyFlat(root: JSONObject): Boolean =
         SETTING_FIELDS.any { f ->
             val raw = root.optString(f, "")
-            raw.isNotEmpty() && !raw.contains("deviceId=")
+            raw.isNotEmpty() && !isTokenized(raw)
         }
 
     // Правила БД для tvMode допускают только auto | tv | mobile,
@@ -861,7 +907,7 @@ object FirebaseSyncManager {
         val current = currentRawValues()
         fun flat(field: String): String {
             val raw = root.optString(field, "")
-            return if (raw.isNotEmpty() && !raw.contains("deviceId=")) raw else current[field] ?: ""
+            return if (raw.isNotEmpty() && !isTokenized(raw)) raw else current[field] ?: ""
         }
         val scale = flat("subtitleTextScale").toDoubleOrNull()
             ?.coerceIn(0.01, 0.2)?.toString() ?: current["subtitleTextScale"]!!
@@ -937,6 +983,37 @@ object FirebaseSyncManager {
     /** Убирает поле зеркала из набора значений (для наследования/легаси). */
     private fun withoutMirror(values: Map<String, String>): Map<String, String> =
         values.filterKeys { it != "mirror" }
+
+    /**
+     * Очищает «сырое» значение настройки от любых признаков токенов синхронизации.
+     * Если в облако по какой-то причине попал сырой токен (например, старый AndroidId=…),
+     * извлекаем из него настоящее значение. Пустые/мусорные значения отбрасываются.
+     */
+    private fun unwrapAppliedValue(field: String, raw: String): String {
+        var s = raw.trim()
+        if (s.startsWith("\"") && s.endsWith("\"")) {
+            s = s.substring(1, s.length - 1).trim()
+        }
+        var prev: String? = null
+        while (s != prev) {
+            prev = s
+            if (!isTokenized(s)) break
+            val parsed = parseTokens(s)
+            val mine = parsed.firstOrNull { it.first == deviceId } ?: parsed.firstOrNull()
+            if (mine == null) break
+            s = mine.second.trim()
+        }
+        return if (s.length <= 80) s else ""
+    }
+
+    /** Санитизация всей карты настроек перед применением/записью. */
+    private fun sanitizeSettingsValues(values: Map<String, String>): LinkedHashMap<String, String> {
+        val out = LinkedHashMap<String, String>()
+        for ((field, raw) in values) {
+            out[field] = unwrapAppliedValue(field, raw)
+        }
+        return out
+    }
 
     /**
      * Применяет «сырые» значения (из токенов или legacy) к локальным настройкам.
@@ -1422,7 +1499,7 @@ object FirebaseSyncManager {
                     val setBody = setResp.body?.string()?.trim() ?: ""
                     if (setBody != "null" && setBody.isNotEmpty()) {
                         val rootJson = JSONObject(setBody)
-                        val myTokens = tokenValueMap(rootJson, deviceId)
+                        val myTokens = sanitizeSettingsValues(tokenValueMap(rootJson, deviceId))
                         val firstId = firstTokenDeviceId(rootJson)
 
                         when {
@@ -1430,7 +1507,7 @@ object FirebaseSyncManager {
                             // Зеркало исключается: легаси не должно молча сменить локальный выбор.
                             hasLegacyFlat(rootJson) -> {
                                 val legacy = legacyRawValues(rootJson)
-                                val legacySafe = withoutMirror(legacy)
+                                val legacySafe = withoutMirror(sanitizeSettingsValues(legacy))
                                 applySettingsValues(legacySafe)
                                 writeDeviceSettings(legacySafe, markFirst = true)
                             }
@@ -1446,7 +1523,9 @@ object FirebaseSyncManager {
                             // 3. Есть токены других устройств — наследуем первое устройство и создаём свои токены.
                             // Зеркало исключается: чужое устройство не может сменить зеркало этого.
                             firstId != null -> {
-                                val inherited = tokenValueMap(rootJson, firstId).ifEmpty { anyTokenValueMap(rootJson) }
+                                val inherited = sanitizeSettingsValues(
+                                    tokenValueMap(rootJson, firstId).ifEmpty { anyTokenValueMap(rootJson) }
+                                )
                                 val inheritedSafe = withoutMirror(inherited)
                                 if (inheritedSafe.isNotEmpty()) applySettingsValues(inheritedSafe)
                                 writeDeviceSettings(currentRawValues(), markFirst = false)

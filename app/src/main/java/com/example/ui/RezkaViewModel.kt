@@ -2692,10 +2692,38 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val res = FirebaseSyncManager.login(loginName, loginPass, repository)
             if (res.isSuccess) {
+                // После синхронизации облачных настроек (включая дефолтные фильтры каталога)
+                // обновляем каталог, если пользователь ещё не выбирал свои фильтры вручную.
+                // Иначе после очистки данных + входа каталог может остаться со старыми/чужими фильтрами.
+                refreshCatalogFromDefaultsIfPristine()
                 onResult(true, res.getOrNull() ?: "Вход выполнен")
             } else {
                 onResult(false, res.exceptionOrNull()?.message ?: "Ошибка авторизации")
             }
+        }
+    }
+
+    /**
+     * Перезагружает каталог с облачными дефолтными фильтрами, только если пользователь
+     * ещё не менял текущие фильтры вручную (текущие совпадают с локальными дефолтами).
+     */
+    private fun refreshCatalogFromDefaultsIfPristine() {
+        if (searchQuery.isNotBlank()) return
+        val defType = RezkaService.defaultCatalogType.value
+        val defSection = RezkaService.defaultCatalogSection.value
+        val defGenre = RezkaService.defaultCatalogGenre.value
+        val defCountry = RezkaService.defaultCatalogCountry.value
+        val matchesDefaults = _currentType.value == defType &&
+            _currentSection.value == defSection &&
+            _currentGenre.value == defGenre &&
+            _currentYear.value.isEmpty() &&
+            _currentCountry.value == defCountry
+        if (matchesDefaults) return
+        _currentCountry.value = defCountry
+        _currentGenre.value = defGenre
+        loadCatalog(defType, defSection, defGenre, forceRefresh = true)
+        if (defCountry.isNotEmpty()) {
+            prefetchForCountryFilter(defCountry)
         }
     }
 

@@ -1676,10 +1676,10 @@ object RezkaService {
         _defaultCatalogSection.value = parsedSection
 
         val savedGenreStr = prefs?.getString(KEY_DEFAULT_CATALOG_GENRE, "") ?: ""
-        _defaultCatalogGenre.value = savedGenreStr
+        _defaultCatalogGenre.value = sanitizeDefaultFilterValue(savedGenreStr)
 
         val savedCountryStr = prefs?.getString(KEY_DEFAULT_CATALOG_COUNTRY, "") ?: ""
-        _defaultCatalogCountry.value = savedCountryStr
+        _defaultCatalogCountry.value = sanitizeDefaultFilterValue(savedCountryStr)
 
         val savedSettingsUpdatedAt = prefs?.getLong(KEY_SETTINGS_UPDATED_AT, 0L) ?: 0L
         _settingsUpdatedAt.value = savedSettingsUpdatedAt
@@ -1802,6 +1802,16 @@ object RezkaService {
         prefs?.edit()?.putString(KEY_SERIES_BADGE_MODE, mode.id)?.apply()
     }
 
+    /** Отбрасывает мусорные значения фильтров (токены синхронизации, URL, контрольные символы). */
+    private fun sanitizeDefaultFilterValue(value: String): String {
+        val s = value.trim()
+        if (s.isEmpty()) return ""
+        if (s.length > 80) return ""
+        if (s.contains("deviceId=") || s.contains("AndroidId=")) return ""
+        if (s.contains('\n') || s.contains('\r')) return ""
+        return s
+    }
+
     fun setDefaultCatalogType(type: RezkaType?) {
         val valid = if (type == RezkaType.COLLECTIONS) null else type
         _defaultCatalogType.value = valid
@@ -1824,7 +1834,7 @@ object RezkaService {
     }
 
     fun setDefaultCatalogGenre(genre: String) {
-        val valid = genre.trim()
+        val valid = sanitizeDefaultFilterValue(genre)
         _defaultCatalogGenre.value = valid
         val now = System.currentTimeMillis()
         _settingsUpdatedAt.value = now
@@ -1835,7 +1845,7 @@ object RezkaService {
     }
 
     fun setDefaultCatalogCountry(country: String) {
-        val valid = country.trim()
+        val valid = sanitizeDefaultFilterValue(country)
         _defaultCatalogCountry.value = valid
         val now = System.currentTimeMillis()
         _settingsUpdatedAt.value = now
@@ -2987,6 +2997,33 @@ object RezkaService {
     }
 
     /**
+     * Слэги жанров на сайте состоят только из латиницы, цифр, '-' и '_'.
+     * Всё остальное (кириллица, пробелы, мусор из токенов синхронизации вроде
+     * "deviceId=…(…)") отбрасывается, чтобы не строить битые URL каталога.
+     */
+    private fun sanitizeGenreSlug(value: String): String {
+        val s = value.trim().trim('/')
+        if (s.isEmpty()) return ""
+        if (s.length > 40) return ""
+        return if (s.all {
+                it == '-' || it == '_' || (it.code < 128 && it.isLetterOrDigit())
+            }) {
+            s
+        } else {
+            ""
+        }
+    }
+
+    /** Год в URL каталога — строго 4 цифры в разумном диапазоне. */
+    private fun sanitizeYearSegment(value: String): String {
+        val s = value.trim().trim('/')
+        if (s.isEmpty()) return ""
+        if (s.length != 4 || !s.all { it.isDigit() }) return ""
+        val y = s.toIntOrNull() ?: return ""
+        return if (y in 1900..2100) s else ""
+    }
+
+    /**
      * Высокооптимизированный генератор URL каталога с поддержкой фильтрации по разделу, жанру и году
      */
     fun buildCatalogUrl(
@@ -3006,8 +3043,8 @@ object RezkaService {
             RezkaType.COLLECTIONS -> "collections"
             null -> ""
         }
-        val cleanGenre = genre.trim().trim('/')
-        val cleanYear = year.trim().trim('/')
+        val cleanGenre = sanitizeGenreSlug(genre)
+        val cleanYear = sanitizeYearSegment(year)
 
         val sb = StringBuilder(domain.length + 60)
             .append(domain)
@@ -3058,8 +3095,8 @@ object RezkaService {
         val cacheKey = "${type?.name ?: "ALL"}-$section-$genre-$year-$page"
         catalogCache.get(cacheKey)?.let { return@withContext it }
 
-        val cleanGenre = genre.trim().trim('/')
-        val cleanYear = year.trim().trim('/')
+        val cleanGenre = sanitizeGenreSlug(genre)
+        val cleanYear = sanitizeYearSegment(year)
 
         // Если выбрано "Все категории" (type == null) И задан фильтр по жанру или году:
         // На сайте Rezka нет единого общего URL для всех категорий с жанром/годом.
