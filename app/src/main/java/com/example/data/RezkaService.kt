@@ -1022,6 +1022,12 @@ object RezkaService {
 
     const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
 
+    // Нейтральный User-Agent для HTML-запросов каталога/поиска/зеркал.
+    // Anubis выдаёт challenge только для UA с «Mozilla», поэтому нейтральный UA
+    // пропускается напрямую — приложение работает даже на сетях, где сайт
+    // отклоняет браузероподобные запросы (403) или не принимает PoW.
+    const val CATALOG_USER_AGENT = "okhttp/4.12.0"
+
     val cookieJar = PersistentCookieJar()
 
     val client = ResilientSslEngine.configure(
@@ -1994,7 +2000,7 @@ object RezkaService {
             var testUrl = "$normalized/films/"
             var request = Request.Builder()
                 .url(testUrl)
-                .header("User-Agent", USER_AGENT)
+                .header("User-Agent", CATALOG_USER_AGENT)
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                 .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                 .header("Referer", "$normalized/")
@@ -2012,7 +2018,7 @@ object RezkaService {
                 testUrl = "$normalized/"
                 request = Request.Builder()
                     .url(testUrl)
-                    .header("User-Agent", USER_AGENT)
+                    .header("User-Agent", CATALOG_USER_AGENT)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                     .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                     .header("Referer", "$normalized/")
@@ -2132,7 +2138,7 @@ object RezkaService {
         try {
             val request = Request.Builder()
                 .url(catalogUrl)
-                .header("User-Agent", USER_AGENT)
+                .header("User-Agent", CATALOG_USER_AGENT)
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
                 .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                 .header("Referer", "$normalized/")
@@ -2158,7 +2164,7 @@ object RezkaService {
             // Резервная попытка с корня сайта, если /films/ вернул пустой список
             val rootRequest = Request.Builder()
                 .url("$normalized/")
-                .header("User-Agent", USER_AGENT)
+                .header("User-Agent", CATALOG_USER_AGENT)
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                 .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                 .header("Referer", "$normalized/")
@@ -2199,7 +2205,7 @@ object RezkaService {
             ensureActive()
             val request = Request.Builder()
                 .url(catalogUrl)
-                .header("User-Agent", USER_AGENT)
+                .header("User-Agent", CATALOG_USER_AGENT)
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
                 .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                 .header("Referer", "$normalized/")
@@ -2249,7 +2255,7 @@ object RezkaService {
                 val candidateUrl = adjustUrlToMirror(candidate.url, normalized)
                 val detailReq = Request.Builder()
                     .url(candidateUrl)
-                    .header("User-Agent", USER_AGENT)
+                    .header("User-Agent", CATALOG_USER_AGENT)
                     .header("Referer", "$normalized/")
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                     .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
@@ -3136,7 +3142,7 @@ object RezkaService {
             try {
                 val request = Request.Builder()
                     .url(url)
-                    .header("User-Agent", USER_AGENT)
+                    .header("User-Agent", CATALOG_USER_AGENT)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
                     .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                     .header("Referer", "$currentBaseUrl/")
@@ -3233,7 +3239,7 @@ object RezkaService {
             try {
                 val request = Request.Builder()
                     .url(url)
-                    .header("User-Agent", USER_AGENT)
+                    .header("User-Agent", CATALOG_USER_AGENT)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
                     .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                     .header("Referer", "$currentBaseUrl/")
@@ -3386,7 +3392,7 @@ object RezkaService {
             try {
                 val request = Request.Builder()
                     .url(targetUrl)
-                    .header("User-Agent", USER_AGENT)
+                    .header("User-Agent", CATALOG_USER_AGENT)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
                     .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                     .header("Referer", "$currentBaseUrl/")
@@ -3463,7 +3469,7 @@ object RezkaService {
             try {
                 val request = Request.Builder()
                     .url(adjustedUrl)
-                    .header("User-Agent", USER_AGENT)
+                    .header("User-Agent", CATALOG_USER_AGENT)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
                     .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                     .header("Referer", "$currentBaseUrl/")
@@ -3788,7 +3794,7 @@ object RezkaService {
         try {
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", USER_AGENT)
+                .header("User-Agent", CATALOG_USER_AGENT)
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
                 .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                 .header("Referer", "$currentBaseUrl/")
@@ -3821,7 +3827,7 @@ object RezkaService {
             val ajaxRequest = Request.Builder()
                 .url("$currentBaseUrl/ajax/search/")
                 .post(formBody)
-                .header("User-Agent", USER_AGENT)
+                .header("User-Agent", CATALOG_USER_AGENT)
                 .header("X-Requested-With", "XMLHttpRequest")
                 .header("Referer", "$currentBaseUrl/")
                 .header("Origin", currentBaseUrl)
@@ -3974,7 +3980,7 @@ object RezkaService {
         try {
             val request = Request.Builder()
                 .url(adjustedUrl)
-                .header("User-Agent", USER_AGENT)
+                .header("User-Agent", CATALOG_USER_AGENT)
                 .header("Referer", "$currentBaseUrl/")
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                 .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
@@ -4067,7 +4073,7 @@ object RezkaService {
             try {
                 val request = Request.Builder()
                     .url(normalizedUrl)
-                    .header("User-Agent", USER_AGENT)
+                    .header("User-Agent", CATALOG_USER_AGENT)
                     .header("Referer", "$currentBaseUrl/")
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
                     .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")

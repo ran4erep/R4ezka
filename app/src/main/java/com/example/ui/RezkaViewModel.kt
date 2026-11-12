@@ -496,6 +496,10 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             _currentCountry.value = countryQuery
             requestCatalogScrollToTop()
             if (countryQuery.isNotEmpty()) {
+                // Страна выбрана заново: сбрасываем флаг «конец каталога»,
+                // иначе докачка сразу выходит и остаются только карточки первой страницы
+                // (в которых нужной страны может не оказаться).
+                _isEndReached.value = false
                 prefetchForCountryFilter(countryQuery)
             }
         }
