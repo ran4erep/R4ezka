@@ -52,18 +52,17 @@ private const val REFERENCE_SMALLEST_WIDTH = 392f
 // Нижний предел уменьшения шрифта на маленьких экранах, чтобы текст оставался читаемым.
 private const val MIN_SMALL_SCREEN_FONT_SCALE = 0.72f
 
-// Верхний предел увеличения шрифта на больших экранах (телевизоры), чтобы текст
-// не становился гротескным.
-private const val MAX_LARGE_SCREEN_FONT_SCALE = 1.6f
-
 /**
  * Адаптивный коэффициент размера шрифта относительно эталонных 392 (smallest width).
- * Полностью линейный: меньше 392 — шрифт уменьшается (компактные экраны, нет переносов),
- * больше 392 — увеличивается (планшеты/ТВ, читаемость с расстояния).
+ * Без верхнего предела: меньше 392 — шрифт уменьшается (компактные экраны),
+ * больше 392 — увеличивается. Рост слегка ускоряется на широких экранах
+ * (степень 1.2), чтобы на планшетах/ТВ текст был крупнее линейного и
+ * хорошо читался с расстояния.
  */
 fun adaptiveFontScale(smallestScreenWidthDp: Int): Float {
   val raw = smallestScreenWidthDp.toFloat() / REFERENCE_SMALLEST_WIDTH
-  return raw.coerceIn(MIN_SMALL_SCREEN_FONT_SCALE, MAX_LARGE_SCREEN_FONT_SCALE)
+  val boosted = Math.pow(raw.toDouble(), 1.2).toFloat()
+  return boosted.coerceAtLeast(MIN_SMALL_SCREEN_FONT_SCALE)
 }
 
 @Composable
