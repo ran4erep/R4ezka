@@ -3747,9 +3747,8 @@ fun SettingsScreen(
         val fingerprintCopiedText = stringResource(R.string.device_fingerprint_copied)
 
         Text(
-            // Неразрывный пробел (NBSP) между надписью и номером:
-            // перенос допускается, но не между «Отпечаток устройства» и самим номером.
-            text = "${stringResource(R.string.device_fingerprint_label)}${"\u00A0"}$deviceFingerprint",
+            // Только номер отпечатка устройства (без надписи)
+            text = deviceFingerprint,
             fontSize = 10.sp,
             color = CinemaTextWhite,
             textAlign = TextAlign.Center,

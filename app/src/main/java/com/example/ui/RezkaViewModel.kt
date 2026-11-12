@@ -891,6 +891,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             _currentGenre.value = defGenre
             loadCatalog(defType, defSection, defGenre, forceRefresh = true)
             if (defCountry.isNotEmpty()) {
+                _isEndReached.value = false
                 prefetchForCountryFilter(defCountry)
             }
         }
@@ -971,6 +972,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 forceRefresh = true
             )
             if (defCountry.isNotEmpty()) {
+                _isEndReached.value = false
                 prefetchForCountryFilter(defCountry)
             }
         }
@@ -1070,6 +1072,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 if (_currentCountry.value.isNotEmpty()) {
+                    _isEndReached.value = false
                     prefetchForCountryFilter(_currentCountry.value)
                 }
             } catch (e: Exception) {
@@ -2752,6 +2755,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         _currentGenre.value = defGenre
         loadCatalog(defType, defSection, defGenre, forceRefresh = true)
         if (defCountry.isNotEmpty()) {
+            _isEndReached.value = false
             prefetchForCountryFilter(defCountry)
         }
     }
@@ -2957,6 +2961,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             _currentCountry.value = country
             requestCatalogScrollToTop()
             if (country.isNotEmpty()) {
+                _isEndReached.value = false
                 prefetchForCountryFilter(country)
             } else {
                 loadCatalog(
@@ -3248,6 +3253,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             _currentGenre.value = defGenre
             loadCatalog(defType, defSection, defGenre, forceRefresh = true)
             if (defCountry.isNotEmpty()) {
+                _isEndReached.value = false
                 prefetchForCountryFilter(defCountry)
             }
         }
