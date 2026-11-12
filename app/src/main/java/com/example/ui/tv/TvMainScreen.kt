@@ -2630,22 +2630,26 @@ private fun TvMovieCard(
                         vertical = if (isUltraDense) 2.dp else if (isDense) 3.dp else 6.dp
                     )
             ) {
+                val titleFontSize = if (isUltraDense) 8.5.sp else if (isDense) 10.sp else 12.sp
                 Text(
                     text = item.title,
                     color = CinemaTextWhite,
-                    fontSize = if (isUltraDense) 8.5.sp else if (isDense) 10.sp else 12.sp,
+                    fontSize = titleFontSize,
                     fontWeight = FontWeight.Bold,
+                    // Компактный межстрочный интервал (1.15х)
+                    lineHeight = titleFontSize * 1.15f,
                     // Название может переноситься на вторую строку, чтобы не обрезаться
                     // на узких карточках при большом количестве колонок.
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (!isUltraDense || (cardHeight != Dp.Unspecified && cardHeight.value >= 85f)) {
-                    Spacer(modifier = Modifier.height(1.dp))
+                    Spacer(modifier = Modifier.height(0.5.dp))
                     Text(
                         text = item.subtitle,
                         color = CinemaTextGray,
                         fontSize = if (isUltraDense) 6.5.sp else if (isDense) 8.sp else 10.sp,
+                        lineHeight = (if (isUltraDense) 6.5.sp else if (isDense) 8.sp else 10.sp) * 1.15f,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )

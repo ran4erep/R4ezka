@@ -1257,21 +1257,26 @@ fun RezkaItemCard(
                         vertical = if (isUltraDense) 2.dp else if (isDense) 4.dp else 8.dp
                     )
             ) {
+                val titleFontSize = if (isUltraDense) 8.5.sp else if (columnsCount >= 7) 10.sp else if (isDense) 11.sp else 13.sp
                 Text(
                     text = item.title,
                     color = CinemaTextWhite,
-                    fontSize = if (isUltraDense) 8.5.sp else if (columnsCount >= 7) 10.sp else if (isDense) 11.sp else 13.sp,
+                    fontSize = titleFontSize,
                     fontWeight = FontWeight.Bold,
+                    // Компактный межстрочный интервал (1.15х) — названия не расползаются
+                    // на широких экранах даже при крупном шрифте.
+                    lineHeight = titleFontSize * 1.15f,
                     // Название может переноситься на вторую строку, чтобы не обрезаться
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (!isUltraDense || (cardHeight != androidx.compose.ui.unit.Dp.Unspecified && cardHeight.value >= 85f)) {
-                    Spacer(modifier = Modifier.height(2.dp))
+                    Spacer(modifier = Modifier.height(1.dp))
                     Text(
                         text = item.subtitle,
                         color = CinemaTextGray,
                         fontSize = if (isUltraDense) 6.5.sp else if (columnsCount >= 7) 8.sp else if (isDense) 9.sp else 10.sp,
+                        lineHeight = (if (isUltraDense) 6.5.sp else if (columnsCount >= 7) 8.sp else if (isDense) 9.sp else 10.sp) * 1.15f,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )

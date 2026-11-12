@@ -59,11 +59,12 @@ object CardGridEngine {
                 else -> 2
             }
             // Высота карточки считается так, чтобы ровно targetRows рядов заполнили
-            // видимую область от верхнего паддинга до нижней границы экрана.
-            // Тогда следующий ряд начинается ровно за экраном и не «выглядывает».
+            // видимую область от верхнего паддинга до нижней границы экрана,
+            // с небольшим безопасным запасом, чтобы нижний ряд не обрезался.
             val totalVerticalSpacings = (vSpacing.value * (targetRows - 1)).dp
             val minAllowedHeight = (40f * targetRows).dp
-            val usableHeight = (availableHeight - topPadding - totalVerticalSpacings)
+            val safeMargin = 4.dp
+            val usableHeight = (availableHeight - topPadding - totalVerticalSpacings - safeMargin)
                 .coerceAtLeast(minAllowedHeight)
             val cardHeight = (usableHeight.value / targetRows).dp
 
@@ -106,10 +107,13 @@ object CardGridEngine {
         val vSpacing = if (targetRows >= 5) 4.dp else if (targetRows >= 4) 6.dp else if (targetRows >= 3) 8.dp else 12.dp
 
         // Вычисляем точную высоту карточки, чтобы ровно targetRows рядов заполнили
-        // видимую область от верхнего паддинга до нижней границы экрана.
+        // видимую область от верхнего паддинга до нижней границы экрана,
+        // с небольшим безопасным запасом, чтобы нижний ряд не обрезался.
         val totalVerticalSpacings = (vSpacing.value * (targetRows - 1)).dp
         val minAllowedHeight = (40f * targetRows).dp
-        val netHeight = (availableHeight - topPadding - totalVerticalSpacings).coerceAtLeast(minAllowedHeight)
+        val safeMargin = 4.dp
+        val netHeight = (availableHeight - topPadding - totalVerticalSpacings - safeMargin)
+            .coerceAtLeast(minAllowedHeight)
         val calculatedCardHeight = (netHeight.value / targetRows).dp
 
         val totalHorizontalSpacings = (hSpacing.value * (targetCols - 1)).dp
