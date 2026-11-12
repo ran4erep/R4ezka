@@ -687,19 +687,14 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             val items1 = pair.first
             val items2 = pair.second
 
-            var newFoundInBatch = 0
-            var batchHasEnd = false
-
             // Обработка страницы 1
             if (items1.isNotEmpty()) {
                 val newUnique1 = items1.filterNot { loadedMap.containsKey(it.id) }
-                if (items1.size < 32 || newUnique1.isEmpty()) batchHasEnd = true
                 if (newUnique1.isNotEmpty()) {
                     val added1 = newUnique1.count { it.matchesCountry(countryQuery) }
-                    newFoundInBatch += added1
+                    matching += added1
                     newUnique1.forEach { loadedMap[it.id] = it }
                     currentCatalogPage = page1
-                    matching += added1
 
                     val dynamicCountries1 = mutableSetOf<String>()
                     for (item in newUnique1) {
@@ -709,20 +704,16 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                         updateDynamicCountries(dynamicCountries1)
                     }
                 }
-            } else {
-                batchHasEnd = true
             }
 
-            // Обработка страницы 2 (только если первая страница была полной)
-            if (!batchHasEnd && items2.isNotEmpty()) {
+            // Обработка страницы 2
+            if (items2.isNotEmpty()) {
                 val newUnique2 = items2.filterNot { loadedMap.containsKey(it.id) }
-                if (items2.size < 32 || newUnique2.isEmpty()) batchHasEnd = true
                 if (newUnique2.isNotEmpty()) {
                     val added2 = newUnique2.count { it.matchesCountry(countryQuery) }
-                    newFoundInBatch += added2
+                    matching += added2
                     newUnique2.forEach { loadedMap[it.id] = it }
                     currentCatalogPage = page2
-                    matching += added2
 
                     val dynamicCountries2 = mutableSetOf<String>()
                     for (item in newUnique2) {
@@ -732,22 +723,23 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                         updateDynamicCountries(dynamicCountries2)
                     }
                 }
-            } else if (items1.isNotEmpty() && !batchHasEnd) {
-                batchHasEnd = true
             }
 
-            if (batchHasEnd) {
+            // Конец каталога — ТОЛЬКО когда обе страницы реально пустые.
+            // Неполные страницы (< 32 элементов) концом НЕ считаем: в них
+            // всё ещё могут попадаться фильмы нужной страны.
+            if (items1.isEmpty() && items2.isEmpty()) {
                 _isEndReached.value = true
             }
 
-            if (newFoundInBatch > 0) {
+            if (matching > before) {
                 // Обновляем состояние UI, как только найдены фильмы нужной страны
                 _catalogState.value = CatalogState.Success(loadedMap.values.toList())
             }
 
             processedBatches++
 
-            if (batchHasEnd || matching > before) break
+            if (matching > before || (items1.isEmpty() && items2.isEmpty())) break
             delay(220)
         }
 
