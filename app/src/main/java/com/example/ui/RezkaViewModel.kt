@@ -640,90 +640,16 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
         paginationJob?.cancel()
         countryPrefetchJob?.cancel()
         countryPrefetchJob = viewModelScope.launch(Dispatchers.IO) {
-            var matching = loadedMap.values.count { it.matchesCountry(countryQuery) }
-            if (matching >= 24) return@launch
             _isLoadingMore.value = true
             try {
-                var consecutiveEmptyBatches = 0
-                while (matching < 24 && !_isEndReached.value && consecutiveEmptyBatches < 5) {
-                    val page1 = currentCatalogPage + 1
-                    val page2 = currentCatalogPage + 2
+                // Ищем страну в текущем разделе/категории. Докачка идёт по страницам,
+                // пока не найдётся хотя бы одно совпадение (дальше карточки добираются
+                // постепенно при прокрутке каталога).
+                val found = scanCountryPages(countryQuery, _currentSection.value)
 
-                    // Параллельная загрузка двух страниц с IO диспетчером для быстрого отклика
-                    val deferred1 = async { RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, _currentYear.value, page1) }
-                    val deferred2 = async { RezkaService.getCatalog(_currentType.value, _currentSection.value, _currentGenre.value, _currentYear.value, page2) }
-
-                    val items1 = try { deferred1.await() } catch (_: Exception) { emptyList() }
-                    val items2 = try { deferred2.await() } catch (_: Exception) { emptyList() }
-
-                    var newFoundInBatch = 0
-                    var batchHasEnd = false
-
-                    // Обработка страницы 1
-                    if (items1.isNotEmpty()) {
-                        val newUnique1 = items1.filterNot { loadedMap.containsKey(it.id) }
-                        if (items1.size < 32 || newUnique1.isEmpty()) batchHasEnd = true
-                        if (newUnique1.isNotEmpty()) {
-                            val added1 = newUnique1.count { it.matchesCountry(countryQuery) }
-                            newFoundInBatch += added1
-                            newUnique1.forEach { loadedMap[it.id] = it }
-                            currentCatalogPage = page1
-                            matching += added1
-
-                            val dynamicCountries1 = mutableSetOf<String>()
-                            for (item in newUnique1) {
-                                dynamicCountries1.addAll(CountryFlags.extractCountries(item.subtitle))
-                            }
-                            if (dynamicCountries1.isNotEmpty()) {
-                                updateDynamicCountries(dynamicCountries1)
-                            }
-                        }
-                    } else {
-                        batchHasEnd = true
-                    }
-
-                    // Обработка страницы 2 (только если первая страница была полной)
-                    if (!batchHasEnd && items2.isNotEmpty()) {
-                        val newUnique2 = items2.filterNot { loadedMap.containsKey(it.id) }
-                        if (items2.size < 32 || newUnique2.isEmpty()) batchHasEnd = true
-                        if (newUnique2.isNotEmpty()) {
-                            val added2 = newUnique2.count { it.matchesCountry(countryQuery) }
-                            newFoundInBatch += added2
-                            newUnique2.forEach { loadedMap[it.id] = it }
-                            currentCatalogPage = page2
-                            matching += added2
-
-                            val dynamicCountries2 = mutableSetOf<String>()
-                            for (item in newUnique2) {
-                                dynamicCountries2.addAll(CountryFlags.extractCountries(item.subtitle))
-                            }
-                            if (dynamicCountries2.isNotEmpty()) {
-                                updateDynamicCountries(dynamicCountries2)
-                            }
-                        }
-                    } else if (items1.isNotEmpty() && !batchHasEnd) {
-                        batchHasEnd = true
-                    }
-
-                    if (batchHasEnd) {
-                        _isEndReached.value = true
-                    }
-
-                    if (newFoundInBatch > 0) {
-                        consecutiveEmptyBatches = 0
-                        // Обновляем состояние UI только если реально добавлены фильмы нужной страны
-                        _catalogState.value = CatalogState.Success(loadedMap.values.toList())
-                    } else {
-                        consecutiveEmptyBatches++
-                    }
-
-                    if (batchHasEnd || matching >= 24) break
-                    delay(350)
-                }
-
-                // Если несколько пачек подряд не дали новых фильмов нужной страны,
-                // помечаем конец каталога, чтобы UI не уходил в бесконечную загрузку.
-                if (consecutiveEmptyBatches >= 5) {
+                // Докачка не нашла ни одного фильма — помечаем конец каталога,
+                // чтобы UI не уходил в бесконечную загрузку.
+                if (!found) {
                     _isEndReached.value = true
                 }
             } catch (e: Exception) {
@@ -733,6 +659,99 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                 _isLoadingMore.value = false
             }
         }
+    }
+
+    /**
+     * Докачивает страницы каталога (по две параллельно) в поисках фильмов нужной страны.
+     * Возвращает true, если хотя бы одно совпадение найдено.
+     */
+    private suspend fun scanCountryPages(countryQuery: String, section: SectionType): Boolean {
+        // Сколько совпадений уже есть до этого прохода
+        val before = loadedMap.values.count { it.matchesCountry(countryQuery) }
+        var matching = before
+
+        var processedBatches = 0
+        // Ищем по страницам текущей категории НОВОЕ совпадение (первое при выборе страны,
+        // следующее — при прокрутке). Жёсткий лимит страниц защищает от вечного сканирования.
+        while (matching <= before && !_isEndReached.value && processedBatches < 60) {
+            val page1 = currentCatalogPage + 1
+            val page2 = currentCatalogPage + 2
+
+            // Параллельная загрузка двух страниц
+            val pair = coroutineScope {
+                val d1 = async { RezkaService.getCatalog(_currentType.value, section, _currentGenre.value, _currentYear.value, page1) }
+                val d2 = async { RezkaService.getCatalog(_currentType.value, section, _currentGenre.value, _currentYear.value, page2) }
+                (try { d1.await() } catch (_: Exception) { emptyList() }) to
+                    (try { d2.await() } catch (_: Exception) { emptyList() })
+            }
+            val items1 = pair.first
+            val items2 = pair.second
+
+            var newFoundInBatch = 0
+            var batchHasEnd = false
+
+            // Обработка страницы 1
+            if (items1.isNotEmpty()) {
+                val newUnique1 = items1.filterNot { loadedMap.containsKey(it.id) }
+                if (items1.size < 32 || newUnique1.isEmpty()) batchHasEnd = true
+                if (newUnique1.isNotEmpty()) {
+                    val added1 = newUnique1.count { it.matchesCountry(countryQuery) }
+                    newFoundInBatch += added1
+                    newUnique1.forEach { loadedMap[it.id] = it }
+                    currentCatalogPage = page1
+                    matching += added1
+
+                    val dynamicCountries1 = mutableSetOf<String>()
+                    for (item in newUnique1) {
+                        dynamicCountries1.addAll(CountryFlags.extractCountries(item.subtitle))
+                    }
+                    if (dynamicCountries1.isNotEmpty()) {
+                        updateDynamicCountries(dynamicCountries1)
+                    }
+                }
+            } else {
+                batchHasEnd = true
+            }
+
+            // Обработка страницы 2 (только если первая страница была полной)
+            if (!batchHasEnd && items2.isNotEmpty()) {
+                val newUnique2 = items2.filterNot { loadedMap.containsKey(it.id) }
+                if (items2.size < 32 || newUnique2.isEmpty()) batchHasEnd = true
+                if (newUnique2.isNotEmpty()) {
+                    val added2 = newUnique2.count { it.matchesCountry(countryQuery) }
+                    newFoundInBatch += added2
+                    newUnique2.forEach { loadedMap[it.id] = it }
+                    currentCatalogPage = page2
+                    matching += added2
+
+                    val dynamicCountries2 = mutableSetOf<String>()
+                    for (item in newUnique2) {
+                        dynamicCountries2.addAll(CountryFlags.extractCountries(item.subtitle))
+                    }
+                    if (dynamicCountries2.isNotEmpty()) {
+                        updateDynamicCountries(dynamicCountries2)
+                    }
+                }
+            } else if (items1.isNotEmpty() && !batchHasEnd) {
+                batchHasEnd = true
+            }
+
+            if (batchHasEnd) {
+                _isEndReached.value = true
+            }
+
+            if (newFoundInBatch > 0) {
+                // Обновляем состояние UI, как только найдены фильмы нужной страны
+                _catalogState.value = CatalogState.Success(loadedMap.values.toList())
+            }
+
+            processedBatches++
+
+            if (batchHasEnd || matching > before) break
+            delay(220)
+        }
+
+        return matching > before
     }
 
     fun updateDynamicCountries(parsedCountries: Set<String>) {

@@ -400,7 +400,7 @@ object SeriesUpdateEngine {
         val request = Request.Builder()
             .url(endpoint)
             .post(formBody)
-            .header("User-Agent", RezkaService.USER_AGENT)
+            .header("User-Agent", RezkaService.CATALOG_USER_AGENT)
             .header("X-Requested-With", "XMLHttpRequest")
             .header("Referer", "$baseUrl/")
             .header("Origin", baseUrl)
