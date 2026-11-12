@@ -641,9 +641,7 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
             _isLoadingMore.value = true
             try {
                 var consecutiveEmptyBatches = 0
-                // Ограничение объёма докачки за один цикл, чтобы не выглядеть как сканер
-                var checkedPageBatches = 0
-                while (matching < 24 && !_isEndReached.value && consecutiveEmptyBatches < 5 && checkedPageBatches < 6) {
+                while (matching < 24 && !_isEndReached.value && consecutiveEmptyBatches < 5) {
                     val page1 = currentCatalogPage + 1
                     val page2 = currentCatalogPage + 2
 
@@ -716,8 +714,13 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     if (batchHasEnd || matching >= 24) break
-                    checkedPageBatches++
                     delay(350)
+                }
+
+                // Если несколько пачек подряд не дали новых фильмов нужной страны,
+                // помечаем конец каталога, чтобы UI не уходил в бесконечную загрузку.
+                if (consecutiveEmptyBatches >= 5) {
+                    _isEndReached.value = true
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
