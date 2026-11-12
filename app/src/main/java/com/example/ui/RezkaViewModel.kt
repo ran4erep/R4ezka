@@ -637,9 +637,25 @@ class RezkaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun prefetchForCountryFilter(countryQuery: String = _currentCountry.value) {
         if (countryQuery.isBlank() || _isEndReached.value) return
+        // Защита от повторного запуска, пока предыдущий поиск ещё идёт
+        if (countryPrefetchJob?.isActive == true) return
         paginationJob?.cancel()
         countryPrefetchJob?.cancel()
         countryPrefetchJob = viewModelScope.launch(Dispatchers.IO) {
+            // Дожидаемся завершения первичной загрузки первой страницы (loadCatalog).
+            // Иначе её последующий loadedMap.clear() сотрёт уже найденные на следующих
+            // страницах фильмы, и поиск «обрубится» на паре карточек.
+            val firstLoad = catalogJob
+            if (firstLoad != null && firstLoad.isActive) {
+                try {
+                    firstLoad.join()
+                } catch (_: kotlinx.coroutines.CancellationException) {
+                    return@launch
+                }
+            }
+            // Пока ждали, нас могли отменить/заменить — проверяем активность
+            if (!isActive) return@launch
+
             _isLoadingMore.value = true
             try {
                 // Ищем страну в текущем разделе/категории. Докачка идёт по страницам,
