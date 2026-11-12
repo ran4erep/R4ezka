@@ -57,8 +57,7 @@ private const val MIN_LOW_DPI_FONT_SCALE = 0.72f
  * чтобы на телевизорах (высокие DPI) надписи были крупнее и читались с расстояния.
  * Нижний предел защищает читаемость на очень низких DPI.
  */
-@Composable
-fun adaptiveFontScale(density: Float = LocalDensity.current.density): Float {
+fun adaptiveFontScale(density: Float): Float {
   val raw = density / REFERENCE_DENSITY
   return raw.coerceAtLeast(MIN_LOW_DPI_FONT_SCALE)
 }
