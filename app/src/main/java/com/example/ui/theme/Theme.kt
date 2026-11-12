@@ -11,6 +11,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -44,22 +45,25 @@ private val LightColorScheme =
     onSurface = CinemaTextWhite
   )
 
-// Эталонная плотность экрана (density = dpi / 160), на которой вёрстка отполирована:
-// 392 DPI → density 2.45.
-private const val REFERENCE_DENSITY = 2.45f
+// Эталонная минимальная ширина экрана в dp (smallest width), на которой вёрстка
+// отполирована. У пользователя это «392 DPI» из настроек (на деле — smallest width).
+private const val REFERENCE_SMALLEST_WIDTH = 392f
 
-// Нижний предел уменьшения шрифта на низких DPI, чтобы текст оставался читаемым.
-private const val MIN_LOW_DPI_FONT_SCALE = 0.72f
+// Нижний предел уменьшения шрифта на маленьких экранах, чтобы текст оставался читаемым.
+private const val MIN_SMALL_SCREEN_FONT_SCALE = 0.72f
+
+// Верхний предел увеличения шрифта на больших экранах (телевизоры), чтобы текст
+// не становился гротескным.
+private const val MAX_LARGE_SCREEN_FONT_SCALE = 1.6f
 
 /**
- * Адаптивный коэффициент размера шрифта относительно эталонных 392 DPI.
- * Полностью линейный: ниже 392 DPI шрифт уменьшается, выше — увеличивается,
- * чтобы на телевизорах (высокие DPI) надписи были крупнее и читались с расстояния.
- * Нижний предел защищает читаемость на очень низких DPI.
+ * Адаптивный коэффициент размера шрифта относительно эталонных 392 (smallest width).
+ * Полностью линейный: меньше 392 — шрифт уменьшается (компактные экраны, нет переносов),
+ * больше 392 — увеличивается (планшеты/ТВ, читаемость с расстояния).
  */
-fun adaptiveFontScale(density: Float): Float {
-  val raw = density / REFERENCE_DENSITY
-  return raw.coerceAtLeast(MIN_LOW_DPI_FONT_SCALE)
+fun adaptiveFontScale(smallestScreenWidthDp: Int): Float {
+  val raw = smallestScreenWidthDp.toFloat() / REFERENCE_SMALLEST_WIDTH
+  return raw.coerceIn(MIN_SMALL_SCREEN_FONT_SCALE, MAX_LARGE_SCREEN_FONT_SCALE)
 }
 
 @Composable
@@ -82,12 +86,13 @@ fun MyApplicationTheme(
 
   val hapticEngine = remember { com.example.ui.haptics.HapticEngine.get() }
 
-  // Адаптивное масштабирование шрифтов относительно эталонных 392 DPI:
-  // на низких DPI уменьшаем (нет огромных надписей и переносов),
-  // на высоких (телевизоры) увеличиваем, чтобы текст читался с расстояния.
+  // Адаптивное масштабирование шрифтов относительно эталонных 392 (smallest width):
+  // на маленьких экранах уменьшаем (нет огромных надписей и переносов),
+  // на больших (телевизоры) увеличиваем, чтобы текст читался с расстояния.
   val baseDensity = LocalDensity.current
-  val effectiveFontScale = baseDensity.fontScale * remember(baseDensity.density) {
-    adaptiveFontScale(baseDensity.density)
+  val smallestWidth = LocalConfiguration.current.smallestScreenWidthDp
+  val effectiveFontScale = baseDensity.fontScale * remember(smallestWidth) {
+    adaptiveFontScale(smallestWidth)
   }
 
   androidx.compose.runtime.CompositionLocalProvider(
