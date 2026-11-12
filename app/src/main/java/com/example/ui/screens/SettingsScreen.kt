@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -3736,7 +3739,36 @@ fun SettingsScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Отпечаток устройства — отдельной строкой в самом низу страницы настроек
+        val deviceFingerprint = remember { FirebaseSyncManager.currentDeviceId }
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val fingerprintCopiedText = stringResource(R.string.device_fingerprint_copied)
+
+        Text(
+            // Неразрывный пробел (NBSP) между надписью и номером:
+            // перенос допускается, но не между «Отпечаток устройства» и самим номером.
+            text = "${stringResource(R.string.device_fingerprint_label)}${"\u00A0"}$deviceFingerprint",
+            fontSize = 10.sp,
+            color = CinemaTextWhite,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (!isPhysicalTv) {
+                        Modifier.clickable {
+                            val clip = ClipData.newPlainText("device_fingerprint", deviceFingerprint)
+                            clipboard.setPrimaryClip(clip)
+                            Toast.makeText(context, fingerprintCopiedText, Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        Modifier
+                    }
+                )
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
     }
 
         // ---- НИЖНЯЯ ПАНЕЛЬ: ВСЕГДА ВНИЗУ ЭКРАНА (ОТДЕЛЬНО ОТ НАСТРОЕК) ----
@@ -3886,20 +3918,6 @@ fun SettingsScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Отпечаток устройства — просто белым текстом внизу, отдельно от доната
-                val deviceFingerprint = remember { FirebaseSyncManager.currentDeviceId }
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "${stringResource(R.string.device_fingerprint_label)} $deviceFingerprint",
-                        fontSize = 11.sp,
-                        color = CinemaTextWhite
-                    )
-                }
             }
         }
     }
