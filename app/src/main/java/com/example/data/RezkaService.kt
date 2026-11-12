@@ -825,9 +825,6 @@ class AnubisInterceptor : Interceptor {
     companion object {
         private const val TAG = "AnubisInterceptor"
 
-        // Глубина рекурсивной обработки challenge (защита от зацикливания)
-        private val ANUBIS_DEPTH = ThreadLocal.withInitial { 0 }
-
         /**
          * Ультра-оптимизированный поиск решения Proof-of-Work.
          * Выполняется с нулевым выделением памяти (Zero-Allocation) в цикле для минимальной нагрузки на CPU.
@@ -896,21 +893,6 @@ class AnubisInterceptor : Interceptor {
     }
 
     override fun intercept(chain: Interceptor.Chain): Response {
-        // Защита от бесконечной рекурсии: если сервер продолжает выдавать challenge
-        // даже после решения (например, политика против дата-центров), не зацикливаемся.
-        val depth = ANUBIS_DEPTH.get()
-        if (depth > 2) {
-            return chain.proceed(chain.request())
-        }
-        ANUBIS_DEPTH.set(depth + 1)
-        try {
-            return doIntercept(chain)
-        } finally {
-            ANUBIS_DEPTH.set(depth)
-        }
-    }
-
-    private fun doIntercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
         val response = chain.proceed(originalRequest)
 
@@ -930,7 +912,7 @@ class AnubisInterceptor : Interceptor {
                 .build()
         }
 
-        // Обнаружена защита Anubis (v1.27.0) на зеркале. Решаем задачу.
+        // Обнаружена защита Anubis на зеркале rezka-tv.org! Решаем задачу
         val effectiveUrl = response.request.url
         Log.i(TAG, "Обнаружен вызов Anubis PoW на $effectiveUrl. Запуск оптимизированного движка...")
         try {
@@ -940,66 +922,33 @@ class AnubisInterceptor : Interceptor {
             if (challengeIdx != -1 && startIdx != -1 && endIdx != -1) {
                 val jsonStr = bodyString.substring(startIdx, endIdx)
                 val json = JSONObject(jsonStr)
-                val challengeObj = json.optJSONObject("challenge")
-                if (challengeObj == null) {
-                    return response.newBuilder()
-                        .body(bodyString.toResponseBody(bodyMediaType))
-                        .build()
-                }
-                val rulesObj = json.optJSONObject("rules")
+                val challengeObj = json.getJSONObject("challenge")
+                val rulesObj = json.getJSONObject("rules")
 
                 val chId = challengeObj.getString("id")
                 val randomData = challengeObj.getString("randomData")
-                val difficulty = (rulesObj?.optInt("difficulty", 2) ?: 2).coerceAtLeast(0)
+                val difficulty = rulesObj.optInt("difficulty", 2)
 
                 val t0 = System.currentTimeMillis()
                 val (nonce, hash) = solvePow(randomData, difficulty)
                 val elapsed = (System.currentTimeMillis() - t0).coerceAtLeast(1)
                 Log.i(TAG, "Anubis PoW решен за ${elapsed}ms: nonce=$nonce")
 
-                val hostBase = "${effectiveUrl.scheme}://${effectiveUrl.host}"
-                val basePrefix = parseJsonStringElement(bodyString, "anubis_base_prefix")
-                val passBase = if (basePrefix.isNotEmpty()) basePrefix else hostBase
-                val redir = URLEncoder.encode(effectiveUrl.encodedPath, "UTF-8")
+                val base = "${effectiveUrl.scheme}://${effectiveUrl.host}"
+                val passUrl = "$base/.within.website/x/cmd/anubis/api/pass-challenge?id=$chId&response=$hash&nonce=$nonce&redir=${URLEncoder.encode(effectiveUrl.encodedPath, "UTF-8")}&elapsedTime=$elapsed"
 
-                // Пробуем оба варианта маршрута pass-challenge (id в параметре и id в пути),
-                // т.к. разные версии/настройки Anubis принимают разный формат.
-                var lastPassCode = -1
-                for (idInPath in arrayOf(false, true)) {
-                    try {
-                        val api = "$passBase/.within.website/x/cmd/anubis/api/pass-challenge"
-                        val endpoint = if (idInPath) "$api/$chId" else api
-                        val passUrl = "$endpoint?id=$chId&response=$hash&nonce=$nonce&redir=$redir&elapsedTime=$elapsed"
-                        val passReq = Request.Builder()
-                            .url(passUrl)
-                            .header("User-Agent", originalRequest.header("User-Agent") ?: RezkaService.USER_AGENT)
-                            .header("Referer", effectiveUrl.toString())
-                            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                            .build()
-                        val passResp = chain.proceed(passReq)
-                        lastPassCode = passResp.code
-                        passResp.close()
+                val passReq = Request.Builder()
+                    .url(passUrl)
+                    .header("User-Agent", RezkaService.USER_AGENT)
+                    .header("Referer", effectiveUrl.toString())
+                    .build()
 
-                        if (lastPassCode in 200..399) {
-                            val retryReq = originalRequest.newBuilder().url(effectiveUrl).build()
-                            val retryResp = chain.proceed(retryReq)
-                            val retryMediaType = retryResp.body?.contentType()
-                            val retryBody = retryResp.body?.string().orEmpty()
-                            if (!retryBody.contains("anubis_challenge")) {
-                                Log.i(TAG, "Anubis пройден: $effectiveUrl")
-                                return retryResp.newBuilder()
-                                    .body(retryBody.toResponseBody(retryMediaType))
-                                    .build()
-                            }
-                            retryResp.close()
-                        }
-                    } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) throw e
-                        Log.w(TAG, "Anubis pass attempt failed (idInPath=$idInPath): ${e.message}")
-                    }
-                }
+                chain.proceed(passReq).close()
 
-                Log.w(TAG, "Anubis PoW не принят сервером (последний код $lastPassCode)")
+                // Повторяем исходный запрос с полученным сессионным токеном Anubis на актуальный URL
+                Log.i(TAG, "Повтор запроса с авторизационными куками Anubis на $effectiveUrl...")
+                val retryReq = originalRequest.newBuilder().url(effectiveUrl).build()
+                return chain.proceed(retryReq)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка обхода Anubis: ${e.message}", e)
@@ -1008,17 +957,6 @@ class AnubisInterceptor : Interceptor {
         return response.newBuilder()
             .body(bodyString.toResponseBody(bodyMediaType))
             .build()
-    }
-
-    /** Достаёт значение строкового JSON-элемента страницы challenge (например, anubis_base_prefix). */
-    private fun parseJsonStringElement(html: String, elementId: String): String {
-        return try {
-            val m = Regex("""<script id="$elementId" type="application/json">(.*?)</script>""").find(html)
-            val raw = m?.groupValues?.get(1)?.trim() ?: return ""
-            if (raw.startsWith("\"") && raw.endsWith("\"")) raw.substring(1, raw.length - 1) else raw
-        } catch (_: Exception) {
-            ""
-        }
     }
 }
 
