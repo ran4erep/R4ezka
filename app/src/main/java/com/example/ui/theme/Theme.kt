@@ -72,6 +72,7 @@ private fun tvScaleForWindowClass(widthClass: WindowWidthSizeClass): Float = whe
   WindowWidthSizeClass.Compact -> 1.10f
   WindowWidthSizeClass.Medium -> 1.18f
   WindowWidthSizeClass.Expanded -> 1.22f
+  else -> 1.22f
 }
 
 @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
