@@ -1,15 +1,20 @@
 package com.example.ui.theme
 
 import android.app.Activity
-import android.os.Build
+import android.content.res.Configuration
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
+import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -17,6 +22,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Density
 import androidx.core.view.WindowCompat
+import com.example.data.RezkaService
+import com.example.ui.tv.TvDetector
 
 private val DarkColorScheme =
   darkColorScheme(
@@ -45,26 +52,29 @@ private val LightColorScheme =
     onSurface = CinemaTextWhite
   )
 
-// Эталонная минимальная ширина экрана в dp (smallest width), на которой вёрстка
-// отполирована. У пользователя это «392 DPI» из настроек (на деле — smallest width).
-private const val REFERENCE_SMALLEST_WIDTH = 392f
-
-// Нижний предел уменьшения шрифта на маленьких экранах, чтобы текст оставался читаемым.
-private const val MIN_SMALL_SCREEN_FONT_SCALE = 0.72f
-
 /**
- * Адаптивный коэффициент размера шрифта относительно эталонных 392 (smallest width).
- * Без верхнего предела: меньше 392 — шрифт уменьшается (компактные экраны),
- * больше 392 — увеличивается. Рост слегка ускоряется на широких экранах
- * (степень 1.2), чтобы на планшетах/ТВ текст был крупнее линейного и
- * хорошо читался с расстояния.
+ * Безопасный коэффициент шрифта для ТВ-интерфейса (10-ft UI).
+ *
+ * Вместо старой бесконечной кривой (w/392)^1.2 здесь используется класс ширины окна
+ * (те же брейкпоинты, что у официального WindowSizeClass: <600 / 600–840 / ≥840 dp),
+ * а рост жёстко ограничен сверху (≤1.22). Такое масштабирование:
+ *  - не даёт тексту стать слишком мелким на ТВ (10-ft UI);
+ *  - не раздувает шрифт до поломки вёрстки (потолок вместо ×2.9+);
+ *  - никогда не трогает системный fontScale пользователя (он применяется отдельно).
  */
-fun adaptiveFontScale(smallestScreenWidthDp: Int): Float {
-  val raw = smallestScreenWidthDp.toFloat() / REFERENCE_SMALLEST_WIDTH
-  val boosted = Math.pow(raw.toDouble(), 1.2).toFloat()
-  return boosted.coerceAtLeast(MIN_SMALL_SCREEN_FONT_SCALE)
+fun tvInterfaceTextScale(widthDp: Int): Float = when {
+  widthDp < 600 -> 1.10f
+  widthDp < 840 -> 1.18f
+  else -> 1.22f
 }
 
+private fun tvScaleForWindowClass(widthClass: WindowWidthSizeClass): Float = when (widthClass) {
+  WindowWidthSizeClass.Compact -> 1.10f
+  WindowWidthSizeClass.Medium -> 1.18f
+  WindowWidthSizeClass.Expanded -> 1.22f
+}
+
+@OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
 @Composable
 fun MyApplicationTheme(
   darkTheme: Boolean = true,
@@ -85,14 +95,32 @@ fun MyApplicationTheme(
 
   val hapticEngine = remember { com.example.ui.haptics.HapticEngine.get() }
 
-  // Адаптивное масштабирование шрифтов относительно эталонных 392 (smallest width):
-  // на маленьких экранах уменьшаем (нет огромных надписей и переносов),
-  // на больших (телевизоры) увеличиваем, чтобы текст читался с расстояния.
-  val baseDensity = LocalDensity.current
-  val smallestWidth = LocalConfiguration.current.smallestScreenWidthDp
-  val effectiveFontScale = baseDensity.fontScale * remember(smallestWidth) {
-    adaptiveFontScale(smallestWidth)
+  // --- Масштабирование шрифтов ------------------------------------------------
+  // Системный fontScale пользователя (доступность) всегда сохраняется.
+  // Поверх него добавляется ТОЛЬКО ограниченный ТВ-коэффициент и только когда
+  // активен ТВ-интерфейс. На телефонах/планшетах коэффициент = 1.0,
+  // т.е. шрифты полностью соответствуют системным настройкам.
+  val context = LocalContext.current
+  val configuration = LocalConfiguration.current
+  val tvModePreference by RezkaService.tvModePreference.collectAsState()
+
+  val isTvMode = when (tvModePreference) {
+    "force_tv" -> true
+    "force_mobile" -> false
+    else -> TvDetector.isRunningOnTv(context) ||
+      configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
   }
+
+  val windowSizeClass = (context as? Activity)?.let { calculateWindowSizeClass(it) }
+  val deviceFontScale = if (isTvMode) {
+    windowSizeClass?.widthSizeClass?.let { tvScaleForWindowClass(it) }
+      ?: tvInterfaceTextScale(configuration.screenWidthDp)
+  } else {
+    1.0f
+  }
+
+  val baseDensity = LocalDensity.current
+  val effectiveFontScale = baseDensity.fontScale * deviceFontScale
 
   androidx.compose.runtime.CompositionLocalProvider(
     com.example.ui.haptics.LocalHapticEngine provides hapticEngine,
